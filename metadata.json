@@ -1,0 +1,6 @@
+{
+  "name": "ศาลาเอไอ (Sala AI)",
+  "description": "แพลตฟอร์มสร้างภาพและวิดีโอด้วย AI อัจฉริยะ รองรับ Multi-Clip Continuity Director, Character Consistency, Scene Continuity และสถาปัตยกรรม Multi-Provider Adapter",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

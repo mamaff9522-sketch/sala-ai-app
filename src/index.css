@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', 'Prompt', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: #05070f;
+    color: #e2e8f0;
+    overflow-x: hidden;
+  }
+}
+
+/* Night mode glowing effects & animations */
+@keyframes neonPulse {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(6, 182, 212, 0.25), 0 0 35px rgba(99, 102, 241, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(6, 182, 212, 0.45), 0 0 50px rgba(168, 85, 247, 0.3);
+  }
+}
+
+@keyframes floatSoft {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.glow-card-cyan {
+  box-shadow: 0 0 20px -5px rgba(6, 182, 212, 0.2), 0 0 10px -2px rgba(99, 102, 241, 0.15);
+}
+
+.glow-card-cyan:hover {
+  box-shadow: 0 0 30px 0px rgba(6, 182, 212, 0.35), 0 0 20px 0px rgba(168, 85, 247, 0.25);
+}
+
+.glow-card-purple {
+  box-shadow: 0 0 25px -5px rgba(168, 85, 247, 0.25);
+}
+
+.btn-gradient-cyan-purple {
+  background: linear-gradient(135deg, #00d2ff 0%, #6366f1 50%, #d946ef 100%);
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.45);
+  transition: all 0.25s ease;
+}
+
+.btn-gradient-cyan-purple:hover {
+  background: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #e879f9 100%);
+  box-shadow: 0 0 30px rgba(217, 70, 239, 0.6), 0 0 15px rgba(6, 182, 212, 0.5);
+  transform: translateY(-1px);
+}
+
+/* Custom scrollbars for clean night mode */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #070a14;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+

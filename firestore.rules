@@ -1,0 +1,98 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Helper function to verify user ownership
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // ID validation guard
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    // Helper function to verify Admin role from email or Firestore doc
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'mama.ff9522@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    match /users/{userId} {
+      // Only the user themselves or an admin can read user profile data
+      allow read: if isOwner(userId) || isAdmin();
+      // User can create their own profile during initial signup with default welcome bonus (credits <= 500)
+      // or Admin can create
+      allow create: if isValidId(userId) && (
+        isAdmin() || (
+          isOwner(userId) &&
+          (!('role' in request.resource.data) || request.resource.data.role == 'user') &&
+          (!('isLocked' in request.resource.data) || request.resource.data.isLocked == false) &&
+          (!('status' in request.resource.data) || request.resource.data.status == 'active') &&
+          (!('credits' in request.resource.data) || request.resource.data.credits <= 500) &&
+          (!('remainingCredits' in request.resource.data) || request.resource.data.remainingCredits <= 500) &&
+          !('lastTopupAmount' in request.resource.data)
+        )
+      );
+
+      // Admin can update all fields; regular owner cannot change role, status, isLocked, or any credit fields
+      allow update: if isAdmin() || (
+        isOwner(userId) && 
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'role', 'isLocked', 'status', 'credits', 'remainingCredits',
+          'lastTopupAmount', 'lastTopupAt', 'lastPaymentMethod'
+        ])
+      );
+      // Only admin can delete users
+      allow delete: if isAdmin();
+
+      // User characters subcollection
+      match /characters/{characterId} {
+        allow read: if isSignedIn() && isOwner(userId);
+        allow create, update: if isSignedIn() && isOwner(userId) && isValidId(characterId);
+        allow delete: if isSignedIn() && isOwner(userId);
+      }
+
+      // User locations subcollection
+      match /locations/{locationId} {
+        allow read: if isSignedIn() && isOwner(userId);
+        allow create, update: if isSignedIn() && isOwner(userId) && isValidId(locationId);
+        allow delete: if isSignedIn() && isOwner(userId);
+      }
+    }
+
+    // Top-level characters collection (legacy / fallback storage)
+    // Only the signed-in owner (or an admin) may read/update/delete; create must stamp own uid.
+    match /characters/{characterId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(characterId) && (isAdmin() || (isSignedIn() && request.resource.data.userId == request.auth.uid));
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == request.auth.uid
+      );
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // Top-level locations collection (legacy / fallback storage)
+    match /locations/{locationId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(locationId) && (isAdmin() || (isSignedIn() && request.resource.data.userId == request.auth.uid));
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == request.auth.uid
+      );
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
+    // Everything else is denied by default (Firestore rules are deny-by-default).
+  }
+}

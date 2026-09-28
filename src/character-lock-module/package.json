@@ -1,0 +1,29 @@
+{
+  "name": "@sala/character-lock-module",
+  "version": "1.0.0",
+  "description": "Production-grade Character Lock and Visual Consistency Module for AI Video & Image Generation",
+  "main": "index.ts",
+  "types": "index.ts",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "character-lock",
+    "ai-video",
+    "consistency",
+    "gemini-vision",
+    "multimodal",
+    "prompt-injection"
+  ],
+  "author": "Sala AI Engineering Team",
+  "license": "MIT",
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "dependencies": {
+    "lucide-react": "^1.16.0",
+    "firebase": "^11.0.0",
+    "@google/genai": "^0.1.1"
+  }
+}

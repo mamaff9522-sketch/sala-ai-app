@@ -1,0 +1,190 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile and stored API key configuration",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Authentication User ID"
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "User display name"
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "User profile photo URL"
+        },
+        "apiKey": {
+          "type": "string",
+          "description": "Stored primary API key (e.g. Gemini)"
+        },
+        "apiKeys": {
+          "type": "object",
+          "description": "Mapping of provider names to user API keys"
+        },
+        "credits": {
+          "type": "number",
+          "description": "Available credits balance for generation"
+        },
+        "isLocked": {
+          "type": "boolean",
+          "description": "Indicates whether the account is suspended or locked"
+        },
+        "status": {
+          "type": "string",
+          "description": "Account status: active or locked"
+        },
+        "role": {
+          "type": "string",
+          "description": "User role: user or admin"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last updated ISO timestamp"
+        }
+      },
+      "required": ["uid"]
+    },
+    "Character": {
+      "title": "Character",
+      "description": "Character consistency profile for video generation",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique character ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Character name"
+        },
+        "gender": {
+          "type": "string",
+          "description": "Character gender"
+        },
+        "age": {
+          "type": "string",
+          "description": "Character age"
+        },
+        "description": {
+          "type": "string",
+          "description": "Appearance description"
+        },
+        "triggerTag": {
+          "type": "string",
+          "description": "Trigger tag for prompt consistency"
+        },
+        "avatarUrl": {
+          "type": "string",
+          "description": "Main avatar image URL"
+        },
+        "referenceImages": {
+          "type": "array",
+          "description": "List of reference image URLs"
+        },
+        "outfitDescription": {
+          "type": "string",
+          "description": "Outfit and clothing details"
+        },
+        "consistencyStrength": {
+          "type": "number",
+          "description": "Consistency lock strength"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation ISO timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Update ISO timestamp"
+        }
+      },
+      "required": ["id", "name"]
+    },
+    "Location": {
+      "title": "Location",
+      "description": "Location consistency lock profile for multi-clip video generation",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique location ID"
+        },
+        "userId": {
+          "type": "string",
+          "description": "Owner user ID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Location name"
+        },
+        "lockStatus": {
+          "type": "string",
+          "description": "Lock status: UNLOCKED or LOCKED"
+        },
+        "imageAnalysisStatus": {
+          "type": "string",
+          "description": "Image analysis status: NOT_ANALYZED, AI_DRAFT, USER_CONFIRMED, LOCKED, ANALYSIS_FAILED"
+        },
+        "referenceImageUrl": {
+          "type": "string",
+          "description": "Primary reference image URL"
+        },
+        "imageHash": {
+          "type": "string",
+          "description": "Deterministic image hash for caching and deduplication"
+        },
+        "visualProfile": {
+          "type": "object",
+          "description": "Detailed architectural and spatial visual profile"
+        },
+        "storyProfile": {
+          "type": "object",
+          "description": "Story location metadata and notes"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation ISO timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Update ISO timestamp"
+        }
+      },
+      "required": ["id", "name"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Stores user profile, credits, lock status, and private API keys"
+    },
+    "/users/{userId}/characters/{characterId}": {
+      "schema": "Character",
+      "description": "Stores user created characters with visual consistency profiles"
+    },
+    "/characters/{characterId}": {
+      "schema": "Character",
+      "description": "Stores public and shared characters"
+    },
+    "/users/{userId}/locations/{locationId}": {
+      "schema": "Location",
+      "description": "Stores user created locations with architectural consistency profiles"
+    },
+    "/locations/{locationId}": {
+      "schema": "Location",
+      "description": "Stores public and shared locations"
+    }
+  }
+}

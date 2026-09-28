@@ -1,0 +1,25 @@
+{
+  "name": "ศาลาเอไอ (Sala AI) - AI Video & Multi-Clip Continuity Studio",
+  "short_name": "Sala AI",
+  "description": "แพลตฟอร์มสตูดิโอ AI สร้างภาพและวิดีโอหลายคลิปต่อเนื่อง รองรับ Master Continuity Lock และ Multi-Provider Architecture",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#090d16",
+  "theme_color": "#4f46e5",
+  "categories": ["productivity", "multimedia", "entertainment"],
+  "icons": [
+    {
+      "src": "/assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
