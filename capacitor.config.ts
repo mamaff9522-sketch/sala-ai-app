@@ -6,7 +6,11 @@ const config: CapacitorConfig = {
   webDir: 'dist',
   server: {
     url: 'https://ais-dev-h55mv4dnhb3wfi5gazr272-913251346174.asia-southeast1.run.app',
-    androidScheme: 'https'
+    androidScheme: 'https',
+    allowNavigation: [
+      'ais-dev-h55mv4dnhb3wfi5gazr272-913251346174.asia-southeast1.run.app',
+      'aistudio.google.com'
+    ]
   }
 };
 
