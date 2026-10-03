@@ -166,18 +166,39 @@ export function enforceLibraryLocationLocks(
   const knownDescriptions = library.map(l => locationDescriptionOf(l)).filter(d => d.length > 20);
   let previousMatched = '';
   return clips.map(c => {
-    // Location of the clip: selected library card > locked location > clip location > scene heading
-    // ("ฉากที่ 2 — ห้องครัว / ช่วงสาย") > the previous clip's location (sub-clips / mood-title headings)
-    let name = selected?.name || opts.lockedLocation || (c as any).locationName || '';
+    // Location of the clip:
+    // กฎ: ล็อกสถานที่และแสงอัตโนมัติตามเนื้อเรื่อง
+    // ดึงค่า Location และ Lighting/Time จากเนื้อเรื่องของฉากนั้นโดยตรง
+    // เมื่อขึ้นฉากใหม่ ให้รีเซ็ตค่าสภาพแวดล้อมเดิมทิ้งทันที ห้ามนำค่าเดิม (เช่น ป่าทึบ/แสงแดด) ข้ามมาใช้ในฉากใหม่ (เช่น ถ้ำโบราณ/กลางคืน)
+    const clipOwnLocation = (c as any).locationName;
+    const isExplicitContinuation = /(?:ต่อเนื่อง|\(ต่อ\)|continued|cont'?d?)/i.test(String((c as any).title || ''));
+
+    let name = clipOwnLocation || '';
     if (!name) {
       const h = headingLocation(String((c as any).title || ''));
-      if (h.name && (findLocationByName(library, h.name) || h.structured)) name = h.name;
-      else name = previousMatched;
+      const isMoodTitle = /(อารมณ์|ความรู้สึก|ตึงเครียด|เครียด|คืนดี|ดีกัน|ง้อ|หึง|ทะเลาะ|เริ่ม|บทสรุป|ตอนจบ|สรุป|ความจริง|เปิดใจ|สารภาพ|ขอโทษ|ให้อภัย|เข้าใจกัน|โกรธ|เสียใจ|ดีใจ|ตกใจ|ประทับใจ|ซึ้ง|อบอุ่น|หัวเราะ|ร้องไห้|ไคลแม็กซ์|จุดเปลี่ยน|บทนำ|เปิดเรื่อง|ความลับ|เผชิญหน้า|climax|ending|intro|mood|tension|reconcil)/i.test(String((c as any).title || ''));
+      if (h.name && (findLocationByName(library, h.name) || h.structured)) {
+        name = h.name;
+      } else if (isExplicitContinuation || isMoodTitle) {
+        name = previousMatched;
+      } else {
+        name = selected?.name || opts.lockedLocation || '';
+      }
     }
+
     const r = resolveLocationLock(name, library, selected?.id);
-    if (r.found) previousMatched = r.name;
+    if (r.found) {
+      previousMatched = r.name;
+    } else if (!isExplicitContinuation) {
+      previousMatched = '';
+    }
+
     const out: any = { ...c, locationWarnings: r.warnings };
-    if (!r.found) return out as DirectedClipItem;
+    if (!r.found) {
+      // แม้ไม่ตรงกับ Library Card ให้คง locationName เดิมของฉากไว้
+      if (clipOwnLocation) out.locationName = clipOwnLocation;
+      return out as DirectedClipItem;
+    }
 
     const block = formatLocationLockBlock(r);
     // Exact previous blocks / descriptions first (descriptions may contain "Floor:"-style text)
@@ -192,10 +213,14 @@ export function enforceLibraryLocationLocks(
       insertAt = first ? first.start : prompt.length;
     }
     prompt = insertBlock(prompt, insertAt, block);
-    // Gemini output: Atmosphere may carry invented set details -> rebuilt from the locked time / lighting
-    if (opts.rebuildAtmosphere && (opts.timeOfDay || opts.lighting)) {
+
+    // Gemini output: Atmosphere may carry invented set details -> rebuilt from the scene's own time / lighting
+    // กฎ: ใช้ time/lighting ของฉากนั้นโดยตรง (หากฉากมีระบุ) หรือ fallback จาก opts
+    const clipTime = (c as any).timeOfDay || opts.timeOfDay;
+    const clipLight = (c as any).lighting || opts.lighting;
+    if (opts.rebuildAtmosphere && (clipTime || clipLight)) {
       const atm = findSections(prompt).find(s => s.label === 'Atmosphere');
-      if (atm) prompt = tidy(`${prompt.slice(0, atm.start)}Atmosphere: ${[opts.timeOfDay, opts.lighting].filter(Boolean).join(', ')}. ${prompt.slice(atm.end)}`);
+      if (atm) prompt = tidy(`${prompt.slice(0, atm.start)}Atmosphere: ${[clipTime, clipLight].filter(Boolean).join(', ')}. ${prompt.slice(atm.end)}`);
     }
     out.generatedPrompt = prompt;
     out.locationName = r.name;

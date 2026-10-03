@@ -3,7 +3,17 @@
  * Moved verbatim from server.ts so the offline split works without the API server.
  * Browser-safe: imports only pure src/services modules (no Node built-ins).
  */
-import { isReservedSystemKeyword, isMetadataKeyword, parseSalaScript } from './salaDirectorEngine';
+import {
+  isReservedSystemKeyword,
+  isMetadataKeyword,
+  parseSalaScript,
+  stripProhibitedSpeechWords,
+  isVerbatimDialogueInScript,
+  extractVerbatimScriptQuotes,
+  ORIGINAL_DIALOGUE_ONLY,
+  INVENT_DIALOGUE,
+  NARRATION_TO_DIALOGUE
+} from './salaDirectorEngine';
 import { parseStoryStructure, normalizeSceneLocation } from './storyEpisodeEngine';
 import { lightingForTime, analyzeClipContinuity, formatContinuityForPrompt, normalizePoseList, sceneWarningsFor, syncLocationLockInPrompt } from './continuityEngine';
 import { resolveCharacterProfiles, formatCharacterAppearanceLock, mergeDeclaredCharacters, continuityLockCharacter } from './characterAppearance';
@@ -37,11 +47,12 @@ export function parseScriptLocally(scriptText: string, requestedClipCount?: numb
   });
   const characterWarnings = resolvedChars.warnings;
 
+  const quotes = extractVerbatimScriptQuotes(scriptText);
   const dialogues: any[] = [];
   let diagCount = 1;
   rawClips.forEach(c => {
     c.dialogues.forEach(d => {
-      if (d.speaker && !isReservedSystemKeyword(d.speaker) && !isMetadataKeyword(d.speaker)) {
+      if (d.speaker && !isReservedSystemKeyword(d.speaker) && !isMetadataKeyword(d.speaker) && isVerbatimDialogueInScript(d.line, scriptText, quotes)) {
         dialogues.push({
           id: `diag_server_${diagCount++}`,
           speaker: d.speaker,
@@ -81,8 +92,8 @@ export function parseScriptLocally(scriptText: string, requestedClipCount?: numb
     const cleanTitle = (c.title || `ฉากที่ ${c.clipNumber}`).replace(/^(ฉากที่\s*\d+)\s*[:：]?\s*[—–\-:]\s*/, '$1: ');
     const sceneBody = c.actions.join(' ');
     const sceneDialogues = dialogues.filter((d) => d.sceneNumber === c.clipNumber);
-    const diagSummary = sceneDialogues.map((d) => `${d.speaker}: "${d.line}"`).join(' ');
-    const sceneFullText = `${c.title} ${sceneBody} ${diagSummary}`;
+    const diagSummary = sceneDialogues.length > 0 ? sceneDialogues.map((d) => `${d.speaker}: "${d.line}"`).join(' ') : 'NONE';
+    const sceneFullText = `${c.title} ${sceneBody} ${diagSummary !== 'NONE' ? diagSummary : ''}`;
 
     const sceneCharNames = characters
       .filter((char) => {
@@ -106,8 +117,17 @@ export function parseScriptLocally(scriptText: string, requestedClipCount?: numb
     if (sceneTime) promptParts.push(`Time: ${sceneTime}`);
     if (sceneLighting) promptParts.push(`Lighting Lock: ${sceneLighting}`);
     if (sceneBody) promptParts.push(`Scene Action: ${sceneBody}`);
-    if (diagSummary) promptParts.push(`Dialogue: ${diagSummary}`);
+    if (sceneDialogues.length > 0) promptParts.push(`Dialogue: ${diagSummary}`);
     if (c.endState) promptParts.push(`Ending momentum: ${c.endState}`);
+
+    let promptStr = promptParts.join(', ');
+    let sceneAction = sceneBody || `เหตุการณ์ในฉากที่ ${c.clipNumber}`;
+    const isSilent = sceneDialogues.length === 0;
+
+    if (isSilent) {
+      promptStr = stripProhibitedSpeechWords(promptStr);
+      sceneAction = stripProhibitedSpeechWords(sceneAction);
+    }
 
     return {
       sceneNumber: c.clipNumber,
@@ -117,9 +137,16 @@ export function parseScriptLocally(scriptText: string, requestedClipCount?: numb
       lighting: sceneLighting,
       camera: c.cameraDirectives[0] || 'Cinematic tracking shot, 35mm prime, Medium Shot',
       characters: charList,
-      action: sceneBody || `เหตุการณ์ในฉากที่ ${c.clipNumber}`,
+      action: sceneAction,
       dialogue: diagSummary,
-      prompt: promptParts.join(', ')
+      actionNarrationLock: {
+        action: sceneAction,
+        movement: 'เคลื่อนไหวเป็นธรรมชาติสมจริงตามบท',
+        emotionExpression: 'สีหน้าสื่ออารมณ์ตามสถานการณ์',
+        narration: sceneBody,
+        isSilent
+      },
+      prompt: promptStr
     };
   });
 
@@ -154,6 +181,9 @@ export function parseScriptLocally(scriptText: string, requestedClipCount?: numb
       lensType: '35mm Anamorphic Prime f/1.8',
       props: detectedProps,
     },
+    ORIGINAL_DIALOGUE_ONLY,
+    INVENT_DIALOGUE,
+    NARRATION_TO_DIALOGUE,
     source: 'fallback-parser'
   };
 }

@@ -59,23 +59,18 @@ interface AdminProps {
   isAdmin?: boolean;
   onNavigateToStudio?: () => void;
   onLogin?: () => void;
+  onSwitchAccount?: () => void;
 }
 
 export const Admin: React.FC<AdminProps> = ({
   authUser,
   isAdmin = false,
   onNavigateToStudio,
-  onLogin
+  onLogin,
+  onSwitchAccount
 }) => {
   // Access Denied guard: If user is not authenticated or not an admin, deny access immediately
   const isAuthorized = Boolean(authUser && isAdmin);
-
-  // ป้องกัน /admin route ถ้าไม่ใช่ admin ให้ redirect กลับหน้าหลักทันที
-  useEffect(() => {
-    if (!isAuthorized && onNavigateToStudio) {
-      onNavigateToStudio();
-    }
-  }, [isAuthorized, onNavigateToStudio]);
 
   const [users, setUsers] = useState<FirestoreUserDoc[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -424,25 +419,38 @@ export const Admin: React.FC<AdminProps> = ({
           <p className="text-sm text-slate-400 mb-6 leading-relaxed max-w-md mx-auto">
             หน้านี้สงวนไว้สำหรับผู้ดูแลระบบ (Admin) เท่านั้น บัญชีของคุณไม่มีสิทธิ์เข้าถึงแดชบอร์ดจัดการผู้ใช้ Firestore
           </p>
-          <div className="flex items-center justify-center gap-3">
+          {authUser && authUser.uid !== 'demo_creator' ? (
+            <div className="mb-6 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-xs text-slate-300">
+              <span className="text-slate-400">เข้าสู่ระบบด้วย:</span>
+              <span className="font-semibold text-amber-300">{authUser.email || authUser.displayName}</span>
+              <span className="text-[10px] text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-md ml-1">ไม่ใช่แอดมิน</span>
+            </div>
+          ) : (
+            <div className="mb-6 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-xs text-slate-400">
+              <span>สถานะ: ยังไม่ได้เข้าสู่ระบบ</span>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            {(onSwitchAccount || onLogin) && (
+              <button
+                type="button"
+                id="btn-admin-switch-account"
+                onClick={onSwitchAccount || onLogin}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-sm transition-all shadow-md shadow-amber-500/20 active:scale-95 cursor-pointer flex items-center gap-2"
+              >
+                <Users className="w-4 h-4" />
+                <span>{authUser && authUser.uid !== 'demo_creator' ? 'สลับไปยังบัญชีแอดมิน' : 'เข้าสู่ระบบด้วยบัญชีแอดมิน'}</span>
+              </button>
+            )}
             {onNavigateToStudio && (
               <button
                 type="button"
                 id="btn-admin-denied-back"
                 onClick={onNavigateToStudio}
-                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-sm transition-all shadow-md shadow-indigo-600/20 active:scale-95 cursor-pointer"
+                className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-sm transition-all active:scale-95 border border-slate-700 cursor-pointer"
               >
                 กลับสู่หน้าหลัก / สตูดิโอ
-              </button>
-            )}
-            {!authUser && onLogin && (
-              <button
-                type="button"
-                id="btn-admin-denied-login"
-                onClick={onLogin}
-                className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm transition-all active:scale-95 border border-slate-700 cursor-pointer"
-              >
-                เข้าสู่ระบบด้วย Google
               </button>
             )}
           </div>

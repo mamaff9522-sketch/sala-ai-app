@@ -18,7 +18,8 @@ import {
   parseSceneHeading,
   normalizeSceneLocation,
   applyEpisodeLocks,
-  hasExplicitEndingMarker
+  hasExplicitEndingMarker,
+  splitStoryIntoSceneUnits
 } from '../src/services/storyEpisodeEngine';
 import {
   analyzeClipContinuity,
@@ -35,9 +36,23 @@ import {
   attachClipContinuity,
   checkDialogueDensity,
   dedupeDialogueEntries,
+  normalizeDialogueLine,
   enforceLibraryCharacterLocks,
   lockDuplicationProblems,
-  summarizeAutoSplit
+  summarizeAutoSplit,
+  ORIGINAL_DIALOGUE_ONLY,
+  INVENT_DIALOGUE,
+  NARRATION_TO_DIALOGUE,
+  isVerbatimDialogueInScript,
+  stripProhibitedSpeechWords,
+  enforceOriginalDialogueOnly,
+  autoRegenerateClipsOnInventedDialogue,
+  extractVerbatimScriptQuotes,
+  parseSalaScript,
+  buildDialogueCameraTag,
+  formatDialogueWithCameraControl,
+  refreshClipPromptWithCameraControls,
+  autoRegenerateClipsOnMissingCameraTags
 } from '../src/services/salaDirectorEngine';
 import { syncLocationLockInPrompt, checkStoryRepeats } from '../src/services/continuityEngine';
 import {
@@ -787,5 +802,652 @@ console.log('\nFIX4: robust Character Lock (multi-sentence library text) + Locat
     assert.ok(!validateSalaMultiClipPrompts(build(STORY, lock), []).warnings.some(w => w.includes('สถานที่')));
   });
 }
+
+// ---------------------------------------------------------------------------
+// Original Dialogue Integrity & Validation Tests (PROD-DIALOGUE-FIX)
+// ---------------------------------------------------------------------------
+console.log('\nOriginal Dialogue Integrity & Validation Tests');
+
+check('ORIGINAL_DIALOGUE_ONLY flags and verbatim script quote extraction', () => {
+  assert.equal(ORIGINAL_DIALOGUE_ONLY, true);
+  assert.equal(INVENT_DIALOGUE, false);
+  assert.equal(NARRATION_TO_DIALOGUE, false);
+
+  const sampleQuotes = extractVerbatimScriptQuotes(SAMPLE);
+  // All 5 dialogue lines must be extracted (stored normalized without punctuation/quotes)
+  assert.ok(sampleQuotes.has(normalizeDialogueLine('ได้ยินไหม')));
+  assert.ok(sampleQuotes.has(normalizeDialogueLine('มาหาฉันสิ')));
+  assert.ok(sampleQuotes.has(normalizeDialogueLine('อยู่ใกล้ๆ พี่ไว้นะ')));
+  assert.ok(sampleQuotes.has(normalizeDialogueLine('ใครอยู่ตรงนั้น!')));
+  assert.ok(sampleQuotes.has(normalizeDialogueLine('พี่ต้น... มันตามเรามา')));
+
+  // Narration must NOT be in quotes
+  assert.equal(sampleQuotes.has(normalizeDialogueLine('น้องฟ้าใสกับพี่ต้นนั่งผิงไฟอยู่หน้าเต็นท์')), false);
+  assert.equal(sampleQuotes.has(normalizeDialogueLine('พี่ต้นหยุดเขี่ยกองไฟแล้วเงยหน้าขึ้นฟัง')), false);
+  assert.equal(sampleQuotes.has(normalizeDialogueLine('เงาของต้นไม้ไหวไปมาทั้งที่ไม่มีลม')), false);
+
+  // isVerbatimDialogueInScript checks
+  assert.equal(isVerbatimDialogueInScript('ได้ยินไหม', SAMPLE), true);
+  assert.equal(isVerbatimDialogueInScript('มาหาฉันสิ', SAMPLE), true);
+  assert.equal(isVerbatimDialogueInScript('บทพูดที่ AI คิดขึ้นมาเอง', SAMPLE), false);
+  assert.equal(isVerbatimDialogueInScript('เงาของต้นไม้ไหวไปมาทั้งที่ไม่มีลม', SAMPLE), false);
+});
+
+check('Inline dialogue without colon is parsed into dialogues (SAMPLE script)', () => {
+  const clips = buildSalaMultiClipPrompts({
+    scriptText: SAMPLE,
+    clipDurationSeconds: 10,
+    clipCount: 5,
+    continuityLock: { characterName: 'น้องฟ้าใส' }
+  });
+
+  assert.equal(clips.length, 5);
+  // Clip 1 has verbatim dialogue "ได้ยินไหม"
+  assert.equal(clips[0].dialogues.length, 1);
+  assert.equal(clips[0].dialogues[0].speaker, 'น้องฟ้าใส');
+  assert.equal(clips[0].dialogues[0].line, 'ได้ยินไหม');
+  assert.ok(clips[0].dialogue?.includes('น้องฟ้าใส: "ได้ยินไหม"'));
+  assert.ok(
+    clips[0].generatedPrompt.includes('Dialogue: น้องฟ้าใส speaks: "ได้ยินไหม"') ||
+    clips[0].generatedPrompt.includes('[น้องฟ้าใส]: "ได้ยินไหม"')
+  );
+
+  // Clip 2 has verbatim dialogue "มาหาฉันสิ"
+  assert.equal(clips[1].dialogues.length, 1);
+  assert.equal(clips[1].dialogues[0].speaker, 'เสียงปริศนา');
+  assert.equal(clips[1].dialogues[0].line, 'มาหาฉันสิ');
+
+  // Clip 3 has verbatim dialogue "อยู่ใกล้ๆ พี่ไว้นะ"
+  assert.equal(clips[2].dialogues.length, 1);
+  assert.equal(clips[2].dialogues[0].speaker, 'พี่ต้น');
+  assert.equal(clips[2].dialogues[0].line, 'อยู่ใกล้ๆ พี่ไว้นะ');
+
+  // Clip 4 has verbatim dialogue "ใครอยู่ตรงนั้น!"
+  assert.equal(clips[3].dialogues.length, 1);
+  assert.equal(clips[3].dialogues[0].speaker, 'น้องฟ้าใส');
+  assert.equal(clips[3].dialogues[0].line, 'ใครอยู่ตรงนั้น!');
+
+  // Clip 5 has verbatim dialogue "พี่ต้น... มันตามเรามา"
+  assert.equal(clips[4].dialogues.length, 1);
+  assert.equal(clips[4].dialogues[0].speaker, 'น้องฟ้าใส');
+  assert.equal(clips[4].dialogues[0].line, 'พี่ต้น... มันตามเรามา');
+});
+
+check('Shot with no dialogue in original script gets dialogue = "NONE" and no speech verbs', () => {
+  const silentStory = `ชื่อเรื่อง: แคมป์เงียบ
+ตัวละคร: น้องฟ้าใส, พี่ต้น
+
+ฉากที่ 1: แคมป์ในป่า
+น้องฟ้าใสกระซิบ "ได้ยินไหม"
+
+ฉากที่ 2: ในเต็นท์
+พี่ต้นนั่งเหม่อมองกองไฟอย่างเงียบสงบ ไม่พูดอะไรทั้งสิ้น
+`;
+  const clips = buildSalaMultiClipPrompts({
+    scriptText: silentStory,
+    clipDurationSeconds: 10,
+    clipCount: 2,
+    continuityLock: { characterName: 'น้องฟ้าใส' }
+  });
+
+  assert.equal(clips.length, 2);
+  // Clip 1 has dialogue
+  assert.equal(clips[0].dialogue, 'น้องฟ้าใส: "ได้ยินไหม"');
+  assert.equal(clips[0].dialogues.length, 1);
+
+  // Clip 2 has NO dialogue -> must be "NONE", dialogues must be empty
+  assert.equal(clips[1].dialogue, 'NONE');
+  assert.equal(clips[1].dialogues.length, 0);
+  assert.ok(!clips[1].generatedPrompt.includes('Dialogue:'));
+  assert.ok(!/shouting|yelling|\bsays\b|\basks\b|\bspeaks\b/i.test(clips[1].generatedPrompt));
+});
+
+check('enforceOriginalDialogueOnly rejects invented dialogues and auto-rebuilds clip prompt', () => {
+  const clips = buildSalaMultiClipPrompts({
+    scriptText: SAMPLE,
+    clipDurationSeconds: 10,
+    clipCount: 5,
+    continuityLock: { characterName: 'น้องฟ้าใส' }
+  });
+
+  // Inject a fake invented dialogue into clip 1
+  clips[0].dialogues.push({
+    id: 'fake_1',
+    speaker: 'น้องฟ้าใส',
+    line: 'ประโยคนี้ AI แต่งเพิ่มขึ้นมาเองไม่มีในบท',
+    clipNumber: 1
+  });
+
+  const res = enforceOriginalDialogueOnly(clips, SAMPLE);
+  assert.equal(res.rejectedCount, 1);
+  // The fake dialogue was rejected; only genuine original dialogue remains
+  assert.equal(res.clips[0].dialogues.length, 1);
+  assert.equal(res.clips[0].dialogues[0].line, 'ได้ยินไหม');
+  assert.ok(!res.clips[0].generatedPrompt.includes('ประโยคนี้ AI แต่งเพิ่มขึ้นมาเอง'));
+});
+
+check('validateSalaMultiClipPrompts returns validation flags and reports invented dialogue errors', () => {
+  const clips = buildSalaMultiClipPrompts({
+    scriptText: SAMPLE,
+    clipDurationSeconds: 10,
+    clipCount: 5,
+    continuityLock: { characterName: 'น้องฟ้าใส' }
+  });
+
+  // Valid clips validate successfully
+  const validRes = validateSalaMultiClipPrompts(clips, ['น้องฟ้าใส', 'พี่ต้น'], SAMPLE);
+  assert.equal(validRes.isValid, true);
+  assert.equal(validRes.ORIGINAL_DIALOGUE_ONLY, true);
+  assert.equal(validRes.INVENT_DIALOGUE, false);
+  assert.equal(validRes.NARRATION_TO_DIALOGUE, false);
+
+  // Cloned clips with invented dialogue fail validation
+  const invalidClips = JSON.parse(JSON.stringify(clips));
+  invalidClips[1].dialogues.push({
+    id: 'fake_d',
+    speaker: 'น้องฟ้าใส',
+    line: 'ฉันว่าเราต้องวิ่งแล้วล่ะ',
+    clipNumber: 2
+  });
+
+  const invalidRes = validateSalaMultiClipPrompts(invalidClips, ['น้องฟ้าใส', 'พี่ต้น'], SAMPLE);
+  assert.equal(invalidRes.isValid, false);
+  assert.ok(invalidRes.errors.some(e => e.includes('Invented/Altered Dialogue') && e.includes('ฉันว่าเราต้องวิ่งแล้วล่ะ')));
+});
+
+check('localScriptParser sets dialogue = "NONE" for scenes without dialogue', () => {
+  const script = `ชื่อเรื่อง: ท่องเที่ยว
+ตัวละคร: อาทิตย์, เมฆ
+
+ฉากที่ 1: สถานีรถไฟ
+อาทิตย์: "รถไฟจะมาเมื่อไหร่"
+
+ฉากที่ 2: บนรถไฟ
+เมฆมองออกไปนอกหน้าต่างดูทิวทัศน์เงียบๆ
+`;
+  const result = parseScriptLocally(script, 2);
+  assert.equal(result.scenes.length, 2);
+  assert.equal(result.scenes[0].dialogue, 'อาทิตย์: "รถไฟจะมาเมื่อไหร่"');
+  assert.equal(result.scenes[1].dialogue, 'NONE');
+  assert.ok(!result.scenes[1].prompt.includes('Dialogue:'));
+  assert.ok(!/shouting|yelling|\bsays\b|\basks\b|\bspeaks\b/i.test(result.scenes[1].prompt));
+});
+
+check('autoRegenerateClipsOnInventedDialogue rejects invented dialogue and recreates clean clips automatically from source script', () => {
+  const options = {
+    scriptText: SAMPLE,
+    clipDurationSeconds: 10,
+    clipCount: 5,
+    continuityLock: { characterName: 'น้องฟ้าใส' }
+  };
+  const validClips = buildSalaMultiClipPrompts(options);
+
+  // If clips are valid, no regeneration is triggered
+  const cleanCheck = autoRegenerateClipsOnInventedDialogue(validClips, options);
+  assert.equal(cleanCheck.rejectedCount, 0);
+  assert.equal(cleanCheck.wasRegenerated, false);
+  assert.equal(cleanCheck.clips.length, 5);
+
+  // If invented dialogue is injected into a clip:
+  const corruptedClips = JSON.parse(JSON.stringify(validClips));
+  corruptedClips[0].dialogues.push({
+    id: 'fake_d1',
+    speaker: 'น้องฟ้าใส',
+    line: 'บทพูดปลอมที่ AI แต่งเพิ่มขึ้นมาเองไม่มีในต้นฉบับ',
+    clipNumber: 1
+  });
+
+  // Must reject invalid clips and auto-regenerate fresh clean clips from the original script
+  const regenCheck = autoRegenerateClipsOnInventedDialogue(corruptedClips, options);
+  assert.equal(regenCheck.wasRegenerated, true);
+  assert.equal(regenCheck.rejectedCount, 1);
+  assert.equal(regenCheck.clips.length, 5);
+  // The auto-regenerated clips have valid original dialogues only
+  assert.equal(regenCheck.clips[0].dialogues[0].line, 'ได้ยินไหม');
+  assert.ok(!JSON.stringify(regenCheck.clips).includes('บทพูดปลอมที่ AI แต่งเพิ่มขึ้นมาเอง'));
+});
+
+check('Narration, action, thought, and facial expression directives are never converted to dialogue (NARRATION_TO_DIALOGUE = false)', () => {
+  const storyWithDirectives = `ชื่อเรื่อง: ทดสอบไดเรกทีฟ
+ตัวละคร: น้องฟ้าใส, พี่ต้น
+
+ฉากที่ 1: หน้าบ้าน
+(การกระทำ: น้องฟ้าใสเดินไปเปิดประตูบ้านอย่างช้าๆ)
+(ความคิด: หวังว่าจะไม่มีใครตามมานะ)
+(สีหน้า: กังวลและหวาดระแวง)
+(บทบรรยาย: สายลมพัดใบไม้ปลิวไหว)
+น้องฟ้าใส: "มีใครอยู่ไหม"
+`;
+  const parsedScript = parseSalaScript(storyWithDirectives);
+  const clip = parsedScript.clips[0];
+
+  // Exactly 1 dialogue: "มีใครอยู่ไหม"
+  assert.equal(clip.dialogues.length, 1);
+  assert.equal(clip.dialogues[0].speaker, 'น้องฟ้าใส');
+  assert.equal(clip.dialogues[0].line, 'มีใครอยู่ไหม');
+
+  // Directives went to actions, never to dialogue
+  assert.ok(clip.actions.some(a => a.includes('เดินไปเปิดประตูบ้าน')));
+  assert.ok(clip.actions.some(a => a.includes('หวังว่าจะไม่มีใครตามมานะ')));
+  assert.ok(clip.actions.some(a => a.includes('กังวลและหวาดระแวง')));
+  assert.ok(clip.actions.some(a => a.includes('สายลมพัดใบไม้ปลิวไหว')));
+  assert.ok(!clip.dialogues.some(d => d.line.includes('เดินไปเปิดประตูบ้าน')));
+  assert.ok(!clip.dialogues.some(d => d.line.includes('กังวลและหวาดระแวง')));
+
+  // Test with buildSalaMultiClipPrompts
+  const builtClips = buildSalaMultiClipPrompts({
+    scriptText: storyWithDirectives,
+    clipDurationSeconds: 10,
+    clipCount: 1,
+    continuityLock: { characterName: 'น้องฟ้าใส' }
+  });
+  assert.equal(builtClips[0].dialogues.length, 1);
+  assert.equal(builtClips[0].dialogues[0].line, 'มีใครอยู่ไหม');
+  assert.ok(!builtClips[0].generatedPrompt.includes('Dialogue: น้องฟ้าใส speaks: "กังวลและหวาดระแวง"'));
+});
+
+check('Full 9-rule validation on SAMPLE script: Verbatim extraction, Dialogue Lock, and validation flags', () => {
+  const clips = buildSalaMultiClipPrompts({
+    scriptText: SAMPLE,
+    clipDurationSeconds: 10,
+    clipCount: 5,
+    continuityLock: {
+      characterName: 'น้องฟ้าใส',
+      characterAppearance: 'หญิงสาวผมสั้น สวมเสื้อแจ็คเก็ตสีเขียว',
+      location: 'แคมป์ในป่า',
+      timeOfDay: 'กลางคืน'
+    }
+  });
+
+  assert.equal(clips.length, 5);
+  // Rule 1 & 6: Dialogue from original script word-for-word with character name
+  assert.equal(clips[0].dialogue, 'น้องฟ้าใส: "ได้ยินไหม"');
+  assert.equal(clips[1].dialogue, 'เสียงปริศนา: "มาหาฉันสิ"');
+  assert.equal(clips[2].dialogue, 'พี่ต้น: "อยู่ใกล้ๆ พี่ไว้นะ"');
+  assert.equal(clips[3].dialogue, 'น้องฟ้าใส: "ใครอยู่ตรงนั้น!"');
+  assert.equal(clips[4].dialogue, 'น้องฟ้าใส: "พี่ต้น... มันตามเรามา"');
+
+  // Rule 8: Character Lock & Location continuity preserved
+  clips.forEach(c => {
+    assert.ok(c.generatedPrompt.includes('Character Lock:'));
+    assert.ok(c.generatedPrompt.includes('Location:'));
+  });
+
+  // Validation before output flags
+  const validation = validateSalaMultiClipPrompts(clips, ['น้องฟ้าใส', 'พี่ต้น'], SAMPLE);
+  assert.equal(validation.isValid, true);
+  assert.equal(validation.ORIGINAL_DIALOGUE_ONLY, true);
+  assert.equal(validation.INVENT_DIALOGUE, false);
+  assert.equal(validation.NARRATION_TO_DIALOGUE, false);
+});
+
+// ==========================================
+// CAMERA CONTROL & BACKGROUND CONTROL TESTS
+// ==========================================
+
+check('buildDialogueCameraTag generates strict camera brackets with Face Lock and Location Lock', () => {
+  const otsTag = buildDialogueCameraTag({
+    camIndex: 1,
+    angle: 'OTS',
+    speaker: 'น้องน้ำ',
+    otherCharacters: ['พี่ทุย'],
+    bgControl: 'SOFT',
+    locationName: 'หน้าบ้าน'
+  });
+  assert.equal(otsTag, "[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location, BG SOFT]");
+
+  const midTag = buildDialogueCameraTag({
+    camIndex: 2,
+    angle: 'MID',
+    speaker: 'พี่ทุย',
+    otherCharacters: ['น้องน้ำ'],
+    allCharacters: ['พี่ทุย', 'น้องน้ำ'],
+    bgControl: 'CLEAR',
+    locationName: 'หน้าบ้าน'
+  });
+  assert.equal(midTag, "[CAM-2: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location, BG CLEAR]");
+
+  const cuTag = buildDialogueCameraTag({
+    camIndex: 1,
+    angle: 'CU',
+    speaker: 'น้องฟ้าใส',
+    bgControl: 'AUTO'
+  });
+  assert.equal(cuTag, "[CAM-1: CU — tight close-up framing focused clearly on Nong-Fahsai's locked face, preserve same location, BG SOFT]");
+
+  const twoSTag = buildDialogueCameraTag({
+    camIndex: 1,
+    angle: '2S',
+    speaker: 'พี่ต้น',
+    otherCharacters: ['น้องฟ้าใส'],
+    bgControl: 'SOFT'
+  });
+  assert.equal(twoSTag, "[CAM-1: 2S — two-shot framing showing P'Ton and Nong-Fahsai together in frame, preserve locked faces, locked positions and same location, BG SOFT]");
+});
+
+check('formatDialogueWithCameraControl matches exact user specification and CAM-1/CAM-2 order', () => {
+  const dialogues = [
+    {
+      id: 'd1',
+      speaker: 'น้องน้ำ',
+      line: 'พี่ทุย...เงินเดือนออกวันนี้ใช่ไหม?',
+      cameraAngles: ['OTS' as const],
+      backgroundControl: 'SOFT' as const,
+      clipNumber: 1
+    },
+    {
+      id: 'd2',
+      speaker: 'พี่ทุย',
+      line: 'ออกแล้วจ้ะ...แต่พี่ว่ามันออกเร็วไปหน่อย',
+      cameraAngles: ['MID' as const],
+      backgroundControl: 'CLEAR' as const,
+      clipNumber: 1
+    }
+  ];
+
+  const formatted = formatDialogueWithCameraControl(dialogues, ['น้องน้ำ', 'พี่ทุย'], 'หน้าบ้าน');
+
+  // Must contain CAM-1 bracket with OTS attached directly to Nong-Nam dialogue
+  assert.ok(formatted.includes("[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location, BG SOFT]"));
+  assert.ok(formatted.includes('[น้องน้ำ]: "พี่ทุย...เงินเดือนออกวันนี้ใช่ไหม?"'));
+
+  // Must contain CAM-2 bracket with MID attached directly to P'Tui dialogue
+  assert.ok(formatted.includes("[CAM-2: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location, BG CLEAR]"));
+  assert.ok(formatted.includes('[พี่ทุย]: "ออกแล้วจ้ะ...แต่พี่ว่ามันออกเร็วไปหน่อย"'));
+
+  // Dual camera on single dialogue: CAM-1 then CAM-2 in the order selected, line not repeated
+  const dualCamDialogue = [
+    {
+      id: 'd3',
+      speaker: 'น้องน้ำ',
+      line: 'พี่ทุย...เงินเดือนออกวันนี้ใช่ไหม?',
+      cameraAngles: ['OTS' as const, 'MID' as const],
+      backgroundControl: 'SOFT' as const,
+      clipNumber: 1
+    }
+  ];
+
+  const dualFormatted = formatDialogueWithCameraControl(dualCamDialogue, ['น้องน้ำ', 'พี่ทุย']);
+  assert.ok(dualFormatted.includes('[CAM-1: OTS —'));
+  assert.ok(dualFormatted.includes('[CAM-2: MID —'));
+  // CAM-1 must precede CAM-2
+  assert.ok(dualFormatted.indexOf('CAM-1') < dualFormatted.indexOf('CAM-2'));
+  // Spoken line must appear exactly once
+  const occurrences = (dualFormatted.match(/พี่ทุย\.\.\.เงินเดือนออกวันนี้ใช่ไหม\?/g) || []).length;
+  assert.equal(occurrences, 1);
+});
+
+check('Prompt Generator Rule: Camera commands must be attached directly to dialogue, not at top of clip', () => {
+  const testClip = {
+    clipNumber: 1,
+    title: 'ฉากที่ 1',
+    durationSeconds: 10,
+    sceneSummary: 'น้องน้ำกับพี่ทุยยืนคุยกันหน้าบ้าน',
+    startAction: 'น้องน้ำเดินเข้ามาหาพี่ทุย',
+    endAction: 'พี่ทุยหันมาสบตาน้องน้ำ',
+    dialogues: [
+      {
+        id: 'd1',
+        speaker: 'น้องน้ำ',
+        line: 'พี่ทุย...เงินเดือนออกวันนี้ใช่ไหม?',
+        cameraAngles: ['OTS' as const],
+        backgroundControl: 'SOFT' as const,
+        clipNumber: 1
+      },
+      {
+        id: 'd2',
+        speaker: 'พี่ทุย',
+        line: 'ออกแล้วจ้ะ...แต่พี่ว่ามันออกเร็วไปหน่อย',
+        cameraAngles: ['MID' as const],
+        backgroundControl: 'CLEAR' as const,
+        clipNumber: 1
+      }
+    ],
+    continuityLockSummary: 'Character: น้องน้ำ',
+    audioDirectiveSummary: 'Ambient',
+    locationName: 'หน้าบ้าน',
+    charactersPresent: ['น้องน้ำ', 'พี่ทุย'],
+    generatedPrompt: 'Setting: หน้าบ้าน. Character Lock: น้องน้ำ, หญิงสาวผมยาว. Cinematography: Smooth tracking shot, 35mm lens. Starting moment: ยืนคุย. Core action: สบตา. Dialogue: placeholder.',
+    negativePrompt: 'blurry'
+  };
+
+  const refreshed = refreshClipPromptWithCameraControls(testClip, ['น้องน้ำ', 'พี่ทุย']);
+
+  // Rule 1: No standalone Cinematography section or Smooth tracking shot bundled when manual camera is used
+  assert.ok(!refreshed.includes('Cinematography:'));
+  assert.ok(!refreshed.includes('Smooth tracking shot'));
+
+  // Rule 2: Every camera command is inserted directly attached to the dialogue it controls
+  assert.ok(refreshed.includes("[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location, BG SOFT]"));
+  assert.ok(refreshed.includes('[น้องน้ำ]: "พี่ทุย...เงินเดือนออกวันนี้ใช่ไหม?"'));
+  assert.ok(refreshed.includes("[CAM-2: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location, BG CLEAR]"));
+  assert.ok(refreshed.includes('[พี่ทุย]: "ออกแล้วจ้ะ...แต่พี่ว่ามันออกเร็วไปหน่อย"'));
+
+  // Rule 3: Character Lock and Location remain intact
+  assert.ok(refreshed.includes('Character Lock: น้องน้ำ, หญิงสาวผมยาว'));
+  assert.ok(refreshed.includes('Setting: หน้าบ้าน'));
+});
+
+check('Validation & Auto-Regeneration: missing CAM-1/CAM-2 tags trigger error and auto-recreates prompt', () => {
+  const testStory = `ชื่อเรื่อง: ทดสอบกล้อง
+ตัวละคร: น้องน้ำ, พี่ทุย
+
+ฉากที่ 1: หน้าบ้าน
+น้องน้ำ: "พี่ทุย...เงินเดือนออกวันนี้ใช่ไหม?"
+พี่ทุย: "ออกแล้วจ้ะ...แต่พี่ว่ามันออกเร็วไปหน่อย"
+`;
+
+  // Build clip with CAM-1 = OTS and CAM-2 = MID
+  const explicitDialogues = [
+    {
+      id: 'diag_1',
+      speaker: 'น้องน้ำ',
+      line: 'พี่ทุย...เงินเดือนออกวันนี้ใช่ไหม?',
+      cameraAngles: ['OTS' as const],
+      backgroundControl: 'SOFT' as const,
+      clipNumber: 1
+    },
+    {
+      id: 'diag_2',
+      speaker: 'พี่ทุย',
+      line: 'ออกแล้วจ้ะ...แต่พี่ว่ามันออกเร็วไปหน่อย',
+      cameraAngles: ['MID' as const],
+      backgroundControl: 'CLEAR' as const,
+      clipNumber: 1
+    }
+  ];
+
+  const clips = buildSalaMultiClipPrompts({
+    scriptText: testStory,
+    clipDurationSeconds: 10,
+    clipCount: 1,
+    dialogues: explicitDialogues,
+    continuityLock: {
+      characterName: 'น้องน้ำ',
+      characterAppearance: 'หญิงสาวผมยาว สวมเสื้อยืดสีขาว',
+      location: 'หน้าบ้าน',
+      timeOfDay: 'ช่วงเย็น'
+    }
+  });
+
+  assert.equal(clips.length, 1);
+  const prompt = clips[0].generatedPrompt;
+
+  // Validation: Generated prompt MUST contain CAM-1: OTS and CAM-2: MID
+  assert.ok(prompt.includes('[CAM-1: OTS —'));
+  assert.ok(prompt.includes('[CAM-2: MID —'));
+  // CAM-1 occurs before CAM-2
+  assert.ok(prompt.indexOf('CAM-1') < prompt.indexOf('CAM-2'));
+  // Attached directly to dialogue lines
+  assert.ok(prompt.includes("[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location, BG SOFT]"));
+  assert.ok(prompt.includes('[น้องน้ำ]: "พี่ทุย'));
+  assert.ok(prompt.includes("[CAM-2: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location, BG CLEAR]"));
+  assert.ok(prompt.includes('[พี่ทุย]: "ออกแล้วจ้ะ'));
+
+  // Corrupt prompt by stripping camera tags to test validation & autoRegenerateClipsOnMissingCameraTags
+  const corruptedClips = JSON.parse(JSON.stringify(clips));
+  corruptedClips[0].generatedPrompt = 'Setting: หน้าบ้าน. Character Lock: น้องน้ำ. Dialogue:\n[น้องน้ำ]: "พี่ทุย...เงินเดือนออกวันนี้ใช่ไหม?"\n[พี่ทุย]: "ออกแล้วจ้ะ...แต่พี่ว่ามันออกเร็วไปหน่อย"';
+
+  const validation = validateSalaMultiClipPrompts(corruptedClips, ['น้องน้ำ', 'พี่ทุย'], testStory);
+  assert.equal(validation.isValid, false);
+  assert.ok(validation.errors.some(e => e.includes('เลือกมุมกล้อง OTS') && e.includes('ไม่มี Camera Tag')));
+  assert.ok(validation.errors.some(e => e.includes('เลือกมุมกล้อง MID') && e.includes('ไม่มี Camera Tag')));
+
+  // Auto-regenerate on missing camera tags
+  const autoFixed = autoRegenerateClipsOnMissingCameraTags(corruptedClips);
+  assert.equal(autoFixed.wasRegenerated, true);
+  assert.equal(autoFixed.missingCount, 2);
+  assert.ok(autoFixed.clips[0].generatedPrompt.includes('[CAM-1: OTS —'));
+  assert.ok(autoFixed.clips[0].generatedPrompt.includes('[CAM-2: MID —'));
+
+  // Re-validating auto-fixed clips succeeds
+  const reValidation = validateSalaMultiClipPrompts(autoFixed.clips, ['น้องน้ำ', 'พี่ทุย'], testStory);
+  assert.equal(reValidation.isValid, true);
+});
+
+check('Action/Narration without dialogue creates happening event in prompt in original sequence', () => {
+  const story = 'บรรยากาศป่ามืด ฝนตก ฟ้าใสเดินเข้าป่า';
+  const clips = buildSalaMultiClipPrompts({
+    scriptText: story,
+    clipDurationSeconds: 10,
+    clipCount: 1,
+    continuityLock: {
+      characterName: 'ฟ้าใส',
+      characterAppearance: 'หญิงสาวผมยาว สวมเสื้อกันฝน',
+      location: 'ป่าทึบ',
+      timeOfDay: 'กลางคืน'
+    } as any
+  });
+
+  assert.equal(clips.length, 1);
+  const clip = clips[0];
+  const prompt = clip.generatedPrompt;
+
+  // 1. Dialogue MUST be empty and NONE
+  assert.equal(clip.dialogue, 'NONE');
+  assert.deepEqual(clip.dialogues, []);
+  assert.ok(!prompt.includes('Dialogue:'));
+
+  // 2. Action/Narration is converted to happening event in original order
+  assert.ok(prompt.includes('ป่ามืด ฝนกำลังตก ฟ้าใสกำลังเดินเข้าป่า'), prompt);
+  assert.equal(clip.sceneSummary, 'ป่ามืด ฝนกำลังตก ฟ้าใสกำลังเดินเข้าป่า');
+
+  // 3. Character Lock and Location Lock are preserved
+  assert.ok(prompt.includes('Character Lock: ฟ้าใส'));
+  assert.ok(prompt.includes('Location: ป่าทึบ'));
+
+  // 4. No prohibited speech words
+  assert.ok(!/พูด|กล่าว|กระซิบ|ตะโกน|ถาม|ร้อง/.test(clip.sceneSummary));
+});
+
+check('Automatic clip splitting: consecutive actions in same scene stay in 1 clip (no 1 Action = 1 Clip, no min 5-6 clips)', () => {
+  const continuousActionStory = `หันมอง
+เดินเข้าไป
+ทำหน้าโมโห
+หยิบมีด
+ฟันต้นไม้
+ฟ้าใส: "หยุดนะ"`;
+
+  const parsedStructure = parseStoryStructure(continuousActionStory);
+  const sceneUnits = splitStoryIntoSceneUnits(parsedStructure);
+
+  // 1. Must NOT split 1 Action = 1 Clip (should be 1 unit, not 5 units)
+  assert.equal(sceneUnits.length, 1, `Expected 1 scene unit but got ${sceneUnits.length}`);
+  assert.ok(sceneUnits[0].actionText.includes('หันมอง'));
+  assert.ok(sceneUnits[0].actionText.includes('ฟันต้นไม้'));
+  assert.equal(sceneUnits[0].dialogues.length, 1);
+  assert.equal(sceneUnits[0].dialogues[0].dialogue, 'หยุดนะ');
+
+  // 2. generateEpisodeLocally must NOT force minimum 5 or 6 clips
+  const ep = generateEpisodeLocally({
+    originalStory: continuousActionStory,
+    episodeNumber: 1,
+    clipDurationSeconds: 10
+  });
+  assert.equal(ep.scenes.length, 1, `Expected 1 episode scene but got ${ep.scenes.length}`);
+
+  // 3. buildSalaMultiClipPrompts with default 5 clips must keep consecutive actions in 1 clip
+  const clips = buildSalaMultiClipPrompts({
+    scriptText: continuousActionStory,
+    clipDurationSeconds: 10,
+    clipCount: 5,
+    continuityLock: {
+      characterName: 'ฟ้าใส',
+      location: 'ป่า'
+    } as any
+  });
+  assert.equal(clips.length, 1, `Expected 1 clip but got ${clips.length}`);
+  assert.ok(clips[0].generatedPrompt.includes('ฟันต้นไม้'));
+  assert.equal(clips[0].dialogues.length, 1);
+});
+
+check('Fix Redundant Dialogue: split clips remove full dialogue from prompt and display only sub-sentence part', () => {
+  const longDialogueScript = `ฉากที่ 1: ห้องนั่งเล่น
+ฟ้าใส: "หนูไม่คิดเลยว่าจะต้องมาเจอกับเหตุการณ์ที่น่ากลัวและสับสนวุ่นวายขนาดนี้ในชีวิตจริง มันทำให้หนูรู้สึกตกใจและหวาดระแวงไปหมดเลยพี่ต้น"`;
+
+  const clips = buildSalaMultiClipPrompts({
+    scriptText: longDialogueScript,
+    clipDurationSeconds: 10,
+    clipCount: 2,
+    continuityLock: {
+      characterName: 'ฟ้าใส',
+      location: 'ห้องนั่งเล่น'
+    } as any
+  });
+
+  // Should split into at least 2 parts because dialogue > 20 words
+  assert.ok(clips.length >= 2, `Expected at least 2 clips, got ${clips.length}`);
+  const fullSentence = "หนูไม่คิดเลยว่าจะต้องมาเจอกับเหตุการณ์ที่น่ากลัวและสับสนวุ่นวายขนาดนี้ในชีวิตจริง มันทำให้หนูรู้สึกตกใจและหวาดระแวงไปหมดเลยพี่ต้น";
+
+  clips.forEach((c, idx) => {
+    // 1. The full long dialogue must NOT be in the generated prompt
+    assert.ok(!c.generatedPrompt.includes(fullSentence), `Clip ${idx + 1} prompt must NOT contain full dialogue`);
+    // 2. Must contain its split part tag
+    assert.ok(c.generatedPrompt.includes(`Part ${idx + 1}/${clips.length}`), `Clip ${idx + 1} prompt must contain Part ${idx + 1}/${clips.length}`);
+    // 3. Dialogue must be only the sub-sentence part
+    const partDialogue = c.dialogue || '';
+    assert.ok(partDialogue.length < fullSentence.length, `Clip ${idx + 1} dialogue must be shorter than full sentence`);
+    assert.ok(!partDialogue.includes(fullSentence), `Clip ${idx + 1} dialogue must not be full sentence`);
+  });
+});
+
+check('Auto Scene Environment: location and lighting extracted directly per scene and reset on new scene', () => {
+  const multiSceneScript = `ฉากที่ 1: ป่าทึบ - กลางวัน แดดจ้า
+ฟ้าใสเดินสำรวจต้นไม้ใหญ่ในป่าลึก
+
+ฉากที่ 2: ถ้ำโบราณ - กลางคืน มืดสลัว
+ฟ้าใสจุดคบเพลิงเดินเข้าไปในถ้ำศิลา`;
+
+  const clips = buildSalaMultiClipPrompts({
+    scriptText: multiSceneScript,
+    clipDurationSeconds: 10,
+    clipCount: 2,
+    continuityLock: {
+      characterName: 'ฟ้าใส',
+      location: 'ป่าทึบ',
+      timeOfDay: 'กลางวัน',
+      lighting: 'แสงแดดจ้า',
+      locationVisualDetails: 'ต้นไม้ใหญ่หนาทึบ เถาวัลย์พันเกี่ยว'
+    } as any
+  });
+
+  assert.equal(clips.length, 2, `Expected 2 clips, got ${clips.length}`);
+
+  // Clip 1: Scene 1 Environment
+  const clip1Prompt = clips[0].generatedPrompt;
+  assert.equal(clips[0].locationName, 'ป่าทึบ');
+  assert.ok(clip1Prompt.includes('Location: ป่าทึบ'));
+  assert.ok(clip1Prompt.includes('กลางวัน') || clip1Prompt.includes('แสงแดดจ้า'));
+  assert.ok(clip1Prompt.includes('Architectural Environment: ต้นไม้ใหญ่หนาทึบ เถาวัลย์พันเกี่ยว'));
+
+  // Clip 2: Scene 2 Environment - MUST RESET and NOT leak Scene 1's jungle / sunlight
+  const clip2Prompt = clips[1].generatedPrompt;
+  assert.equal(clips[1].locationName, 'ถ้ำโบราณ');
+  assert.ok(clip2Prompt.includes('Location: ถ้ำโบราณ'), 'Clip 2 must have Location: ถ้ำโบราณ');
+  assert.ok(!clip2Prompt.includes('Location: ป่าทึบ'), 'Clip 2 must NOT have Location: ป่าทึบ');
+  assert.ok(!clip2Prompt.includes('แสงแดดจ้า'), 'Clip 2 must NOT inherit Scene 1 sunlight');
+  assert.ok(!clip2Prompt.includes('ต้นไม้ใหญ่หนาทึบ เถาวัลย์พันเกี่ยว'), 'Clip 2 must NOT inherit Scene 1 architectural details');
+  assert.ok(clip2Prompt.includes('กลางคืน') || clip2Prompt.includes('มืดสลัว'), 'Clip 2 must have night/dim atmosphere');
+});
 
 console.log(`\nAll ${passed} checks passed.`);

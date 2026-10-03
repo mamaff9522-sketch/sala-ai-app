@@ -10,6 +10,8 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { Admin } from './pages/Admin';
 import { Pricing } from './pages/Pricing';
 import { ActiveJobBanner } from './components/ActiveJobBanner';
+import { HomeDashboard } from './components/HomeDashboard';
+import { QuickGenerateModal } from './components/QuickGenerateModal';
 import {
   Character,
   LocationItem,
@@ -24,6 +26,7 @@ import { api } from './services/api';
 import { splitScript, scriptSplitter } from './services/scriptSplitter';
 import {
   loginWithGoogle,
+  switchGoogleAccount,
   logout,
   saveApiKey,
   getApiKey,
@@ -31,10 +34,11 @@ import {
   getStoredUserAsUser,
   getStoredUser,
   fetchUserRole,
+  isDemoUser,
   auth
 } from './services/auth';
 import type { User } from 'firebase/auth';
-import { X, Play, Download, AlertCircle, RefreshCw, Loader2, Key, CheckCircle2, ShieldCheck, LogIn, LogOut } from 'lucide-react';
+import { X, Play, Download, AlertCircle, RefreshCw, Loader2, Key, CheckCircle2, ShieldCheck, LogIn, LogOut, Users } from 'lucide-react';
 import { downloadMediaFile } from './utils/download';
 import { saveLibraryLockCache, clearLibraryLockCache, saveLocationLockCache, clearLocationLockCache } from './services/characterLibraryLock';
 import { DEFAULT_SAMPLE_CHARACTERS } from './services/characterService';
@@ -42,7 +46,7 @@ import { DEFAULT_SAMPLE_LOCATIONS } from './services/locationService';
 
 export default function App() {
   // Firebase Authentication & Role State
-  const [authUser, setAuthUser] = useState<User | null>(() => auth.currentUser || getStoredUserAsUser());
+  const [authUser, setAuthUser] = useState<User | null | undefined>(undefined);
   const [userRole, setUserRole] = useState<'admin' | 'user'>(() => {
     const stored = getStoredUser();
     return stored?.role === 'admin' ? 'admin' : 'user';
@@ -58,13 +62,13 @@ export default function App() {
       if (window.location.pathname.startsWith('/admin')) {
         if (!initialIsAdmin) {
           window.history.replaceState(null, '', '/');
-          return 'director';
+          return 'home';
         }
         return 'admin';
       }
       if (window.location.pathname.startsWith('/pricing')) return 'pricing';
     }
-    return 'director';
+    return 'home';
   });
 
   // Sync URL pathname with activeTab and enforce admin authorization
@@ -74,13 +78,13 @@ export default function App() {
         if (isAdmin) {
           setActiveTab('admin');
         } else {
-          setActiveTab('director');
+          setActiveTab('home');
           window.history.replaceState(null, '', '/');
         }
       } else if (window.location.pathname.startsWith('/pricing')) {
         setActiveTab('pricing');
       } else {
-        setActiveTab((prev) => (prev === 'admin' || prev === 'pricing' ? 'director' : prev));
+        setActiveTab((prev) => (prev === 'admin' || prev === 'pricing' ? 'home' : prev));
       }
     };
 
@@ -89,7 +93,7 @@ export default function App() {
         if (isAdmin) {
           if (activeTab !== 'admin') setActiveTab('admin');
         } else {
-          if (activeTab === 'admin') setActiveTab('director');
+          if (activeTab === 'admin') setActiveTab('home');
           window.history.replaceState(null, '', '/');
         }
       } else if (window.location.pathname.startsWith('/pricing') && activeTab !== 'pricing') {
@@ -104,7 +108,7 @@ export default function App() {
   // ป้องกัน /admin route ถ้าไม่ใช่ admin ให้ redirect กลับหน้าหลักทันที
   useEffect(() => {
     if (activeTab === 'admin' && !isAdmin) {
-      setActiveTab('director');
+      setActiveTab('home');
       if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
         window.history.replaceState(null, '', '/');
       }
@@ -114,7 +118,7 @@ export default function App() {
   const handleTabChange = (tab: string) => {
     if (tab === 'admin' && !isAdmin) {
       // Prevent non-admins from switching to admin tab
-      setActiveTab('director');
+      setActiveTab('home');
       if (typeof window !== 'undefined' && window.location.pathname === '/admin') {
         window.history.replaceState(null, '', '/');
       }
@@ -174,6 +178,36 @@ export default function App() {
   const [studioInitialSceneContinuityRef, setStudioInitialSceneContinuityRef] = useState<string | undefined>();
   const [studioInitialPrompt, setStudioInitialPrompt] = useState<string | undefined>();
 
+  // Quick Generate modal state
+  const [isQuickGenOpen, setIsQuickGenOpen] = useState<boolean>(false);
+  const [quickGenType, setQuickGenType] = useState<'image' | 'video'>('image');
+
+  const handleQuickGenerate = async (params: {
+    prompt: string;
+    type: MediaType;
+    aspectRatio: AspectRatio;
+    characterId?: string;
+    locationId?: string;
+    durationSeconds?: number;
+  }) => {
+    try {
+      const res = await api.startGeneration({
+        ...params,
+        model: params.type === 'video' ? 'veo-3.1-lite-generate-preview' : 'gemini-3.1-flash-lite-image',
+        provider: selectedProvider || 'mock'
+      });
+      if (res && res.job) {
+        handleGenerationStarted(res.job.id);
+        setActiveJobs(prev => [res.job, ...prev]);
+        if (typeof res.remainingCredits === 'number') {
+          setCredits(prev => prev ? { ...prev, remainingCredits: res.remainingCredits } : null);
+        }
+      }
+    } catch (err: any) {
+      alert('ไม่สามารถเริ่มการสร้างได้: ' + (err?.message || 'ข้อผิดพลาดเครือข่าย'));
+    }
+  };
+
   // Fetch initial data with smooth mock fallback
   const loadInitialData = async () => {
     try {
@@ -200,6 +234,9 @@ export default function App() {
         monthlyUsedCredits: 10,
         monthlyLimit: 20000,
         perGenerationLimit: 100,
+        copyPromptFee: 0,
+        serviceFeeType: 'percentage' as const,
+        serviceFeeValue: 0,
         transactions: []
       });
 
@@ -250,13 +287,12 @@ export default function App() {
           console.warn('Could not load user API key from Firestore:', e);
         }
       } else {
-        // Fallback to Demo Creator User in Mock mode
-        const demoFallback = getStoredUserAsUser();
-        setAuthUser(demoFallback);
+        // เมื่อไม่ได้ล็อกอิน ให้คืนค่า null ชัดเจน เพื่อให้ผู้ใช้สามารถกดเข้าสู่ระบบหรือสลับบัญชีได้
+        setAuthUser(null);
         setUserRole('user');
         setInputApiKey('');
-        setCharacters(prev => prev && prev.length > 0 ? prev : DEFAULT_SAMPLE_CHARACTERS);
-        setLocations(prev => prev && prev.length > 0 ? prev : DEFAULT_SAMPLE_LOCATIONS);
+        setCharacters(DEFAULT_SAMPLE_CHARACTERS);
+        setLocations(DEFAULT_SAMPLE_LOCATIONS);
         loadInitialData();
       }
     });
@@ -272,10 +308,30 @@ export default function App() {
         const role = await fetchUserRole(user.uid);
         setUserRole(role);
         loadInitialData();
+        setActiveTab('home');
       }
     } catch (err: any) {
-      if (err?.code !== 'auth/popup-closed-by-user') {
+      if (err?.code !== 'auth/popup-closed-by-user' && err?.code !== 'auth/cancelled-popup-request') {
         alert('เข้าสู่ระบบไม่สำเร็จ: ' + (err?.message || 'โปรดลองใหม่อีกครั้ง'));
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleSwitchAccount = async () => {
+    setIsLoggingIn(true);
+    try {
+      const user = await switchGoogleAccount();
+      if (user) {
+        setAuthUser(user);
+        const role = await fetchUserRole(user.uid);
+        setUserRole(role);
+        loadInitialData();
+      }
+    } catch (err: any) {
+      if (err?.code !== 'auth/popup-closed-by-user' && err?.code !== 'auth/cancelled-popup-request') {
+        alert('สลับบัญชีไม่สำเร็จ: ' + (err?.message || 'โปรดลองใหม่อีกครั้ง'));
       }
     } finally {
       setIsLoggingIn(false);
@@ -287,13 +343,12 @@ export default function App() {
       await logout();
       clearLibraryLockCache();
       clearLocationLockCache();
-      const demoUser = getStoredUserAsUser();
-      setAuthUser(demoUser);
+      setAuthUser(null);
       setUserRole('user');
       setCharacters(DEFAULT_SAMPLE_CHARACTERS);
       setLocations(DEFAULT_SAMPLE_LOCATIONS);
       if (activeTab === 'admin') {
-        setActiveTab('director');
+        setActiveTab('home');
         if (typeof window !== 'undefined' && window.location.pathname === '/admin') {
           window.history.replaceState(null, '', '/');
         }
@@ -474,15 +529,17 @@ export default function App() {
         authUser={authUser}
         onLogin={handleLoginGoogle}
         onLogout={handleLogout}
+        onSwitchAccount={handleSwitchAccount}
         onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
         isLoggingIn={isLoggingIn}
         isAdmin={isAdmin}
       />
 
       {/* Google Authentication & Cloud Sync Bar */}
-      <div className="w-full max-w-7xl mx-auto px-4 pt-3 pb-1">
+      {activeTab !== 'home' && (
+        <div className="w-full max-w-7xl mx-auto px-4 pt-3 pb-1">
         <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs shadow-sm backdrop-blur-sm">
-          {authUser ? (
+          {authUser && authUser.uid !== 'demo_creator' ? (
             <div className="flex items-center gap-3">
               {authUser.photoURL ? (
                 <img
@@ -546,7 +603,7 @@ export default function App() {
           )}
 
           <div className="flex items-center gap-2 ml-auto">
-            {authUser ? (
+            {authUser && authUser.uid !== 'demo_creator' ? (
               <>
                 <button
                   type="button"
@@ -556,6 +613,17 @@ export default function App() {
                 >
                   <Key className="w-3.5 h-3.5 text-amber-400" />
                   <span>จัดการ API Key</span>
+                </button>
+                <button
+                  type="button"
+                  id="btn-app-switch-account"
+                  onClick={handleSwitchAccount}
+                  disabled={isLoggingIn}
+                  className="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-medium py-1.5 px-3 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
+                  title="สลับบัญชี Google (Switch Account)"
+                >
+                  <Users className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>สลับบัญชี</span>
                 </button>
                 <button
                   type="button"
@@ -603,6 +671,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      )}
 
       {/* Floating Active Job Status Banner (Real-time Polling & Progress) */}
       <ActiveJobBanner
@@ -617,6 +686,31 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 w-full">
+        {activeTab === 'home' && (
+          <HomeDashboard
+            onNavigate={(tab) => handleTabChange(tab)}
+            credits={credits}
+            onOpenCredits={() => setIsCreditsModalOpen(true)}
+            authUser={authUser}
+            characters={characters}
+            locations={locations}
+            jobs={jobs}
+            onOpenNewCharacterModal={() => {
+              setIsNewCharModalOpen(true);
+              handleTabChange('characters');
+            }}
+            onOpenNewLocationModal={() => {
+              setIsNewLocModalOpen(true);
+              handleTabChange('locations');
+            }}
+            onOpenQuickGenerate={(type) => {
+              setQuickGenType(type);
+              setIsQuickGenOpen(true);
+            }}
+            onOpenScriptWriter={() => handleTabChange('director')}
+          />
+        )}
+
         {activeTab === 'director' && (
           <MultiClipDirector
             characters={characters}
@@ -670,16 +764,18 @@ export default function App() {
           <Admin
             authUser={authUser}
             isAdmin={isAdmin}
-            onNavigateToStudio={() => handleTabChange('director')}
+            onNavigateToStudio={() => handleTabChange('home')}
             onLogin={handleLoginGoogle}
+            onSwitchAccount={handleSwitchAccount}
           />
         )}
 
         {activeTab === 'pricing' && (
           <Pricing
             authUser={authUser}
-            onNavigateToStudio={() => handleTabChange('director')}
+            onNavigateToStudio={() => handleTabChange('home')}
             onLogin={handleLoginGoogle}
+            onSwitchAccount={handleSwitchAccount}
             onCreditsUpdated={(newCredits) => {
               setCredits(prev => prev ? { ...prev, remainingCredits: newCredits } : null);
             }}
@@ -908,11 +1004,33 @@ export default function App() {
         </div>
       )}
 
-      {/* Bottom Nav for Android / Mobile Devices */}
+      {/* Quick Generate Modal for Home and Center (+) Button */}
+      <QuickGenerateModal
+        isOpen={isQuickGenOpen}
+        onClose={() => setIsQuickGenOpen(false)}
+        type={quickGenType}
+        characters={characters}
+        locations={locations}
+        onGenerate={handleQuickGenerate}
+      />
+
+      {/* Cyberpunk Bottom Navigation Bar */}
       <BottomNav
         activeTab={activeTab}
         setActiveTab={handleTabChange}
         onOpenCredits={() => setIsCreditsModalOpen(true)}
+        onOpenNewCharacterModal={() => {
+          setIsNewCharModalOpen(true);
+          handleTabChange('characters');
+        }}
+        onOpenNewLocationModal={() => {
+          setIsNewLocModalOpen(true);
+          handleTabChange('locations');
+        }}
+        onOpenQuickGenerate={(type) => {
+          setQuickGenType(type);
+          setIsQuickGenOpen(true);
+        }}
         isAdmin={isAdmin}
       />
     </div>

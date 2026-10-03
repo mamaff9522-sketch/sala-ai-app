@@ -1,0 +1,240 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background Space & Nebula -->
+    <radialGradient id="spaceBg" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#14062B" />
+      <stop offset="50%" stop-color="#080720" />
+      <stop offset="85%" stop-color="#030412" />
+      <stop offset="100%" stop-color="#01020A" />
+    </radialGradient>
+
+    <!-- Outer Squircle Neon Glow Gradients -->
+    <linearGradient id="neonBorder1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D8FF" />
+      <stop offset="35%" stop-color="#7B2CFF" />
+      <stop offset="70%" stop-color="#FF35D4" />
+      <stop offset="100%" stop-color="#00F0FF" />
+    </linearGradient>
+
+    <linearGradient id="neonBorder2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FF35D4" />
+      <stop offset="50%" stop-color="#9333EA" />
+      <stop offset="100%" stop-color="#00D8FF" />
+    </linearGradient>
+
+    <!-- Robot White Ceramic / Armor Shading -->
+    <linearGradient id="robotWhite" x1="20%" y1="0%" x2="80%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="65%" stop-color="#F1F5F9" />
+      <stop offset="100%" stop-color="#CBD5E1" />
+    </linearGradient>
+
+    <!-- Robot Joint Metallic Shading -->
+    <linearGradient id="robotDarkMetal" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#334155" />
+      <stop offset="50%" stop-color="#1E293B" />
+      <stop offset="100%" stop-color="#0F172A" />
+    </linearGradient>
+
+    <!-- Visor Screen Deep Dark Navy -->
+    <radialGradient id="visorScreen" cx="50%" cy="40%" r="60%">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="80%" stop-color="#050816" />
+      <stop offset="100%" stop-color="#02040D" />
+    </radialGradient>
+
+    <!-- Sala "S" Gradient: Magenta into Vivid Cyan -->
+    <linearGradient id="salaSGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF35D4" />
+      <stop offset="45%" stop-color="#D946EF" />
+      <stop offset="70%" stop-color="#8B5CF6" />
+      <stop offset="100%" stop-color="#00D8FF" />
+    </linearGradient>
+
+    <linearGradient id="orbBorder" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF35D4" />
+      <stop offset="50%" stop-color="#A855F7" />
+      <stop offset="100%" stop-color="#00F0FF" />
+    </linearGradient>
+
+    <!-- Soft Glow Filter -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <!-- Intense Bright Glow Filter for Orb, Eyes & Neon Border -->
+    <filter id="intenseGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="blur1" />
+      <feGaussianBlur stdDeviation="4" result="blur2" />
+      <feMerge>
+        <feMergeNode in="blur1" />
+        <feMergeNode in="blur2" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Dark Cosmic Rounded Backdrop (Squircle Frame) -->
+  <rect x="8" y="8" width="496" height="496" rx="90" fill="url(#spaceBg)" />
+
+  <!-- Ambient Light Clouds / Nebula Background -->
+  <circle cx="160" cy="140" r="140" fill="#7B2CFF" opacity="0.3" filter="url(#intenseGlow)" />
+  <circle cx="370" cy="150" r="130" fill="#00D8FF" opacity="0.25" filter="url(#intenseGlow)" />
+  <circle cx="256" cy="330" r="150" fill="#FF35D4" opacity="0.35" filter="url(#intenseGlow)" />
+
+  <!-- Twinkling Sparkles in Background -->
+  <circle cx="100" cy="90" r="2.5" fill="#FFFFFF" opacity="0.9" />
+  <circle cx="410" cy="80" r="3" fill="#00D8FF" opacity="0.9" filter="url(#glow)" />
+  <circle cx="430" cy="210" r="2" fill="#E879F9" opacity="0.8" />
+  <circle cx="80" cy="240" r="2.5" fill="#38BDF8" opacity="0.8" />
+  <circle cx="440" cy="380" r="3.5" fill="#FF35D4" opacity="0.9" filter="url(#glow)" />
+  <circle cx="90" cy="390" r="2" fill="#FFFFFF" opacity="0.8" />
+
+  <!-- Swirling Neon Light Trails around Robot -->
+  <path d="M 60 220 C 60 120, 200 60, 360 80 S 460 220, 420 340" fill="none" stroke="#FF35D4" stroke-width="4.5" opacity="0.8" filter="url(#intenseGlow)" />
+  <path d="M 450 200 C 450 110, 320 60, 160 90 S 50 240, 90 360" fill="none" stroke="#00D8FF" stroke-width="4" opacity="0.8" filter="url(#intenseGlow)" />
+
+  <!-- ============================================================== -->
+  <!-- ROBOT MASCOT CHARACTER (White & Blue Cute High-Tech Robot)    -->
+  <!-- ============================================================== -->
+  <g id="robotCharacter">
+    <!-- Robot Arms & Shoulders Behind Orb -->
+    <!-- Left Shoulder & Arm -->
+    <g id="leftArm">
+      <ellipse cx="140" cy="330" rx="36" ry="46" fill="url(#robotWhite)" stroke="#00D8FF" stroke-width="3" filter="url(#glow)" />
+      <ellipse cx="135" cy="330" rx="24" ry="32" fill="url(#robotDarkMetal)" />
+      <!-- Left Forearm reaching toward orb -->
+      <path d="M 125 350 C 130 410, 190 440, 225 435 C 235 405, 205 375, 155 355 Z" fill="url(#robotWhite)" stroke="#7B2CFF" stroke-width="3" />
+      <!-- Left Hand Fingers cradling the orb -->
+      <ellipse cx="180" cy="415" rx="14" ry="18" fill="url(#robotDarkMetal)" stroke="#00D8FF" stroke-width="2" />
+      <ellipse cx="205" cy="428" rx="13" ry="16" fill="url(#robotDarkMetal)" stroke="#00D8FF" stroke-width="2" />
+      <ellipse cx="230" cy="434" rx="12" ry="14" fill="url(#robotDarkMetal)" stroke="#00D8FF" stroke-width="2" />
+    </g>
+
+    <!-- Right Shoulder & Arm -->
+    <g id="rightArm">
+      <ellipse cx="372" cy="330" rx="36" ry="46" fill="url(#robotWhite)" stroke="#FF35D4" stroke-width="3" filter="url(#glow)" />
+      <ellipse cx="377" cy="330" rx="24" ry="32" fill="url(#robotDarkMetal)" />
+      <!-- Right Forearm reaching toward orb -->
+      <path d="M 387 350 C 382 410, 322 440, 287 435 C 277 405, 307 375, 357 355 Z" fill="url(#robotWhite)" stroke="#7B2CFF" stroke-width="3" />
+      <!-- Right Hand Fingers cradling the orb -->
+      <ellipse cx="332" cy="415" rx="14" ry="18" fill="url(#robotDarkMetal)" stroke="#FF35D4" stroke-width="2" />
+      <ellipse cx="307" cy="428" rx="13" ry="16" fill="url(#robotDarkMetal)" stroke="#FF35D4" stroke-width="2" />
+      <ellipse cx="282" cy="434" rx="12" ry="14" fill="url(#robotDarkMetal)" stroke="#FF35D4" stroke-width="2" />
+    </g>
+
+    <!-- Head / Helmet Group -->
+    <g id="robotHead">
+      <!-- Headphone Ear Cups (Left & Right) -->
+      <!-- Left Ear Cup with glowing concentric neon rings -->
+      <g transform="translate(100, 140)">
+        <ellipse cx="20" cy="45" rx="22" ry="34" fill="url(#robotWhite)" stroke="#00D8FF" stroke-width="3.5" filter="url(#glow)" />
+        <ellipse cx="18" cy="45" rx="15" ry="24" fill="#0A1633" />
+        <ellipse cx="18" cy="45" rx="10" ry="16" fill="none" stroke="#00D8FF" stroke-width="3" filter="url(#intenseGlow)" />
+        <ellipse cx="18" cy="45" rx="4" ry="8" fill="#FF35D4" />
+      </g>
+      <!-- Right Ear Cup with glowing concentric neon rings -->
+      <g transform="translate(372, 140)">
+        <ellipse cx="20" cy="45" rx="22" ry="34" fill="url(#robotWhite)" stroke="#FF35D4" stroke-width="3.5" filter="url(#glow)" />
+        <ellipse cx="22" cy="45" rx="15" ry="24" fill="#0A1633" />
+        <ellipse cx="22" cy="45" rx="10" ry="16" fill="none" stroke="#FF35D4" stroke-width="3" filter="url(#intenseGlow)" />
+        <ellipse cx="22" cy="45" rx="4" ry="8" fill="#00D8FF" />
+      </g>
+
+      <!-- Headband Arc with Neon Glow Strip -->
+      <path d="M 125 150 C 135 70, 377 70, 387 150" fill="none" stroke="url(#robotWhite)" stroke-width="20" stroke-linecap="round" />
+      <path d="M 130 148 C 140 78, 372 78, 382 148" fill="none" stroke="url(#neonBorder1)" stroke-width="6" stroke-linecap="round" filter="url(#glow)" />
+
+      <!-- Main Ceramic Helmet Shell -->
+      <rect x="122" y="85" width="268" height="225" rx="95" fill="url(#robotWhite)" stroke="#FFFFFF" stroke-width="3" filter="url(#glow)" />
+      
+      <!-- Helmet Top Highlight -->
+      <ellipse cx="256" cy="100" rx="80" ry="12" fill="#FFFFFF" opacity="0.8" />
+
+      <!-- Dark Curved Visor Screen -->
+      <rect x="144" y="112" width="224" height="175" rx="72" fill="url(#visorScreen)" stroke="#1E293B" stroke-width="4" />
+      <rect x="146" y="114" width="220" height="171" rx="70" fill="none" stroke="#00D8FF" stroke-width="2" opacity="0.6" filter="url(#glow)" />
+
+      <!-- Curved Visor Gloss Reflection -->
+      <path d="M 170 130 C 220 120, 292 120, 342 130 C 310 142, 202 142, 170 130 Z" fill="#FFFFFF" opacity="0.4" />
+
+      <!-- Neon Happy Curved Eyes (Cheerfully Curved Digital Expression) -->
+      <!-- Left Happy Eye (Cyan Neon Pixel Crescent) -->
+      <path d="M 182 205 C 182 175, 234 175, 234 205" fill="none" stroke="#00F0FF" stroke-width="11" stroke-linecap="round" filter="url(#intenseGlow)" />
+      <path d="M 182 205 C 182 175, 234 175, 234 205" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" />
+
+      <!-- Right Happy Eye (Cyan Neon Pixel Crescent) -->
+      <path d="M 278 205 C 278 175, 330 175, 330 205" fill="none" stroke="#00F0FF" stroke-width="11" stroke-linecap="round" filter="url(#intenseGlow)" />
+      <path d="M 278 205 C 278 175, 330 175, 330 205" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" />
+
+      <!-- Cute Digital Blush Cheeks (Pink LED Bars) -->
+      <g filter="url(#intenseGlow)">
+        <rect x="170" y="224" width="5" height="12" rx="2.5" fill="#FF35D4" />
+        <rect x="180" y="222" width="5" height="14" rx="2.5" fill="#FF35D4" />
+        <rect x="190" y="224" width="5" height="12" rx="2.5" fill="#FF35D4" />
+
+        <rect x="317" y="224" width="5" height="12" rx="2.5" fill="#FF35D4" />
+        <rect x="327" y="222" width="5" height="14" rx="2.5" fill="#FF35D4" />
+        <rect x="337" y="224" width="5" height="12" rx="2.5" fill="#FF35D4" />
+      </g>
+
+      <!-- Cute Digital Smile -->
+      <path d="M 238 238 C 246 250, 266 250, 274 238" fill="none" stroke="#00F0FF" stroke-width="6.5" stroke-linecap="round" filter="url(#intenseGlow)" />
+      <path d="M 238 238 C 246 250, 266 250, 274 238" fill="none" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" />
+    </g>
+
+    <!-- ============================================================== -->
+    <!-- CENTRAL RADIANT ENERGY ORB WITH THE "S" LOGO                   -->
+    <!-- Held securely in robot hands in bottom center                  -->
+    <!-- ============================================================== -->
+    <g id="salaOrbGroup" transform="translate(256, 360)">
+      <!-- Outer Radiant Energy Aura -->
+      <circle cx="0" cy="0" r="96" fill="url(#salaSGrad)" opacity="0.3" filter="url(#intenseGlow)" />
+
+      <!-- Glowing Concentric Neon Rings -->
+      <circle cx="0" cy="0" r="88" fill="none" stroke="url(#orbBorder)" stroke-width="6" filter="url(#intenseGlow)" />
+      <circle cx="0" cy="0" r="84" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.8" />
+
+      <!-- Deep Dark Disc Background Inside Orb -->
+      <circle cx="0" cy="0" r="80" fill="#040614" />
+      <circle cx="0" cy="0" r="80" fill="url(#spaceBg)" opacity="0.9" />
+
+      <!-- ============================================================ -->
+      <!-- THE ICONIC SALA "S" EMBLEM (Two Interlocking Fluid Swirls)  -->
+      <!-- ============================================================ -->
+      <!-- Top Magenta Swirl of "S" -->
+      <path d="M 12 -58 C 42 -58, 48 -26, 26 -2 C 6 20, -18 8, -14 -12 C -10 -30, 8 -42, 28 -42" 
+            fill="none" stroke="#FF35D4" stroke-width="22" stroke-linecap="round" filter="url(#intenseGlow)" />
+      <path d="M 12 -58 C 42 -58, 48 -26, 26 -2 C 6 20, -18 8, -14 -12 C -10 -30, 8 -42, 28 -42" 
+            fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" />
+
+      <!-- Bottom Vivid Cyan Swirl of "S" -->
+      <path d="M -12 58 C -42 58, -48 26, -26 2 C -6 -20, 18 -8, 14 12 C 10 30, -8 42, -28 42" 
+            fill="none" stroke="#00D8FF" stroke-width="22" stroke-linecap="round" filter="url(#intenseGlow)" />
+      <path d="M -12 58 C -42 58, -48 26, -26 2 C -6 -20, 18 -8, 14 12 C 10 30, -8 42, -28 42" 
+            fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" />
+
+      <!-- Inner Floating Star / Light Spark at Orb Center -->
+      <circle cx="28" cy="-44" r="5" fill="#FFFFFF" filter="url(#intenseGlow)" />
+      <circle cx="-28" cy="44" r="5" fill="#FFFFFF" filter="url(#intenseGlow)" />
+      <circle cx="0" cy="0" r="3.5" fill="#FFFFFF" filter="url(#intenseGlow)" />
+    </g>
+  </g>
+
+  <!-- ============================================================== -->
+  <!-- HIGH-TECH DECORATIVE SQUIRCLE NEON BORDER                      -->
+  <!-- Perfectly rounded, vibrant outer frame conforming to image     -->
+  <!-- ============================================================== -->
+  <!-- Outer Glow Halo -->
+  <rect x="12" y="12" width="488" height="488" rx="88" fill="none" stroke="url(#neonBorder1)" stroke-width="12" filter="url(#intenseGlow)" opacity="0.9" />
+  
+  <!-- Sharp Mid Neon Line -->
+  <rect x="12" y="12" width="488" height="488" rx="88" fill="none" stroke="url(#neonBorder2)" stroke-width="6" />
+
+  <!-- Inner Delicate White Accent Rim -->
+  <rect x="18" y="18" width="476" height="476" rx="82" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.6" />
+</svg>

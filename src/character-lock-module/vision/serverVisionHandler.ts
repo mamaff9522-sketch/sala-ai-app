@@ -153,7 +153,7 @@ export async function handleCharacterAnalysisRequest(
   });
 
   const response = await aiClient.models.generateContent({
-    model: 'gemini-3.8-flash',
+    model: 'gemini-3.1-flash-lite',
     contents: { parts },
     config: {
       systemInstruction,

@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 512" width="1024" height="512">
+  <defs>
+    <radialGradient id="bg6" cx="70%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#2D1A08" />
+      <stop offset="50%" stop-color="#120A24" />
+      <stop offset="100%" stop-color="#020412" />
+    </radialGradient>
+    <linearGradient id="border6" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F7C94A" />
+      <stop offset="50%" stop-color="#FF35D4" />
+      <stop offset="100%" stop-color="#00D8FF" />
+    </linearGradient>
+    <linearGradient id="icon6" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FDE047" />
+      <stop offset="100%" stop-color="#EA580C" />
+    </linearGradient>
+    <filter id="glow6" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="512" rx="40" fill="url(#bg6)" />
+
+  <!-- Stars -->
+  <circle cx="880" cy="70" r="3.5" fill="#38BDF8" opacity="0.9" filter="url(#glow6)" />
+  <circle cx="960" cy="380" r="3" fill="#F59E0B" opacity="0.9" />
+
+  <!-- 3D Curved Film Strip Winding into Horizon -->
+  <g transform="translate(380, 50)">
+    <!-- Winding Film Strip -->
+    <path d="M 0 160 Q 180 50 360 80 T 600 240" fill="none" stroke="#FFFFFF" stroke-width="120" stroke-linecap="round" opacity="0.1" />
+    <!-- Film Strip Frame Outlines -->
+    <path d="M 0 160 Q 180 50 360 80 T 600 240" fill="none" stroke="#00D8FF" stroke-width="100" stroke-linecap="round" opacity="0.3" filter="url(#glow6)" />
+
+    <!-- Actual 3 Film Frames -->
+    <!-- Frame 1 -->
+    <g transform="translate(80, 80) rotate(-15)">
+      <rect width="130" height="90" rx="8" fill="#0C152E" stroke="#38BDF8" stroke-width="2.5" />
+      <path d="M 0 65 Q 65 45 130 60 L 130 90 L 0 90 Z" fill="#0284C7" />
+      <circle cx="65" cy="40" r="14" fill="#FDE047" />
+    </g>
+    <!-- Frame 2 (Center Hero Scene) -->
+    <g transform="translate(230, 80) rotate(5)">
+      <rect width="140" height="96" rx="8" fill="#180A2E" stroke="#F43F5E" stroke-width="3" filter="url(#glow6)" />
+      <polygon points="10,75 40,45 80,70 110,35 135,70 135,96 10,96" fill="#F43F5E" />
+      <!-- Silhouette Person standing -->
+      <circle cx="70" cy="55" r="7" fill="#0F172A" />
+      <path d="M 64 64 L 76 64 L 74 90 L 66 90 Z" fill="#0F172A" />
+      <circle cx="100" cy="30" r="16" fill="#FDE047" opacity="0.8" />
+    </g>
+    <!-- Frame 3 -->
+    <g transform="translate(390, 140) rotate(22)">
+      <rect width="130" height="90" rx="8" fill="#0F172A" stroke="#A855F7" stroke-width="2.5" />
+      <path d="M 0 65 Q 65 45 130 60 L 130 90 L 0 90 Z" fill="#7C3AED" />
+      <circle cx="75" cy="40" r="12" fill="#F43F5E" />
+    </g>
+
+    <!-- Sprocket Holes on top and bottom of film -->
+    <g fill="#020412">
+      <rect x="70" y="30" width="14" height="18" rx="3" transform="rotate(-15 70 30)" />
+      <rect x="130" y="25" width="14" height="18" rx="3" transform="rotate(-10 130 25)" />
+      <rect x="190" y="25" width="14" height="18" rx="3" transform="rotate(-5 190 25)" />
+      <rect x="250" y="30" width="14" height="18" rx="3" transform="rotate(2 250 30)" />
+      <rect x="310" y="40" width="14" height="18" rx="3" transform="rotate(8 310 40)" />
+      <rect x="370" y="55" width="14" height="18" rx="3" transform="rotate(15 370 55)" />
+      <rect x="430" y="75" width="14" height="18" rx="3" transform="rotate(20 430 75)" />
+    </g>
+
+    <!-- 3D Central Glowing Play Button Glass Quadrilateral Badge -->
+    <g transform="translate(140, 140)">
+      <polygon points="0,50 60,0 240,40 180,180" fill="#070926" stroke="#00D8FF" stroke-width="5" opacity="0.95" filter="url(#glow6)" />
+      <polygon points="6,50 60,6 234,42 176,174" fill="none" stroke="#FF35D4" stroke-width="2.5" />
+      <!-- Glowing Play Triangle -->
+      <polygon points="90,75 140,105 90,135" fill="#FF35D4" filter="url(#glow6)" />
+      <polygon points="90,75 140,105 90,135" fill="#FFFFFF" opacity="0.85" />
+    </g>
+  </g>
+
+  <!-- Left Icon Box (Video Play) -->
+  <rect x="52" y="52" width="112" height="112" rx="28" fill="url(#icon6)" filter="url(#glow6)" />
+  <polygon points="95,84 127,108 95,132" fill="#FFFFFF" filter="url(#glow6)" />
+
+  <!-- Left Thai Text: สร้างวิดีโอ -->
+  <text x="56" y="275" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="900" font-size="54" fill="#FFFFFF">สร้างวิดีโอ</text>
+  <text x="56" y="352" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="500" font-size="34" fill="#FFFFFF">เปลี่ยนภาพและบท</text>
+  <text x="56" y="415" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="500" font-size="34" fill="#FFFFFF">เป็นวิดีโอสุดสมจริง</text>
+
+  <!-- Outer Neon Glowing Frame -->
+  <rect x="8" y="8" width="1008" height="496" rx="36" fill="none" stroke="url(#border6)" stroke-width="12" filter="url(#glow6)" />
+  <rect x="8" y="8" width="1008" height="496" rx="36" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.6" />
+</svg>

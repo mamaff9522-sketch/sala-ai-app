@@ -159,13 +159,21 @@ export function cacheUserData(user: User, role?: 'admin' | 'user'): void {
 export function getStoredUser(): StoredUserProfile | null {
   try {
     const raw = localStorage.getItem(AUTH_USER_KEY);
-    if (!raw) return DEFAULT_DEMO_USER;
+    if (!raw) return null;
     const parsed = JSON.parse(raw);
     const role: 'admin' | 'user' = (parsed.role === 'admin' || localStorage.getItem(AUTH_USER_ROLE_KEY) === 'admin') ? 'admin' : 'user';
     return { ...parsed, role };
   } catch {
-    return DEFAULT_DEMO_USER;
+    return null;
   }
+}
+
+/**
+ * ตรวจสอบว่าเป็นผู้ใช้เดโม (Demo) หรือยังไม่ได้ล็อกอินจริงหรือไม่
+ */
+export function isDemoUser(user: { uid?: string } | null | undefined): boolean {
+  if (!user || !user.uid) return true;
+  return user.uid === 'demo_creator';
 }
 
 /**
@@ -195,18 +203,19 @@ export async function fetchUserRole(uid: string): Promise<'admin' | 'user'> {
 }
 
 /**
- * สร้าง object User จำลองจากข้อมูลที่บันทึกไว้ใน localStorage หรือโหมดเดโม
+ * สร้าง object User จำลองจากข้อมูลที่บันทึกไว้ใน localStorage
  * เพื่อให้ UI สลับสถานะล็อกอินได้ทันทีโดยไม่ต้องรอ Firebase asynchronous initialization
  */
 export function getStoredUserAsUser(): User | null {
-  const cached = getStoredUser() || DEFAULT_DEMO_USER;
-  const token = getStoredToken() || 'demo_token';
+  const cached = getStoredUser();
+  if (!cached) return null;
+  const token = getStoredToken() || 'cached_token';
   return {
     uid: cached.uid,
     email: cached.email,
     displayName: cached.displayName,
     photoURL: cached.photoURL,
-    getIdToken: async () => token || 'demo_token'
+    getIdToken: async () => token
   } as unknown as User;
 }
 
@@ -289,13 +298,18 @@ onIdTokenChanged(auth, async (user) => {
 /**
  * เข้าสู่ระบบด้วย Google (Google Sign-In)
  * - ใช้ setPersistence(auth, browserLocalPersistence) ก่อน signInWithPopup
+ * - บังคับใช้ prompt: 'select_account' เพื่อให้ผู้ใช้สามารถเลือกบัญชีที่ต้องการได้เสมอ
  * - บันทึกและรีเฟรช token ลง localStorage ทันที
  */
 export async function loginWithGoogle(): Promise<User> {
   try {
     // บังคับใช้ setPersistence(auth, browserLocalPersistence) ก่อน signInWithPopup
     await setPersistence(auth, browserLocalPersistence);
-    const result = await signInWithPopup(auth, googleProvider);
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({
+      prompt: 'select_account'
+    });
+    const result = await signInWithPopup(auth, provider);
     const user = result.user;
 
     if (user) {
@@ -350,6 +364,75 @@ export async function loginWithGoogle(): Promise<User> {
     return user;
   } catch (error: any) {
     console.error('Google Sign-in Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * สลับบัญชี Google (Switch Google Account)
+ * - เปิดหน้าต่างเลือกบัญชี Google (prompt: 'select_account') ให้ผู้ใช้เลือกบัญชีอื่นหรือลงชื่อเข้าใช้บัญชีใหม่
+ * - รองรับการสลับบัญชีได้ทันทีแม้ผู้ใช้ล็อกอินอยู่เดิม
+ */
+export async function switchGoogleAccount(): Promise<User> {
+  try {
+    await setPersistence(auth, browserLocalPersistence);
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({
+      prompt: 'select_account'
+    });
+    const result = await signInWithPopup(auth, provider);
+    const user = result.user;
+
+    if (user) {
+      const token = await user.getIdToken(true);
+      saveAuthTokenToStorage(token);
+      startTokenRefreshTimer(user);
+
+      const userRef = doc(db, 'users', user.uid);
+      let determinedRole: 'admin' | 'user' = (user.email === 'mama.ff9522@gmail.com') ? 'admin' : 'user';
+
+      try {
+        if (!isFirestoreQuotaExhausted()) {
+          const snap = await getDoc(userRef);
+          if (snap.exists()) {
+            const data = snap.data();
+            determinedRole = (data?.role === 'admin' || user.email === 'mama.ff9522@gmail.com') ? 'admin' : 'user';
+            await safeFirestoreWrite(async () => {
+              await setDoc(userRef, {
+                uid: user.uid,
+                email: user.email || '',
+                displayName: user.displayName || '',
+                photoURL: user.photoURL || '',
+                updatedAt: new Date().toISOString()
+              }, { merge: true });
+            });
+          } else {
+            determinedRole = (user.email === 'mama.ff9522@gmail.com') ? 'admin' : 'user';
+            await safeFirestoreWrite(async () => {
+              await setDoc(userRef, {
+                uid: user.uid,
+                email: user.email || '',
+                displayName: user.displayName || '',
+                photoURL: user.photoURL || '',
+                role: determinedRole,
+                credits: determinedRole === 'admin' ? 9999 : 500,
+                status: 'active',
+                isLocked: false,
+                updatedAt: new Date().toISOString()
+              }, { merge: true });
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Firestore sync on account switch notice:', err);
+      }
+
+      cacheUserData(user, determinedRole);
+    }
+
+    return user;
+  } catch (error: any) {
+    console.error('Switch Google Account Error:', error);
     throw error;
   }
 }
@@ -444,18 +527,9 @@ export function getCurrentUser(): User | null {
 
 /**
  * ติดตามสถานะการล็อกอินของผู้ใช้ตลอดเวลาด้วย onAuthStateChanged
- * - แจ้งเตือนสถานะทันทีหากมี currentUser หรือ cached session ใน localStorage
- * - ดักจับสถานะตลอดเวลา
- * - ถ้า token ใกล้หมดอายุให้ refresh ก่อนหมด
- * - เก็บ session ค้างไว้ ไม่เคลียร์ storage จนกว่าผู้ใช้จะกด logout เอง
+ * - ใช้ Firebase Auth เป็นแหล่งข้อมูลหลัก (Source of Truth) เท่านั้น
  */
 export function onAuthStateChange(callback: (user: User | null) => void): () => void {
-  // แจ้งเตือน callback ทันทีหากมี user ปัจจุบัน หรือมี session แคชไว้ใน localStorage
-  const immediateUser = auth.currentUser || getStoredUserAsUser();
-  if (immediateUser) {
-    callback(immediateUser);
-  }
-
   return onAuthStateChanged(auth, async (user) => {
     if (user) {
       cacheUserData(user);
@@ -472,13 +546,7 @@ export function onAuthStateChange(callback: (user: User | null) => void): () => 
       callback(user);
     } else {
       stopTokenRefreshTimer();
-      // หาก Firebase คืนค่า null ชั่วคราว (เช่น อยู่ใน iframe หรือกำลัง restore) แต่มี session ใน storage
-      const fallbackUser = getStoredUserAsUser();
-      if (fallbackUser) {
-        callback(fallbackUser);
-      } else {
-        callback(null);
-      }
+      callback(null);
     }
   });
 }
@@ -489,11 +557,18 @@ if (typeof window !== 'undefined') {
   if (initialStoredToken && auth.currentUser) {
     checkAndRefreshToken(auth.currentUser).catch(() => {});
   }
+  // ล้าง demo session
+  const cached = getStoredUser();
+  if (cached && cached.uid === 'demo_creator') {
+    clearAuthStorage();
+  }
 }
 
 export const authService = {
   loginWithGoogle,
+  switchGoogleAccount,
   logout,
+  isDemoUser,
   saveApiKey,
   getApiKey,
   getCurrentUser,

@@ -29,6 +29,7 @@ interface PricingProps {
   authUser: User | null;
   onNavigateToStudio?: () => void;
   onLogin?: () => void;
+  onSwitchAccount?: () => void;
   onCreditsUpdated?: (newCredits: number) => void;
 }
 
@@ -36,6 +37,7 @@ export const Pricing: React.FC<PricingProps> = ({
   authUser,
   onNavigateToStudio,
   onLogin,
+  onSwitchAccount,
   onCreditsUpdated
 }) => {
   const [selectedPackageId, setSelectedPackageId] = useState<string>('pkg_pro_500');
@@ -185,17 +187,27 @@ export const Pricing: React.FC<PricingProps> = ({
                 : '100'}{' '}
               <span className="text-xs font-sans text-slate-400 font-normal">เครดิต</span>
             </div>
-            {authUser ? (
-              <div className="text-[11px] text-emerald-400 flex items-center gap-1 mt-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                ซิงค์ Firestore: {authUser.email || authUser.displayName || 'ผู้ใช้'}
+            {authUser && authUser.uid !== 'demo_creator' ? (
+              <div className="text-[11px] text-emerald-400 flex items-center gap-2 mt-0.5">
+                <span className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  ซิงค์ Firestore: {authUser.email || authUser.displayName || 'ผู้ใช้'}
+                </span>
+                <button
+                  type="button"
+                  onClick={onSwitchAccount || onLogin}
+                  className="text-indigo-400 hover:text-indigo-300 underline cursor-pointer text-[10px]"
+                >
+                  (สลับบัญชี)
+                </button>
               </div>
             ) : (
               <button
+                type="button"
                 onClick={onLogin}
-                className="text-[11px] text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 mt-0.5"
+                className="text-[11px] text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 mt-0.5 cursor-pointer"
               >
-                <LogIn className="w-3 h-3" /> เข้าสู่ระบบเพื่อผูกยอด
+                <LogIn className="w-3 h-3" /> เข้าสู่ระบบด้วย Google เพื่อผูกยอด
               </button>
             )}
           </div>

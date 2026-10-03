@@ -61,9 +61,14 @@ async function readApiError(res: Response, fallback: string): Promise<Error> {
   let message = '';
   let code = '';
   try {
-    const body = await res.json();
-    message = body?.message || '';
-    code = body?.code || '';
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const body = await res.json();
+      message = body?.message || '';
+      code = body?.code || '';
+    } else {
+      message = `${fallback}: เกิดข้อผิดพลาดจากเซิร์ฟเวอร์ (HTTP ${res.status})`;
+    }
   } catch {
     // non-JSON body
   }
@@ -201,13 +206,13 @@ export const api = {
   async getCharacters(): Promise<Character[]> {
     const currentUid = getActiveUid();
     if (!currentUid) {
-      return DEFAULT_SAMPLE_CHARACTERS;
+      return [];
     }
 
     try {
       const syncResult = await checkAndSyncCharacters(currentUid);
-      if (syncResult.characters && syncResult.characters.length > 0) {
-        return syncResult.characters;
+      if (syncResult.characters) {
+        return syncResult.characters.filter(c => c.userId === currentUid);
       }
     } catch (e) {
       console.warn('Firestore sync character error, falling back to server/local:', e);
@@ -216,16 +221,15 @@ export const api = {
     try {
       const res = await fetch('/api/characters', { headers: getAuthHeaders() });
       const data = await res.json();
-      if (data.characters && data.characters.length > 0) {
-        return data.characters;
+      if (data.characters) {
+        return data.characters.filter((c: Character) => c.userId === currentUid);
       }
     } catch (e) {
       console.warn('Server characters fetch error:', e);
     }
 
     const local = getLocalStorageCharacters(currentUid);
-    const filtered = local.filter(c => c.userId === currentUid);
-    return filtered.length > 0 ? filtered : DEFAULT_SAMPLE_CHARACTERS;
+    return local.filter(c => c.userId === currentUid);
   },
 
   async createCharacter(character: Partial<Character>): Promise<Character> {
@@ -1000,16 +1004,108 @@ export const api = {
 
   // Story Continuation / Progressive Scene Generator
   async continueStory(payload: import('../types').StoryContinuationPayload): Promise<import('../types').StoryContinuationResponse> {
-    // Send the user's saved Gemini key (server falls back to GEMINI_API_KEY only when none is sent)
-    const apiKey = payload.offline ? '' : await resolveUserGeminiKey(payload.apiKey);
-    const res = await fetch('/api/story/continue', {
-      method: 'POST',
-      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ ...payload, apiKey: apiKey || undefined })
-    });
-    if (!res.ok) {
-      throw await readApiError(res, 'ต่อบทไม่สำเร็จ / Failed to continue story');
+    // 1. Direct offline handling if user explicitly requests offline mode
+    if (payload.offline) {
+      const { generateEpisodeLocally } = await import('./storyEpisodeEngine');
+      const localResult = generateEpisodeLocally({
+        originalStory: payload.originalStory,
+        currentScriptText: payload.currentScriptText,
+        episodeNumber: payload.episodeNumber,
+        targetSceneCount: payload.targetSceneCount,
+        existingScenes: payload.existingScenes,
+        lastSceneState: payload.lastSceneState,
+        characters: payload.characters,
+        continuityLock: payload.continuityLock,
+        clipDurationSeconds: payload.clipDurationSeconds || 10
+      });
+      return {
+        success: true,
+        source: 'offline-narrative-engine',
+        offline: true,
+        ...localResult
+      };
     }
-    return await res.json();
+
+    // 2. Call server API
+    try {
+      const apiKey = await resolveUserGeminiKey(payload.apiKey);
+      const res = await fetch('/api/story/continue', {
+        method: 'POST',
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ ...payload, apiKey: apiKey || undefined })
+      });
+
+      const text = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        // Not valid JSON (e.g. Vite SPA HTML fallback or proxy message)
+      }
+
+      if (res.ok && data && typeof data === 'object') {
+        return data;
+      }
+
+      if (!res.ok) {
+        if (data && data.message) {
+          const err = new Error(data.message);
+          (err as any).code = data.code;
+          (err as any).status = res.status;
+          throw err;
+        }
+        throw new Error(`ต่อบทไม่สำเร็จ (HTTP ${res.status}): ${text.slice(0, 150)}`);
+      }
+
+      // If res.ok (HTTP 200) but body was not JSON (e.g. index.html)
+      console.warn('Backend returned non-JSON for /api/story/continue. Activating local story engine fallback.');
+      const { generateEpisodeLocally } = await import('./storyEpisodeEngine');
+      const localResult = generateEpisodeLocally({
+        originalStory: payload.originalStory,
+        currentScriptText: payload.currentScriptText,
+        episodeNumber: payload.episodeNumber,
+        targetSceneCount: payload.targetSceneCount,
+        existingScenes: payload.existingScenes,
+        lastSceneState: payload.lastSceneState,
+        characters: payload.characters,
+        continuityLock: payload.continuityLock,
+        clipDurationSeconds: payload.clipDurationSeconds || 10
+      });
+      return {
+        success: true,
+        source: 'offline-narrative-engine',
+        offline: true,
+        fallbackNotice: 'เซิร์ฟเวอร์ตอบกลับไม่ใช่ JSON ระบบจึงสลับใช้เอนจินเขียนบทออฟไลน์ให้อัตโนมัติ',
+        ...localResult
+      };
+    } catch (err: any) {
+      if (err?.code && String(err.code).startsWith('GEMINI_')) {
+        throw err;
+      }
+      console.warn('continueStory encountered error, attempting offline generation fallback:', err?.message || err);
+      try {
+        const { generateEpisodeLocally } = await import('./storyEpisodeEngine');
+        const localResult = generateEpisodeLocally({
+          originalStory: payload.originalStory,
+          currentScriptText: payload.currentScriptText,
+          episodeNumber: payload.episodeNumber,
+          targetSceneCount: payload.targetSceneCount,
+          existingScenes: payload.existingScenes,
+          lastSceneState: payload.lastSceneState,
+          characters: payload.characters,
+          continuityLock: payload.continuityLock,
+          clipDurationSeconds: payload.clipDurationSeconds || 10
+        });
+        return {
+          success: true,
+          source: 'offline-narrative-engine',
+          offline: true,
+          fallbackNotice: `การเชื่อมต่อเซิร์ฟเวอร์ขัดข้อง (${err?.message || 'Network error'}) ระบบจึงสลับใช้เอนจินออฟไลน์แทน`,
+          ...localResult
+        };
+      } catch {
+        throw err;
+      }
+    }
   }
 };

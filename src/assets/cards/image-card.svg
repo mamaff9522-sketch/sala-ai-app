@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 512" width="1024" height="512">
+  <defs>
+    <radialGradient id="bg5" cx="70%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#2E0832" />
+      <stop offset="60%" stop-color="#0E0520" />
+      <stop offset="100%" stop-color="#03020E" />
+    </radialGradient>
+    <linearGradient id="border5" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF35D4" />
+      <stop offset="50%" stop-color="#7B2CFF" />
+      <stop offset="100%" stop-color="#00D8FF" />
+    </linearGradient>
+    <linearGradient id="icon5" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E879F9" />
+      <stop offset="100%" stop-color="#9333EA" />
+    </linearGradient>
+    <filter id="glow5" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="512" rx="40" fill="url(#bg5)" />
+
+  <!-- Light Swirls & Sparkles -->
+  <ellipse cx="700" cy="260" rx="220" ry="160" stroke="#FF35D4" stroke-width="2" fill="none" transform="rotate(-25 700 260)" opacity="0.4" filter="url(#glow5)" />
+  <ellipse cx="720" cy="270" rx="240" ry="170" stroke="#00D8FF" stroke-width="1.5" fill="none" transform="rotate(-15 720 270)" opacity="0.5" filter="url(#glow5)" />
+  <circle cx="920" cy="70" r="3.5" fill="#38BDF8" opacity="0.9" filter="url(#glow5)" />
+  <circle cx="840" cy="450" r="3" fill="#FF35D4" opacity="0.8" />
+
+  <!-- 3 Layered Glowing Photo Cards Floating in Space -->
+  <g transform="translate(420, 60)">
+    <!-- Back Card 1 -->
+    <g transform="translate(20, 110) rotate(-22)">
+      <rect width="200" height="240" rx="16" fill="#180A2E" stroke="#38BDF8" stroke-width="3" filter="url(#glow5)" />
+      <path d="M 0 170 Q 100 130 200 160 L 200 240 L 0 240 Z" fill="#38BDF8" opacity="0.4" />
+      <circle cx="100" cy="90" r="35" fill="#F472B6" opacity="0.6" />
+    </g>
+
+    <!-- Mid Card 2 -->
+    <g transform="translate(100, 50) rotate(-10)">
+      <rect width="210" height="250" rx="16" fill="#200B3B" stroke="#00D8FF" stroke-width="3.5" filter="url(#glow5)" />
+      <polygon points="20,190 70,110 110,170 150,95 200,200" fill="#818CF8" />
+      <circle cx="60" cy="65" r="24" fill="#FDE047" opacity="0.8" />
+    </g>
+
+    <!-- Front Big Hero Card 3 -->
+    <g transform="translate(180, 20) rotate(5)">
+      <rect width="240" height="290" rx="20" fill="#0C0A2E" stroke="#FFFFFF" stroke-width="4.5" filter="url(#glow5)" />
+      <!-- Card Image Art (Moon over reflective lake) -->
+      <!-- Radiant Moon -->
+      <circle cx="120" cy="95" r="60" fill="#FED7AA" filter="url(#glow5)" />
+      <circle cx="120" cy="95" r="54" fill="#FDE68A" />
+      <!-- Distant Fantasy Peaks -->
+      <polygon points="0,210 50,140 100,190 150,120 200,180 240,150 240,290 0,290" fill="#1E1B4B" />
+      <!-- Water Reflection of Moon -->
+      <polygon points="90,210 150,210 160,290 80,290" fill="#FEF08A" opacity="0.5" filter="url(#glow5)" />
+      <line x1="70" y1="235" x2="170" y2="235" stroke="#FFFFFF" stroke-width="3" opacity="0.7" />
+      <line x1="85" y1="255" x2="155" y2="255" stroke="#FFFFFF" stroke-width="3" opacity="0.7" />
+      <line x1="95" y1="275" x2="145" y2="275" stroke="#FFFFFF" stroke-width="3" opacity="0.7" />
+    </g>
+  </g>
+
+  <!-- Left Icon Box (Picture) -->
+  <rect x="52" y="52" width="112" height="112" rx="28" fill="url(#icon5)" filter="url(#glow5)" />
+  <g transform="translate(80, 80)">
+    <rect x="0" y="4" width="56" height="48" rx="8" fill="none" stroke="#FFFFFF" stroke-width="4.5" />
+    <circle cx="16" cy="18" r="5" fill="#FFFFFF" />
+    <polygon points="8,44 24,26 36,38 48,22 56,34 56,44" fill="#FFFFFF" />
+  </g>
+
+  <!-- Left Thai Text: สร้างภาพ -->
+  <text x="56" y="275" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="900" font-size="54" fill="#FFFFFF">สร้างภาพ</text>
+  <text x="56" y="352" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="500" font-size="34" fill="#FFFFFF">สร้างภาพด้วย AI</text>
+  <text x="56" y="415" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="500" font-size="34" fill="#FFFFFF">จากบทหรือฉากที่ต้องการ</text>
+
+  <!-- Outer Neon Glowing Frame -->
+  <rect x="8" y="8" width="1008" height="496" rx="36" fill="none" stroke="url(#border5)" stroke-width="12" filter="url(#glow5)" />
+  <rect x="8" y="8" width="1008" height="496" rx="36" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.6" />
+</svg>

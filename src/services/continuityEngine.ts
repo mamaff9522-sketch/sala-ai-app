@@ -455,7 +455,7 @@ export function formatPositionLock(state: Pick<ClipContinuityState, 'startPoses'
 export function formatContinuityForPrompt(state: Pick<ClipContinuityState, 'charactersPresent' | 'startPoses' | 'endPoses' | 'left'>, isFirstClip = false): string {
   if (!state || state.charactersPresent.length === 0) return '';
   const parts: string[] = [];
-  parts.push(`Characters present in this clip: ${state.charactersPresent.join(', ')} (all must stay visible unless the action says they leave)`);
+  parts.push(`Characters present in this clip: ${state.charactersPresent.join(', ')} (all must stay visible unless the action explicitly indicates they leave)`);
   const pos = formatPositionLock(state, isFirstClip);
   if (pos) parts.push(pos);
   if (state.left && state.left.length > 0) parts.push(`Leaves the frame during this clip: ${state.left.join(', ')}`);

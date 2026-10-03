@@ -16,7 +16,8 @@ import {
   isReservedSystemKeyword,
   isMetadataKeyword,
   deriveScenePhysicalStates,
-  SPEECH_VERBS
+  SPEECH_VERBS,
+  estimateSpeechSeconds
 } from './salaDirectorEngine';
 
 import {
@@ -657,8 +658,13 @@ export function buildUnitFromBeats(beats: StoryBeat[]): SceneBeatUnit {
 /**
  * Splits the whole story into ordered scene units.
  * With scene headers: exactly one unit per header block.
- * Without headers: beats are chunked so that a dialogue line stays in the same
- * unit as the action that introduces it (no "one clip late" dialogue).
+ * Without headers: beats are grouped into natural scenes.
+ * Rules:
+ * - ห้ามใช้ 1 Action = 1 Clip
+ * - Action/Narration ที่ต่อเนื่องกันในฉากและสถานที่เดียวกัน ให้รวมอยู่ในคลิปเดียวเท่าที่เวลา 10 วินาทีรองรับ
+ * - ห้ามสร้าง Action เพิ่มเองเพื่อยืดจำนวนคลิป
+ * - กฎแบ่ง 20 คำให้ทำงานเฉพาะ “บทพูด” ที่เกิน 20 คำเท่านั้น (Action/Narration ห้ามนำไปนับหรือแตกด้วยกฎ 20 คำ)
+ * - ไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป
  */
 export function splitStoryIntoSceneUnits(parsed: ParsedStoryStructure, scenesPerChunk: number = 5): SceneBeatUnit[] {
   if (parsed.hasSceneHeaders && parsed.scenes.length > 0) {
@@ -667,21 +673,65 @@ export function splitStoryIntoSceneUnits(parsed: ParsedStoryStructure, scenesPer
       .filter(u => u.actionText.trim() || u.dialogues.length > 0);
   }
 
-  // Group each action with the dialogue lines that directly follow it.
-  const groups: StoryBeat[][] = [];
-  for (const b of parsed.narrativeBeats) {
-    if (b.type === 'action' || groups.length === 0) groups.push([b]);
-    else groups[groups.length - 1].push(b);
-  }
-  if (groups.length === 0) return [];
+  if (!parsed.narrativeBeats || parsed.narrativeBeats.length === 0) return [];
 
-  // Chunk groups: roughly 1 group per scene when short, evenly otherwise.
-  const target = Math.max(1, scenesPerChunk);
-  const groupsPerScene = groups.length <= target * 2 ? 1 : Math.ceil(groups.length / (target * 2));
   const units: SceneBeatUnit[] = [];
-  for (let i = 0; i < groups.length; i += groupsPerScene) {
-    units.push(buildUnitFromBeats(groups.slice(i, i + groupsPerScene).flat()));
+  let currentBeats: StoryBeat[] = [];
+  let currentLocation = '';
+
+  const flushCurrentUnit = () => {
+    if (currentBeats.length > 0) {
+      const unit = buildUnitFromBeats(currentBeats);
+      if (currentLocation) unit.location = currentLocation;
+      if (unit.actionText.trim() || unit.dialogues.length > 0) {
+        units.push(unit);
+      }
+      currentBeats = [];
+    }
+  };
+
+  for (const b of parsed.narrativeBeats) {
+    const text = b.text.trim();
+    if (!text && !b.dialogue) continue;
+
+    // ตรวจสอบเครื่องหมายเหตุการณ์ชัดเจน เช่น "เหตุการณ์ที่ 1:", "ตอนที่ 1:"
+    const isExplicitEventMarker = /^(?:เหตุการณ์ที่|ช่วงที่|ตอนที่|ฉากย่อยที่|Beat|Event)\s*\d+/i.test(text);
+
+    // ตรวจสอบการเปลี่ยนสถานที่
+    const detectedLoc = b.type === 'action' ? extractLocationFromText(text) : '';
+    const isLocationChange = !!(detectedLoc && currentLocation && detectedLoc !== currentLocation);
+
+    // ตรวจสอบข้อจำกัดเวลา 10 วินาทีของคลิป
+    const currentDialogues = currentBeats.filter(x => x.type === 'dialogue' && x.dialogue).map(x => x.dialogue!.dialogue);
+    const currentSpeechSec = estimateSpeechSeconds(currentDialogues);
+    const newSpeechSec = b.type === 'dialogue' && b.dialogue ? estimateSpeechSeconds([b.dialogue.dialogue]) : 0;
+    const isSpeechOverflow = b.type === 'dialogue' && (currentDialogues.length >= 2 || (currentSpeechSec + newSpeechSec > 8.0));
+
+    // ตรวจสอบความยาว Action ที่เกินกว่า 10 วินาทีจะรองรับได้
+    // (Action ต่อเนื่องทั่วไป เช่น 4-6 กริยา รวมอยู่ในคลิปเดียว แต่ถ้าเกิน 8 กริยาหรือข้อความยาวมากจึงเริ่มคลิปใหม่)
+    const currentActionBeats = currentBeats.filter(x => x.type === 'action');
+    const currentActionChars = currentActionBeats.reduce((sum, x) => sum + x.text.length, 0);
+    const isActionOverflow = b.type === 'action' && currentActionBeats.length >= 8 && currentActionChars > 250;
+
+    const shouldStartNewUnit = currentBeats.length > 0 && (
+      isExplicitEventMarker ||
+      isLocationChange ||
+      isSpeechOverflow ||
+      isActionOverflow
+    );
+
+    if (shouldStartNewUnit) {
+      flushCurrentUnit();
+      if (detectedLoc) currentLocation = detectedLoc;
+    } else if (!currentLocation && detectedLoc) {
+      currentLocation = detectedLoc;
+    }
+
+    currentBeats.push(b);
   }
+
+  flushCurrentUnit();
+
   return units;
 }
 
@@ -790,7 +840,6 @@ export function generateEpisodeLocally({
 }: GenerateEpisodeParams) {
   const parsedStory = parseStoryStructure(originalStory);
   const hasExplicitEnd = hasExplicitEndingMarker(originalStory);
-  const scenesPerEpisode = Math.max(5, Math.min(6, targetSceneCount || 5));
 
   // ---- Known characters: declared/parsed first, then library matches, then continuity lock
   const allKnownCharacters: string[] = [];
@@ -819,7 +868,11 @@ export function generateEpisodeLocally({
   const storyTime = metaTime || continuityLock?.timeOfDay || detectTimeOfDay(storyText) || '';
 
   // ---- Slice this episode's scenes out of the full ordered scene list
-  const allUnits = splitStoryIntoSceneUnits(parsedStory, scenesPerEpisode);
+  // กฎ: ไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป (ถ้าเรื่องมีน้อยกว่า 5 ฉาก ให้ใช้จำนวนฉากจริง)
+  const allUnits = splitStoryIntoSceneUnits(parsedStory, targetSceneCount || 5);
+  const scenesPerEpisode = targetSceneCount && targetSceneCount > 0
+    ? targetSceneCount
+    : (allUnits.length > 0 ? Math.min(allUnits.length, 5) : 1);
   const lastNum = Number(lastSceneState?.sceneNumber) || 0;
   const startIndex = lastNum > 0
     ? lastNum
@@ -849,8 +902,15 @@ export function generateEpisodeLocally({
 
   episodeUnits.forEach((unit, s) => {
     const scNum = startIndex + s + 1;
-    const location = unit.location || storyLocation || extractLocationFromText(unit.actionText) || UNSPECIFIED;
-    const timeOfDay = unit.timeOfDay || storyTime || detectTimeOfDay(unit.actionText) || UNSPECIFIED;
+    // กฎข้อ 2: ล็อกสถานที่และแสงอัตโนมัติตามเนื้อเรื่อง
+    // ดึงค่า Location และ Lighting/Time จากเนื้อเรื่องของฉากนั้นโดยตรง
+    // เมื่อขึ้นฉากใหม่ ให้รีเซ็ตค่าสภาพแวดล้อมเดิมทิ้งทันที ห้ามนำค่าเดิม (เช่น ป่าทึบ/แสงแดด) ข้ามมาใช้ในฉากใหม่ (เช่น ถ้ำโบราณ/กลางคืน)
+    const sceneDetectedLoc = extractLocationFromText(unit.actionText);
+    const sceneDetectedTime = detectTimeOfDay(unit.actionText);
+    const isContinuation = /(?:ต่อเนื่อง|\(ต่อ\)|continued|cont'?d?)/i.test(unit.heading || unit.title || '');
+
+    const location = unit.location || sceneDetectedLoc || (isContinuation && s > 0 ? (scenes[s - 1]?.location) : (s === 0 ? storyLocation : '')) || storyLocation || UNSPECIFIED;
+    const timeOfDay = unit.timeOfDay || sceneDetectedTime || (isContinuation && s > 0 ? (scenes[s - 1]?.timeOfDay) : (s === 0 ? storyTime : '')) || storyTime || UNSPECIFIED;
     const sceneHeading = `ฉากที่ ${scNum}: ${location} - ${timeOfDay}${unit.title ? ` (${unit.title})` : ''}`;
     const cont = continuity.clips[s];
     const locationLock = locks.locationLockFor(location, timeOfDay);

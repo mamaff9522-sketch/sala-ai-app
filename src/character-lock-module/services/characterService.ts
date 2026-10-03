@@ -206,6 +206,19 @@ export const DEFAULT_SAMPLE_CHARACTERS: Character[] = [
 ];
 
 /**
+ * ดึงข้อมูลตัวละครที่ไม่ซ้ำกันตาม ID
+ */
+export function deduplicateCharacters<T extends { id: string }>(characters: T[]): T[] {
+  const uniqueMap = new Map<string, T>();
+  for (const char of characters) {
+    if (char && char.id && !uniqueMap.has(char.id)) {
+      uniqueMap.set(char.id, char);
+    }
+  }
+  return Array.from(uniqueMap.values());
+}
+
+/**
  * ดึงรายการตัวละครเฉพาะของผู้ใช้ที่มี UID ที่กำหนด (แยกบัญชีเด็ดขาด)
  */
 export function getLocalStorageCharacters(uid?: string): Character[] {
@@ -249,7 +262,8 @@ export function getLocalStorageCharacters(uid?: string): Character[] {
     } catch {}
   }
 
-  return Array.from(map.values()).map(normalizeCharacterPersistence);
+  const list = Array.from(map.values()).map(normalizeCharacterPersistence);
+  return deduplicateCharacters(list);
 }
 
 /**
@@ -259,7 +273,8 @@ export function saveCharactersToLocalStorage(chars: Character[], uid?: string): 
   const currentUid = getActiveUid(uid) || (uid && uid.trim()) || 'guest_user';
   if (typeof window === 'undefined') return;
 
-  const scopedChars = chars.map(c => normalizeCharacterPersistence({ ...c, userId: currentUid }));
+  const deduped = deduplicateCharacters(chars);
+  const scopedChars = deduped.map(c => normalizeCharacterPersistence({ ...c, userId: currentUid }));
   try {
     localStorage.setItem(`sala_characters_${currentUid}`, JSON.stringify(scopedChars));
   } catch (err) {

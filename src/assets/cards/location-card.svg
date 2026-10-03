@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 512" width="1024" height="512">
+  <defs>
+    <radialGradient id="bgLoc" cx="70%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#0A2D24" />
+      <stop offset="60%" stop-color="#071A20" />
+      <stop offset="100%" stop-color="#020C0A" />
+    </radialGradient>
+    <linearGradient id="borderLoc" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34D399" />
+      <stop offset="50%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <linearGradient id="iconLoc" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2DD4BF" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <filter id="glowLoc" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="512" rx="40" fill="url(#bgLoc)" />
+
+  <!-- Stars / Ambient particles -->
+  <circle cx="850" cy="80" r="3.5" fill="#34D399" opacity="0.9" filter="url(#glowLoc)" />
+  <circle cx="940" cy="220" r="2.5" fill="#2DD4BF" opacity="0.9" />
+  <circle cx="680" cy="460" r="3" fill="#10B981" opacity="0.9" />
+
+  <!-- Location Pin & Landmark Artwork -->
+  <g transform="translate(520, 100)">
+    <circle cx="150" cy="150" r="130" fill="#064E3B" opacity="0.4" filter="url(#glowLoc)" />
+    <!-- Pin Shape -->
+    <path d="M150 40 C100 40 60 80 60 130 C60 190 150 300 150 300 C150 300 240 190 240 130 C240 80 200 40 150 40 Z" fill="url(#iconLoc)" stroke="#34D399" stroke-width="4" filter="url(#glowLoc)" />
+    <!-- Center Dot -->
+    <circle cx="150" cy="125" r="35" fill="#042F2E" stroke="#6EE7B7" stroke-width="4" />
+    <!-- Interior Landmark / Mountain lines -->
+    <path d="M135 140 L150 115 L165 140 Z" fill="#34D399" opacity="0.9" />
+    <!-- Base Shadow -->
+    <ellipse cx="150" cy="315" rx="60" ry="14" fill="#022C22" opacity="0.8" />
+  </g>
+</svg>

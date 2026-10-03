@@ -530,16 +530,25 @@ export interface MasterContinuityLock {
   previousEventStatus?: string;
   lockActionMomentum: boolean;
   lockColorGrade: string;
+  /** Action & Narration Lock: preserves action/narration order, extracts via [ACT_TRIGGER]...[ACTION_END], enforces 100% silence when no dialogue */
+  actionNarrationLockEnabled?: boolean;
 }
+
+export type DialogueCameraAngle = 'OTS' | 'CU' | '2S' | 'MID' | 'W' | 'AUTO';
+export type DialogueBackgroundControl = 'AUTO' | 'SOFT' | 'CLEAR';
 
 export interface DialogueLockEntry {
   id: string;
   speaker: string;
   line: string;
-  emotionTone: string;
+  emotionTone?: string;
   deliverySpeed?: 'slow' | 'natural' | 'fast';
   timestamp?: string;
   clipNumber?: number;
+  /** Camera angles selected for this dialogue segment (Max 2: [0] = CAM-1, [1] = CAM-2) */
+  cameraAngles?: DialogueCameraAngle[];
+  /** Background depth of field control while preserving Location Lock */
+  backgroundControl?: DialogueBackgroundControl;
 }
 
 export interface VoiceControl {
@@ -604,12 +613,15 @@ export interface DirectedClipItem {
   startAction: string;
   endAction: string;
   dialogues: DialogueLockEntry[];
+  dialogue?: string; // "NONE" when no dialogue in script, or verbatim "Speaker: Line"
   continuityLockSummary: string;
   audioDirectiveSummary: string;
   characterPositions?: string; // Spatial position lock e.g. "พี่ทุยอยู่ซ้ายเสา, น้องน้ำอยู่ขวาเสา"
   locationId?: string;
   locationName?: string;
   locationLocked?: boolean;
+  timeOfDay?: string;
+  lighting?: string;
   cameraShotType?: CameraShotType;
   generatedPrompt: string;
   negativePrompt: string;
@@ -630,6 +642,15 @@ export interface DirectedClipItem {
   estimatedSpeechSeconds?: number;
   isEditing?: boolean;
   isLocked?: boolean; // User approved/locked clip
+  /** Action & Narration Lock: extracts Action, Movement, Emotion/Expression, Narration; 100% silent when no dialogue */
+  actionNarrationLock?: {
+    action?: string;
+    movement?: string;
+    emotionExpression?: string;
+    narration?: string;
+    isSilent: boolean;
+    hasActTrigger?: boolean;
+  };
   jobId?: string;
   status?: 'idle' | 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
   outputUrl?: string;
@@ -642,7 +663,7 @@ export interface DirectedClipItem {
 export interface ContinuityIssue {
   id: string;
   clipNumber: number;
-  type: 'character' | 'costume' | 'location' | 'time' | 'props' | 'dialogue' | 'event_order';
+  type: 'character' | 'costume' | 'location' | 'time' | 'props' | 'dialogue' | 'event_order' | 'camera';
   severity: 'warning' | 'error' | 'info';
   title: string;
   description: string;
@@ -767,6 +788,7 @@ export interface StoryContinuationResponse {
   code?: string;
   source?: 'gemini-flash' | 'offline-narrative-engine' | string;
   offline?: boolean;
+  fallbackNotice?: string;
   hasMoreScenes?: boolean; // false when the source story has no further scenes
   declaredCharacters?: string[];
   continuityWarnings?: ClipContinuityWarning[];

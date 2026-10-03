@@ -1,0 +1,248 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 512" width="1024" height="512">
+  <defs>
+    <!-- Background Gradient: Deep cosmic blue & indigo -->
+    <radialGradient id="bg1" cx="72%" cy="48%" r="68%">
+      <stop offset="0%" stop-color="#1E0E45" />
+      <stop offset="45%" stop-color="#0E082E" />
+      <stop offset="80%" stop-color="#06061E" />
+      <stop offset="100%" stop-color="#020310" />
+    </radialGradient>
+
+    <!-- Outer Neon Glow Border Gradient -->
+    <linearGradient id="border1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00E5FF" />
+      <stop offset="40%" stop-color="#3B82F6" />
+      <stop offset="70%" stop-color="#8B5CF6" />
+      <stop offset="100%" stop-color="#D946EF" />
+    </linearGradient>
+
+    <!-- Inner Neon Outline -->
+    <linearGradient id="innerBorder1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.9" />
+      <stop offset="50%" stop-color="#C084FC" stop-opacity="0.7" />
+      <stop offset="100%" stop-color="#F43F5E" stop-opacity="0.8" />
+    </linearGradient>
+
+    <!-- Icon Box Gradient (Square with rounded corners) -->
+    <linearGradient id="icon1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#9333EA" />
+      <stop offset="40%" stop-color="#6366F1" />
+      <stop offset="100%" stop-color="#06B6D4" />
+    </linearGradient>
+
+    <!-- Scroll Surface & Nebula Texture Gradients -->
+    <linearGradient id="scrollBody" x1="0%" y1="0%" x2="90%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.95" />
+      <stop offset="25%" stop-color="#60A5FA" stop-opacity="0.85" />
+      <stop offset="60%" stop-color="#A855F7" stop-opacity="0.9" />
+      <stop offset="90%" stop-color="#EC4899" stop-opacity="0.85" />
+      <stop offset="100%" stop-color="#3B82F6" stop-opacity="0.9" />
+    </linearGradient>
+
+    <linearGradient id="scrollRollTop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#E0F2FE" />
+      <stop offset="35%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+
+    <linearGradient id="scrollRollBottom" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FDF4FF" />
+      <stop offset="30%" stop-color="#E879F9" />
+      <stop offset="70%" stop-color="#A855F7" />
+      <stop offset="100%" stop-color="#6B21A8" />
+    </linearGradient>
+
+    <!-- Futuristic Cyber Pen Gradients -->
+    <linearGradient id="penBody" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B0F19" />
+      <stop offset="50%" stop-color="#1E293B" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+
+    <linearGradient id="penGold" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FDE047" />
+      <stop offset="50%" stop-color="#F59E0B" />
+      <stop offset="100%" stop-color="#D97706" />
+    </linearGradient>
+
+    <linearGradient id="penGrip" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#D946EF" />
+      <stop offset="50%" stop-color="#8B5CF6" />
+      <stop offset="100%" stop-color="#06B6D4" />
+    </linearGradient>
+
+    <!-- Soft Glow Filter -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="7" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <!-- Intense Bright Glow for Pen Tip & Sparks -->
+    <filter id="brightGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="12" result="blur1" />
+      <feGaussianBlur stdDeviation="4" result="blur2" />
+      <feMerge>
+        <feMergeNode in="blur1" />
+        <feMergeNode in="blur2" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Card Background -->
+  <rect width="1024" height="512" rx="36" fill="url(#bg1)" />
+
+  <!-- Ambient Nebula Lighting in Right Half -->
+  <circle cx="680" cy="240" r="180" fill="#7C3AED" opacity="0.22" filter="url(#brightGlow)" />
+  <circle cx="820" cy="200" r="140" fill="#00D8FF" opacity="0.18" filter="url(#brightGlow)" />
+  <circle cx="620" cy="380" r="100" fill="#D946EF" opacity="0.2" filter="url(#brightGlow)" />
+
+  <!-- Twinkling Stars (Safely spaced away from outer edges) -->
+  <circle cx="210" cy="85" r="2.5" fill="#FFFFFF" opacity="0.9" />
+  <circle cx="380" cy="140" r="2" fill="#38BDF8" opacity="0.8" />
+  <circle cx="530" cy="75" r="3" fill="#E879F9" opacity="0.9" filter="url(#glow)" />
+  <circle cx="880" cy="80" r="3.5" fill="#00E5FF" opacity="0.9" filter="url(#glow)" />
+  <circle cx="930" cy="180" r="2" fill="#FFFFFF" opacity="0.8" />
+  <circle cx="940" cy="360" r="2.5" fill="#F43F5E" opacity="0.8" filter="url(#glow)" />
+  <circle cx="890" cy="430" r="2" fill="#C084FC" opacity="0.7" />
+  <circle cx="480" cy="440" r="2" fill="#38BDF8" opacity="0.7" />
+
+  <!-- Cosmic Energy Trails (Smooth curves underneath the scroll and pen) -->
+  <path d="M 460 430 Q 640 470 820 380 T 940 220" fill="none" stroke="#7C3AED" stroke-width="3.5" opacity="0.5" filter="url(#glow)" />
+  <path d="M 500 415 Q 670 440 850 330 T 960 170" fill="none" stroke="#00E5FF" stroke-width="2.5" opacity="0.6" filter="url(#glow)" />
+  <path d="M 540 445 Q 710 460 880 370" fill="none" stroke="#EC4899" stroke-width="2" opacity="0.4" filter="url(#glow)" />
+
+  <!-- ============================================================== -->
+  <!-- RIGHT ARTWORK: Glowing Cosmic Scroll & Cyber Pen               -->
+  <!-- Scaled & shifted so everything stays safely inside the border  -->
+  <!-- ============================================================== -->
+  <g id="artworkGroup" transform="translate(430, 25)">
+    <!-- THE CELESTIAL SCROLL -->
+    <!-- Scroll Upper Roll (Curled Cylinder) -->
+    <g transform="translate(30, 50) rotate(-14)">
+      <ellipse cx="60" cy="30" rx="38" ry="20" fill="url(#scrollRollTop)" filter="url(#glow)" />
+      <ellipse cx="60" cy="30" rx="30" ry="14" fill="#0A1128" />
+      <ellipse cx="60" cy="30" rx="22" ry="9" fill="#00E5FF" opacity="0.8" />
+    </g>
+
+    <!-- Scroll Main Body (Curved Parchment Sheet) -->
+    <path d="M 85 45 Q 220 20 340 32 L 405 315 Q 260 375 160 355 Q 115 345 85 295 Z" 
+          fill="url(#scrollBody)" opacity="0.94" filter="url(#glow)" />
+
+    <!-- Fine Internal Cosmic Glow Highlights on Parchment -->
+    <path d="M 95 60 Q 225 35 335 45 L 395 305 Q 260 360 170 345 Z" 
+          fill="#0B0D2E" opacity="0.45" />
+
+    <!-- Neon Text / Script Lines on Scroll -->
+    <line x1="145" y1="105" x2="310" y2="85" stroke="#FFFFFF" stroke-width="6.5" stroke-linecap="round" opacity="0.95" />
+    <line x1="140" y1="138" x2="335" y2="116" stroke="#E0F2FE" stroke-width="6" stroke-linecap="round" opacity="0.9" />
+    <line x1="145" y1="172" x2="320" y2="150" stroke="#7DD3FC" stroke-width="6" stroke-linecap="round" opacity="0.9" />
+    <line x1="150" y1="205" x2="340" y2="183" stroke="#BAE6FD" stroke-width="6" stroke-linecap="round" opacity="0.85" />
+    <line x1="155" y1="238" x2="330" y2="216" stroke="#C084FC" stroke-width="6" stroke-linecap="round" opacity="0.85" />
+    <line x1="160" y1="272" x2="315" y2="250" stroke="#E879F9" stroke-width="6" stroke-linecap="round" opacity="0.8" />
+
+    <!-- Scroll Lower Roll (Bottom Curled Cylinder) -->
+    <g transform="translate(195, 340) rotate(-8)">
+      <ellipse cx="60" cy="25" rx="46" ry="24" fill="url(#scrollRollBottom)" filter="url(#brightGlow)" />
+      <ellipse cx="60" cy="25" rx="34" ry="16" fill="#1E0B36" />
+      <ellipse cx="60" cy="25" rx="24" ry="10" fill="#E879F9" opacity="0.9" />
+    </g>
+
+    <!-- THE FUTURISTIC CYBER PEN (Angled, sleek, completely in bounds) -->
+    <!-- Transformed to keep tip inside frame (x <= 480 within bounds) -->
+    <g transform="translate(390, 48) rotate(34)">
+      <!-- Pen Upper Cap / Finial Ring -->
+      <ellipse cx="16" cy="12" rx="16" ry="10" fill="url(#penGold)" filter="url(#glow)" />
+      <circle cx="16" cy="12" r="7" fill="#E0F2FE" />
+
+      <!-- Pen Upper Barrel (Dark Titanium Finish) -->
+      <rect x="0" y="20" width="32" height="110" rx="6" fill="url(#penBody)" stroke="#38BDF8" stroke-width="2.5" />
+      <!-- Cyber Stripes & Gold Rings -->
+      <rect x="0" y="45" width="32" height="6" fill="url(#penGold)" />
+      <line x1="0" y1="48" x2="32" y2="48" stroke="#FFFFFF" stroke-width="1.5" />
+
+      <!-- Pen Grip Section (Iridescent Gradient) -->
+      <rect x="1" y="130" width="30" height="75" rx="4" fill="url(#penGrip)" stroke="#00E5FF" stroke-width="2" filter="url(#glow)" />
+      <rect x="0" y="150" width="32" height="5" fill="url(#penGold)" />
+
+      <!-- Lower Metal Cone -->
+      <polygon points="2,205 30,205 24,248 8,248" fill="url(#penBody)" stroke="#38BDF8" stroke-width="2" />
+      <rect x="6" y="246" width="20" height="6" fill="url(#penGold)" />
+
+      <!-- Pen Nib / Tip (Gold Nib Writing onto Scroll) -->
+      <polygon points="6,252 26,252 16,292" fill="url(#penGold)" stroke="#FFFFFF" stroke-width="2" />
+      <!-- Nib Center Slit & Breather Hole -->
+      <line x1="16" y1="256" x2="16" y2="282" stroke="#451A03" stroke-width="1.8" />
+      <circle cx="16" cy="268" r="2.5" fill="#451A03" />
+
+      <!-- Radiant Glowing Spark at Nib Tip -->
+      <circle cx="16" cy="292" r="18" fill="#FFFFFF" opacity="0.95" filter="url(#brightGlow)" />
+      <circle cx="16" cy="292" r="8" fill="#FDE047" filter="url(#brightGlow)" />
+      <circle cx="16" cy="292" r="3.5" fill="#FFFFFF" />
+
+      <!-- Emitted Light Sparkles from Writing Point -->
+      <line x1="16" y1="280" x2="16" y2="306" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" />
+      <line x1="4" y1="292" x2="28" y2="292" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round" />
+      <line x1="7" y1="283" x2="25" y2="301" stroke="#FDE047" stroke-width="2" stroke-linecap="round" />
+      <line x1="7" y1="301" x2="25" y2="283" stroke="#FDE047" stroke-width="2" stroke-linecap="round" />
+    </g>
+
+    <!-- Soft Reflection & Glow on Floor/Underneath -->
+    <ellipse cx="250" cy="405" rx="160" ry="20" fill="#7C3AED" opacity="0.3" filter="url(#brightGlow)" />
+  </g>
+
+  <!-- ============================================================== -->
+  <!-- LEFT BRANDING & TYPOGRAPHY                                     -->
+  <!-- ============================================================== -->
+  <!-- Top-Left Icon Box: File / Script Icon inside Neon Squircle -->
+  <g id="leftIcon" transform="translate(56, 52)">
+    <rect width="108" height="108" rx="26" fill="url(#icon1)" filter="url(#glow)" />
+    <!-- Document Icon Outline & Lines -->
+    <g transform="translate(28, 25)">
+      <path d="M 6 0 L 34 0 L 48 14 L 48 56 L 6 56 Z" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linejoin="round" />
+      <polyline points="34,0 34,14 48,14" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linejoin="round" />
+      <line x1="14" y1="24" x2="38" y2="24" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round" />
+      <line x1="14" y1="34" x2="40" y2="34" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round" />
+      <line x1="14" y1="44" x2="28" y2="44" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round" />
+    </g>
+  </g>
+
+  <!-- Title & Description (Thai Typography, Crisp & High Contrast) -->
+  <g id="leftTypography">
+    <!-- Main Headline: วางบท / เขียนบท -->
+    <text x="56" y="272" 
+          font-family="'Prompt', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" 
+          font-weight="900" 
+          font-size="52" 
+          letter-spacing="0.5"
+          fill="#FFFFFF"
+          filter="url(#glow)">วางบท / เขียนบท</text>
+
+    <!-- Subtitle Line 1: จากไอเดีย สู่บทภาพยนตร์ -->
+    <text x="56" y="348" 
+          font-family="'Prompt', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" 
+          font-weight="600" 
+          font-size="34" 
+          letter-spacing="0.2"
+          fill="#F1F5F9">จากไอเดีย สู่บทภาพยนตร์</text>
+
+    <!-- Subtitle Line 2: ด้วย AI -->
+    <text x="56" y="412" 
+          font-family="'Prompt', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" 
+          font-weight="600" 
+          font-size="34" 
+          letter-spacing="0.2"
+          fill="#38BDF8">ด้วย AI</text>
+  </g>
+
+  <!-- ============================================================== -->
+  <!-- NEON BORDER FRAME (Keeps entire card bounded and aesthetic)     -->
+  <!-- ============================================================== -->
+  <!-- Outer Neon Glow Border -->
+  <rect x="8" y="8" width="1008" height="496" rx="34" fill="none" stroke="url(#border1)" stroke-width="10" filter="url(#glow)" />
+  <!-- Inner Clean Light Ring -->
+  <rect x="12" y="12" width="1000" height="488" rx="30" fill="none" stroke="url(#innerBorder1)" stroke-width="2.5" opacity="0.85" />
+</svg>

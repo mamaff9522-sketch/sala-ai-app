@@ -98,6 +98,9 @@ export interface ScriptSplitResult {
   warnings?: string[];
   /** Position Lock after the last scene */
   characterPositionLocks?: import('../types').ClipCharacterPose[];
+  ORIGINAL_DIALOGUE_ONLY?: boolean;
+  INVENT_DIALOGUE?: boolean;
+  NARRATION_TO_DIALOGUE?: boolean;
 }
 
 export interface ScriptSplitOptions {
@@ -187,6 +190,9 @@ export async function splitScript(
   }
   return {
     ...json.data,
+    ORIGINAL_DIALOGUE_ONLY: true,
+    INVENT_DIALOGUE: false,
+    NARRATION_TO_DIALOGUE: false,
     source: json.source || 'gemini-flash',
   };
 }

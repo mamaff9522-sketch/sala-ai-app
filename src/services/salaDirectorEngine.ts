@@ -17,6 +17,8 @@
 import {
   DirectedClipItem,
   DialogueLockEntry,
+  DialogueCameraAngle,
+  DialogueBackgroundControl,
   MasterContinuityLock,
   AudioDirectives,
   ContinuityIssue
@@ -38,6 +40,7 @@ import {
   mergeDeclaredCharacters,
   type CharacterAppearanceInput
 } from './characterAppearance';
+import { applyDialogue20WordSplitToClips } from './dialogueWordSplitter';
 
 // ==========================================
 // 1. RESERVED SYSTEM KEYWORDS
@@ -103,7 +106,455 @@ export function normalizeSpeakerForDedupe(name: string, knownCharacters: string[
 
 /** Dialogue line text for de-duplication: quotes, whitespace and case ignored. */
 export function normalizeDialogueLine(line: string): string {
-  return String(line || '').replace(/["“”'‘’«»「」`]/g, '').replace(/\s+/g, '').toLowerCase();
+  return String(line || '').replace(/["“”'‘’«»「」`]/g, '').replace(/[!?.,:;…—–\-\s]/g, '').toLowerCase();
+}
+
+// ==========================================
+// 1.1 ORIGINAL DIALOGUE INTEGRITY RULES
+// ==========================================
+export const ORIGINAL_DIALOGUE_ONLY = true;
+export const INVENT_DIALOGUE = false;
+export const NARRATION_TO_DIALOGUE = false;
+
+/** Words indicating speech action that must NOT appear if there is no dialogue in the original script. */
+export const PROHIBITED_SPEECH_WORDS_RE = /\b(shouting|yelling|says|asks|speaks)\b/i;
+
+/** Extracts all genuine verbatim dialogue quotes from the script. */
+export function extractVerbatimScriptQuotes(scriptText: string): Set<string> {
+  const quotes = new Set<string>();
+  if (!scriptText || typeof scriptText !== 'string') return quotes;
+
+  // 1. Quoted text: "...", “...”, '...', «...», 「...」
+  const quoteRegex = /["“'‘«「]([^"”'’»」\r\n]{1,500})["”'’»」]/g;
+  let m: RegExpExecArray | null;
+  while ((m = quoteRegex.exec(scriptText)) !== null) {
+    const raw = m[1]?.trim();
+    if (raw) {
+      quotes.add(normalizeDialogueLine(raw));
+    }
+  }
+
+  // 2. Unquoted dialogue with Speaker: format
+  const lines = scriptText.split(/\r?\n/);
+  for (const l of lines) {
+    const line = l.trim();
+    const match = line.match(/^([ก-๙a-zA-Z0-9_\- ]{2,30})[:：]\s*([^"“'‘«「\r\n]{2,500})$/);
+    if (match) {
+      const sp = match[1].trim();
+      const text = match[2].trim();
+      if (!isReservedSystemKeyword(sp) && !isMetadataKeyword(sp) && !isReservedSystemKeyword(text)) {
+        quotes.add(normalizeDialogueLine(text));
+      }
+    }
+  }
+
+  return quotes;
+}
+
+/**
+ * Checks if a dialogue line exists verbatim in the original script.
+ * Must either be an explicit quote in the script, or verbatim substring of the script that is not narration.
+ */
+export function isVerbatimDialogueInScript(line: string, scriptText: string, quotesSet?: Set<string>): boolean {
+  if (!line || !scriptText) return false;
+  const normLine = normalizeDialogueLine(line);
+  if (!normLine) return false;
+
+  const quotes = quotesSet || extractVerbatimScriptQuotes(scriptText);
+  if (quotes.has(normLine)) return true;
+
+  // Check if any genuine script quote contains this line or this line contains the quote
+  for (const q of quotes) {
+    if (q === normLine || q.includes(normLine) || (normLine.length > 5 && normLine.includes(q))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Removes prohibited speech verbs (shouting, yelling, says, asks, speaks) from text when there is no dialogue.
+ */
+export function stripProhibitedSpeechWords(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\b(shouting|yelling)\b/gi, 'gesturing intensely')
+    .replace(/\b(says|speaks|asks)\b/gi, 'watches')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * Resolves character names for English prompt camera brackets.
+ * Maps flagship names like "พี่ทุย" -> "P'Tui", "น้องน้ำ" -> "Nong-Nam".
+ */
+export function formatCharacterNameInTag(name: string): string {
+  if (!name) return 'character';
+  const clean = name.replace(/\s*\(.*?\)/g, '').trim();
+  const lower = clean.toLowerCase();
+
+  if (clean === 'พี่ทุย' || lower === "p'tui" || lower === 'ptui' || lower === 'tui') return "P'Tui";
+  if (clean === 'น้องน้ำ' || lower === 'nong-nam' || lower === 'nongnam' || lower === 'nam') return 'Nong-Nam';
+  if (clean === 'น้องฟ้าใส' || lower === 'nong-fahsai' || lower === 'fahsai') return 'Nong-Fahsai';
+  if (clean === 'พี่ต้น' || lower === "p'ton" || lower === 'ton') return "P'Ton";
+
+  if (clean.startsWith('พี่')) {
+    const rest = clean.slice(3).trim();
+    return rest ? `P'${rest}` : clean;
+  }
+  if (clean.startsWith('น้อง')) {
+    const rest = clean.slice(4).trim();
+    return rest ? `Nong-${rest}` : clean;
+  }
+
+  return clean;
+}
+
+/** Checks if a camera angle is a manual camera angle (OTS / CU / 2S / MID / W). */
+export function isManualCameraAngle(angle?: DialogueCameraAngle | string): boolean {
+  if (!angle) return false;
+  const upper = String(angle).toUpperCase().trim();
+  return ['OTS', 'CU', '2S', 'MID', 'W'].includes(upper);
+}
+
+/** Checks if any dialogue in the list has at least one manual camera angle. */
+export function hasManualCameraAngles(dialogues?: DialogueLockEntry[]): boolean {
+  if (!dialogues || !Array.isArray(dialogues)) return false;
+  return dialogues.some(d =>
+    Array.isArray(d.cameraAngles) && d.cameraAngles.some(isManualCameraAngle)
+  );
+}
+
+/**
+ * Strips auto camera movement and smooth tracking phrases from prompt when manual camera is active.
+ * Guarantees that AUTO camera or Smooth tracking shot will NEVER overwrite user-selected manual camera.
+ */
+export function stripAutoCameraPhrases(text: string): string {
+  if (!text) return '';
+  let res = text;
+  // Strip Cinematography and Camera sections
+  res = removeSections(res, s => s.label === 'Cinematography' || s.label === 'Camera').prompt;
+  // Strip generic tracking shot phrases
+  const trackingPatterns = [
+    /\b(?:smooth\s+)?cinematic\s+tracking(?:\s+shot)?\b[,.]?\s*/gi,
+    /\bsmooth\s+tracking(?:\s+shot)?\b[,.]?\s*/gi,
+    /\bcinematic\s+tracking\b[,.]?\s*/gi,
+    /\btracking\s+shot\b[,.]?\s*/gi,
+    /\bauto\s+camera\b[,.]?\s*/gi
+  ];
+  for (const pat of trackingPatterns) {
+    res = res.replace(pat, '');
+  }
+  return res.replace(/\s{2,}/g, ' ').replace(/\s+([,;:])/g, '$1').trim();
+}
+
+/**
+ * Merges cameraAngles and backgroundControl from source dialogue entries into target entries.
+ */
+export function mergeDialogueCameraControls(
+  target: DialogueLockEntry[],
+  source: DialogueLockEntry[]
+): DialogueLockEntry[] {
+  if (!source || source.length === 0) return target;
+  return target.map((t) => {
+    let match = source.find(s => s.id && t.id && s.id === t.id);
+    if (!match) {
+      const tNorm = normalizeDialogueLine(t.line);
+      match = source.find(s => normalizeDialogueLine(s.line) === tNorm);
+    }
+    if (!match) {
+      const sameSpeakerAndClip = source.filter(s =>
+        s.speaker.toLowerCase() === t.speaker.toLowerCase() &&
+        (s.clipNumber == null || t.clipNumber == null || Number(s.clipNumber) === Number(t.clipNumber))
+      );
+      if (sameSpeakerAndClip.length === 1) {
+        match = sameSpeakerAndClip[0];
+      }
+    }
+    if (match) {
+      return {
+        ...t,
+        cameraAngles: (match.cameraAngles && match.cameraAngles.length > 0) ? match.cameraAngles : t.cameraAngles,
+        backgroundControl: match.backgroundControl || t.backgroundControl
+      };
+    }
+    return t;
+  });
+}
+
+/**
+ * Builds a camera bracket tag attached directly adjacent to a dialogue segment.
+ * Rule: Never bundle camera commands at the top of the clip.
+ * Format:
+ * [CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location, BG SOFT]
+ * [CAM-2: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location, BG CLEAR]
+ */
+export function buildDialogueCameraTag({
+  camIndex,
+  angle,
+  speaker,
+  otherCharacters = [],
+  allCharacters = [],
+  bgControl = 'AUTO',
+  locationName = 'เดิม'
+}: {
+  camIndex: number;
+  angle: DialogueCameraAngle;
+  speaker: string;
+  otherCharacters?: string[];
+  allCharacters?: string[];
+  bgControl?: DialogueBackgroundControl;
+  locationName?: string;
+}): string {
+  const speakerTag = formatCharacterNameInTag(speaker);
+  const otherTag = otherCharacters.length > 0 ? formatCharacterNameInTag(otherCharacters[0]) : '';
+  const presentTags = [
+    speakerTag,
+    ...otherCharacters.filter(c => c && c !== speaker).map(formatCharacterNameInTag)
+  ].filter(Boolean);
+  const charsTogether = presentTags.length >= 2 ? presentTags.join(' and ') : `${speakerTag} and ${otherTag || 'partner'}`;
+
+  // Resolve BG tag
+  let bgTag = 'BG AUTO';
+  if (bgControl === 'SOFT') {
+    bgTag = 'BG SOFT';
+  } else if (bgControl === 'CLEAR') {
+    bgTag = 'BG CLEAR';
+  } else {
+    // AUTO: OTS and CU default to soft bokeh for facial clarity, others clear
+    if (angle === 'OTS' || angle === 'CU') {
+      bgTag = 'BG SOFT';
+    } else {
+      bgTag = 'BG CLEAR';
+    }
+  }
+
+  let angleDesc = '';
+  switch (angle) {
+    case 'OTS':
+      angleDesc = otherTag
+        ? `OTS — camera positioned behind ${otherTag}'s shoulder, only a small part of ${otherTag} visible in foreground, focus clearly on ${speakerTag}'s locked face, preserve same location`
+        : `OTS — camera positioned behind foreground shoulder, only a small part visible in foreground, focus clearly on ${speakerTag}'s locked face, preserve same location`;
+      break;
+
+    case 'MID':
+      angleDesc = (allCharacters.length >= 2 || otherTag)
+        ? `MID — medium framing showing ${charsTogether} together, preserve locked faces, locked positions and same location`
+        : `MID — medium framing showing ${speakerTag} from waist up, preserve locked face, locked position and same location`;
+      break;
+
+    case 'CU':
+      angleDesc = `CU — tight close-up framing focused clearly on ${speakerTag}'s locked face, preserve same location`;
+      break;
+
+    case '2S':
+      angleDesc = otherTag
+        ? `2S — two-shot framing showing ${speakerTag} and ${otherTag} together in frame, preserve locked faces, locked positions and same location`
+        : `2S — two-shot framing showing characters together in frame, preserve locked faces, locked positions and same location`;
+      break;
+
+    case 'W':
+      angleDesc = (allCharacters.length >= 2 || otherTag)
+        ? `W — wide framing showing ${charsTogether} together in environment, preserve locked faces, locked positions and same location`
+        : `W — wide framing showing ${speakerTag} in environment, preserve locked face, locked position and same location`;
+      break;
+
+    case 'AUTO':
+    default:
+      angleDesc = `AUTO — dynamic auto framing responding naturally to narrative movement and emotion, preserve locked faces and same location`;
+      break;
+  }
+
+  return `[CAM-${camIndex}: ${angleDesc}, ${bgTag}]`;
+}
+
+/**
+ * Formats dialogue segments with their tightly-bound camera control brackets.
+ * Rules:
+ * 1. Read CAM-1 and CAM-2 from each dialogue.
+ * 2. Attach camera commands directly to the dialogue line it controls.
+ * 3. Never bundle camera commands at the top of the prompt.
+ * 4. When 2 angles are selected on a single dialogue:
+ *    - CAM-1 occurs first
+ *    - CAM-2 occurs after
+ *    - Dialogue is NOT repeated
+ *    - No new dialogue is invented
+ *    - Original dialogue line is unchanged
+ */
+export function formatDialogueWithCameraControl(
+  dialogues: DialogueLockEntry[],
+  allCharacters: string[] = [],
+  locationName: string = 'เดิม'
+): string {
+  if (!dialogues || dialogues.length === 0) return '';
+
+  let globalCamIndex = 1;
+
+  const blocks = dialogues.map((d) => {
+    const speaker = d.speaker || 'ตัวละคร';
+    const cleanLine = (d.line || '').replace(/^["“'‘«「]+|["”'’»」]+$/g, '').trim();
+    const otherChars = allCharacters.filter(c => c && c !== speaker);
+
+    const angles: DialogueCameraAngle[] = (d.cameraAngles && d.cameraAngles.length > 0)
+      ? d.cameraAngles.slice(0, 2)
+      : [];
+
+    const bgControl: DialogueBackgroundControl = d.backgroundControl || 'AUTO';
+
+    // If no camera angles selected for this dialogue line:
+    if (angles.length === 0) {
+      return `[${speaker}]: "${cleanLine}"`;
+    }
+
+    // Has 1 or 2 camera angles:
+    // If 2 angles on this single dialogue line:
+    // CAM-1 must occur first, CAM-2 must occur after.
+    // The dialogue line is NOT repeated. No new dialogue is created. Original dialogue is not changed.
+    const camTags = angles.map((ang) => {
+      const currentCamIndex = globalCamIndex++;
+      return buildDialogueCameraTag({
+        camIndex: currentCamIndex,
+        angle: ang,
+        speaker,
+        otherCharacters: otherChars,
+        allCharacters: allCharacters.length > 0 ? allCharacters : [speaker, ...otherChars],
+        bgControl,
+        locationName
+      });
+    });
+
+    return `${camTags.join('\n')}\n[${speaker}]: "${cleanLine}"`;
+  });
+
+  return blocks.join('\n\n');
+}
+
+/**
+ * Dynamically refreshes a clip prompt when Camera Control or Background Control is adjusted by the user.
+ * Enforces rule: "ห้ามรวมคำสั่งกล้องไว้ที่ต้นคลิป ทุกคำสั่งกล้องต้องถูกแทรกให้ติดกับบทพูดที่มันควบคุม และอยู่ใกล้บทพูดที่สุด"
+ * And: "ถ้าผู้ใช้เลือก Manual Camera เช่น OTS / CU / 2S / MID / W ห้ามให้ AUTO camera หรือ Smooth tracking shot เดิมมาทับ"
+ */
+export function refreshClipPromptWithCameraControls(
+  clip: DirectedClipItem,
+  allCharacters: string[] = []
+): string {
+  let prompt = String(clip.generatedPrompt || '');
+  const diags = clip.dialogues || [];
+
+  if (diags.length === 0) {
+    return prompt;
+  }
+
+  const hasManual = hasManualCameraAngles(diags);
+
+  // If dialogues have manual camera control, strip standalone Cinematography / Camera sections and tracking phrases
+  if (hasManual) {
+    prompt = stripAutoCameraPhrases(prompt);
+  }
+
+  const formattedDialogue = formatDialogueWithCameraControl(
+    diags,
+    allCharacters.length > 0 ? allCharacters : (clip.charactersPresent || []),
+    clip.locationName || 'เดิม'
+  );
+
+  const newDialogueBlock = `Dialogue:\n${formattedDialogue}`;
+  prompt = removeSections(prompt, s => s.label === 'Dialogue').prompt;
+  prompt = `${prompt.replace(/\s+$/, '')}\n\n${newDialogueBlock}`;
+
+  return prompt;
+}
+
+/**
+ * Validates and enforces that only original script dialogues are kept.
+ * Rejects invented dialogue and narration converted to dialogue, rebuilding the clip prompt cleanly.
+ */
+export function enforceOriginalDialogueOnly(
+  clips: DirectedClipItem[],
+  scriptText: string
+): { clips: DirectedClipItem[]; rejectedCount: number } {
+  if (!scriptText) return { clips, rejectedCount: 0 };
+  const quotes = extractVerbatimScriptQuotes(scriptText);
+  let rejectedCount = 0;
+
+  const sanitized = clips.map((clip) => {
+    const originalDiags = Array.isArray(clip.dialogues) ? clip.dialogues : [];
+    const validDiags = originalDiags.filter((d) => {
+      const ok = isVerbatimDialogueInScript(d.line, scriptText, quotes);
+      if (!ok) {
+        rejectedCount++;
+      }
+      return ok;
+    });
+
+    let prompt = String(clip.generatedPrompt || '');
+
+    if (validDiags.length === 0) {
+      // Remove any Dialogue: ... section
+      prompt = removeSections(prompt, s => s.label === 'Dialogue').prompt;
+      // Strip prohibited speech words
+      prompt = stripProhibitedSpeechWords(prompt);
+
+      return {
+        ...clip,
+        dialogues: [],
+        dialogue: 'NONE',
+        generatedPrompt: prompt
+      };
+    }
+
+    // Has valid original dialogues
+    const diagSummary = validDiags.map(d => `${d.speaker}: "${d.line}"`).join(' ');
+    // Ensure Dialogue block in prompt reflects only valid dialogues and keeps camera controls attached
+    const hasManual = hasManualCameraAngles(validDiags);
+    if (hasManual) {
+      prompt = stripAutoCameraPhrases(prompt);
+    }
+
+    // Only rebuild dialogue block if prompt is missing dialogue or dialogues were filtered/rejected
+    const formattedDiag = formatDialogueWithCameraControl(validDiags, clip.charactersPresent || [], clip.locationName || 'เดิม');
+    const newDialogueBlock = `Dialogue:\n${formattedDiag}`;
+
+    if (!prompt.includes('Dialogue:') || validDiags.length !== originalDiags.length) {
+      prompt = removeSections(prompt, s => s.label === 'Dialogue').prompt;
+      prompt = `${prompt.replace(/\s+$/, '')}. ${newDialogueBlock}`;
+    }
+
+    return {
+      ...clip,
+      dialogues: validDiags,
+      dialogue: diagSummary,
+      generatedPrompt: prompt
+    };
+  });
+
+  return { clips: sanitized, rejectedCount };
+}
+
+/**
+ * Validates clips against original script. If invented/altered dialogue is detected,
+ * rejects the invalid clips and automatically regenerates fresh clips from the original script.
+ */
+export function autoRegenerateClipsOnInventedDialogue(
+  clips: DirectedClipItem[],
+  options: BuildPromptsOptions
+): { clips: DirectedClipItem[]; rejectedCount: number; wasRegenerated: boolean } {
+  const { rejectedCount, clips: sanitized } = enforceOriginalDialogueOnly(clips, options.scriptText);
+  if (rejectedCount > 0) {
+    // REJECT invalid clips and automatically recreate clean CLIPs from source script
+    const freshClips = buildSalaMultiClipPrompts(options);
+    return {
+      clips: freshClips,
+      rejectedCount,
+      wasRegenerated: true
+    };
+  }
+  return {
+    clips: sanitized,
+    rejectedCount: 0,
+    wasRegenerated: false
+  };
 }
 
 /**
@@ -111,6 +562,51 @@ export function normalizeDialogueLine(line: string): string {
  * or from a combined label ("พี่ทุย และ น้องน้ำ") and one of its characters, is one entry;
  * the real single speaker is kept. Different single speakers saying the same words stay separate.
  */
+/**
+ * Validates clips against camera control specifications.
+ * If user selected manual camera angles (CAM-1, CAM-2) but generatedPrompt is missing
+ * the camera tag, considers it invalid and automatically regenerates/refreshes the prompt.
+ */
+export function autoRegenerateClipsOnMissingCameraTags(
+  clips: DirectedClipItem[],
+  options?: BuildPromptsOptions
+): { clips: DirectedClipItem[]; missingCount: number; wasRegenerated: boolean } {
+  let missingCount = 0;
+  const regenerated = clips.map((clip) => {
+    const diags = clip.dialogues || [];
+    let needsRefresh = false;
+
+    diags.forEach((d) => {
+      if (Array.isArray(d.cameraAngles)) {
+        d.cameraAngles.forEach((ang) => {
+          if (isManualCameraAngle(ang)) {
+            const hasCamTag = clip.generatedPrompt && new RegExp(`\\[CAM-\\d+:\\s*${ang}\\b`, 'i').test(clip.generatedPrompt);
+            if (!hasCamTag) {
+              missingCount++;
+              needsRefresh = true;
+            }
+          }
+        });
+      }
+    });
+
+    if (needsRefresh) {
+      const refreshedPrompt = refreshClipPromptWithCameraControls(clip, clip.charactersPresent || []);
+      return {
+        ...clip,
+        generatedPrompt: refreshedPrompt
+      };
+    }
+    return clip;
+  });
+
+  return {
+    clips: regenerated,
+    missingCount,
+    wasRegenerated: missingCount > 0
+  };
+}
+
 export function dedupeDialogueEntries<T extends { speaker: string; line: string }>(dialogues: T[], knownCharacters: string[] = []): T[] {
   const known = expandCombinedCharacterNames(knownCharacters);
   const out: T[] = [];
@@ -128,6 +624,13 @@ export function dedupeDialogueEntries<T extends { speaker: string; line: string 
       return (a.length > 1 && b.every(x => a.includes(x))) || (b.length > 1 && a.every(x => b.includes(x)));
     });
     if (idx === -1) { out.push({ ...d, speaker }); continue; }
+    // Preserve camera control and background control from duplicate entry if present
+    if ((d as any).cameraAngles && (d as any).cameraAngles.length > 0 && !(out[idx] as any).cameraAngles?.length) {
+      (out[idx] as any).cameraAngles = (d as any).cameraAngles;
+    }
+    if ((d as any).backgroundControl && !(out[idx] as any).backgroundControl) {
+      (out[idx] as any).backgroundControl = (d as any).backgroundControl;
+    }
     // Replace a combined-label entry with the real single speaker's entry (same position)
     if (members(out[idx].speaker).length > 1 && !combined) out[idx] = { ...d, speaker };
   }
@@ -217,6 +720,10 @@ export interface ParsedRawClip {
   characterPositions?: string;
   startAction?: string;
   endState?: string;
+  location?: string;
+  timeOfDay?: string;
+  lighting?: string;
+  architecturalEnvironment?: string;
   /** Original order of action / dialogue beats (index into actions / dialogues) */
   sequence?: Array<{ kind: 'action' | 'dialogue'; index: number }>;
 }
@@ -243,13 +750,123 @@ export const METADATA_KEYWORDS = new Set([
   'อุปกรณ์', 'พร็อพ', 'สิ่งของ', 'props',
   'ฉาก', 'ฉากที่', 'scene', 'clip',
   'กล้อง', 'มุมกล้อง', 'camera',
-  'end', 'end_state', 'story'
+  'end', 'end_state', 'story',
+  'บทบรรยาย', 'คำบรรยาย', 'บรรยาย', 'narration', 'narrator',
+  'การกระทำ', 'การกระทำของตัวละคร', 'action', 'actions',
+  'ความคิด', 'ความรู้สึก', 'thought', 'thoughts',
+  'สีหน้า', 'สีหน้าและอารมณ์', 'facial', 'expression',
+  'คำอธิบาย', 'description', 'คำสั่ง', 'directive',
+  'รูปแบบ', 'format', 'หมายเหตุ', 'note', 'notes'
 ]);
 
 export function isMetadataKeyword(word: string): boolean {
   if (!word) return false;
   const clean = word.trim().toLowerCase().replace(/[:：=_#\-*•]/g, '').trim();
   return METADATA_KEYWORDS.has(clean);
+}
+
+/**
+ * ตรวจจับสภาพแสงจากข้อความบรรยายหรือหัวข้อฉาก
+ * เช่น แสงแดดจ้า, แสงแดดธรรมชาติ, แสงสีทองยามเย็น, แสงคบเพลิง, แสงเทียน, มืดสลัว, มืดสนิท, ฯลฯ
+ */
+export function detectLightingFromText(text: string): string {
+  if (!text) return '';
+  if (/(?:แสง)?แดดจ้า|แดดจัด|แดดแรง|แดดแผดเผา|bright\s+(?:sunlight|sun)/i.test(text)) return 'แสงแดดจ้า';
+  if (/แสงอาทิตย์|แสงแดด|แดดอ่อน|แสงธรรมชาติ|sunlight|natural\s+light/i.test(text)) return 'แสงแดดธรรมชาติ';
+  if (/แสงสีทอง(?:ยามเย็น)?|แสงสนธยา|แสงเย็น|golden\s+hour/i.test(text)) return 'แสงสีทองยามเย็น';
+  if (/แสงคบเพลิง(?:สลัว)?|คบเพลิง|torch\s*light|torchlight/i.test(text)) return 'แสงคบเพลิงสลัว';
+  if (/แสงเทียน|เทียนไข|candlelight/i.test(text)) return 'แสงเทียนอบอุ่น';
+  if (/แสงนีออน|ไฟนีออน|ไฟทาง|neon\s+light/i.test(text)) return 'แสงไฟนีออน';
+  if (/แสงจันทร์|จันทร์ส่อง|moonlight/i.test(text)) return 'แสงจันทร์สลัว';
+  if (/มืดสนิท|ความมืดมิด|มืดมิด|pitch\s+dark|complete\s+darkness/i.test(text)) return 'มืดสนิท';
+  if (/มืดสลัว|แสงสลัว|แสงไฟสลัว|สลัว|dim\s+light|dimly\s+lit/i.test(text)) return 'แสงสลัว';
+  if (/แสงไฟหน้ารถ|ไฟหน้ารถ|headlights/i.test(text)) return 'แสงไฟหน้ารถ';
+  return '';
+}
+
+/**
+ * ตรวจจับช่วงเวลาจากข้อความ (เช้าตรู่ / กลางวัน / ยามเย็น / กลางคืน)
+ */
+export function detectSceneTimeOfDay(text: string): string {
+  if (!text) return '';
+  if (/(ตอนกลางคืน|ยามค่ำคืน|ค่ำคืน|กลางคืน|ดึก|เที่ยงคืน|night|midnight)/i.test(text)) return 'กลางคืน';
+  if (/(เช้าตรู่|รุ่งเช้า|รุ่งสาง|ยามเช้า|แสงแรก|ตอนเช้า|ช่วงเช้า|dawn|morning)/i.test(text)) return 'เช้าตรู่';
+  if (/(กลางวัน|ตอนกลางวัน|เที่ยงวัน|บ่าย|noon|\bday\b)/i.test(text)) return 'กลางวัน';
+  if (/(ยามเย็น|ตอนเย็น|ช่วงเย็น|เวลาเย็น|พระอาทิตย์ตก|สายัณห์|หัวค่ำ|พลบค่ำ|dusk|evening)/i.test(text)) return 'ยามเย็น';
+  return '';
+}
+
+/**
+ * ดึงชื่อสถานที่จากข้อความหรือหัวข้อฉาก
+ */
+export function extractSceneLocationFromHeading(heading: string): string {
+  if (!heading) return '';
+  // ทำความสะอาดเลขฉาก
+  let clean = heading.replace(/^(?:\[?(?:CLIP|ฉากที่|ฉาก|SCENE)\s*0*\d+\]?[:.]?\s*)/i, '').trim();
+  // ตัดข้อความต่อเนื่อง
+  clean = clean.replace(/(?:\s*\(\s*(?:ต่อเนื่อง|ต่อ|continued|cont'?d?)\s*\)|\s*ต่อเนื่อง|\s+(?:ต่อ|continued|cont'?d?))\s*$/i, '').trim();
+  if (!clean) return '';
+
+  const parts = clean.split(/\s+[-–—|/]\s+|\s*[|/]\s*|\s+[-–—]|[-–—]\s+/).map(p => p.trim()).filter(Boolean);
+  const locationNounRegex = /(บ้าน|ห้อง|ร้าน|ตลาด|โรงเรียน|โรงพยาบาล|โรงแรม|โรงงาน|ป่า|ถนน|ซอย|สวน|วัด|ทะเล|ชายหาด|หาด|แม่น้ำ|ริมน้ำ|คลอง|ภูเขา|ทุ่ง|ไร่|แคมป์|เต็นท์|ออฟฟิศ|สำนักงาน|บริษัท|คาเฟ่|สถานี|ป้ายรถ|สนาม|ลาน|ระเบียง|ดาดฟ้า|ครัว|ประตู|หน้าต่าง|บันได|ทางเดิน|โถง|ศาลา|หมู่บ้าน|เมือง|วิหาร|ถ้ำ|สะพาน|ท่าเรือ|สนามบิน|มหาวิทยาลัย|ห้าง|หอพัก|คอนโด|ลิฟต์|รถ|เรือ|ชายป่า|โต๊ะ|เวที|\broom\b|house|home|street|road|cafe|office|school|forest|park|beach|kitchen|bedroom|hall|station|market|temple|village|city|cave)/i;
+  const moodRegex = /(อารมณ์|ความรู้สึก|ตึงเครียด|เครียด|คืนดี|ดีกัน|ง้อ|หึง|ทะเลาะ|เริ่ม|บทสรุป|ตอนจบ|สรุป|ความจริง|เปิดใจ|สารภาพ|ขอโทษ|ให้อภัย|เข้าใจกัน|โกรธ|เสียใจ|ดีใจ|ตกใจ|ประทับใจ|ซึ้ง|อบอุ่น|หัวเราะ|ร้องไห้|ไคลแม็กซ์|จุดเปลี่ยน|บทนำ|เปิดเรื่อง|ความลับ|เผชิญหน้า)/i;
+
+  for (const p of parts) {
+    if (moodRegex.test(p)) continue;
+    if (detectSceneTimeOfDay(p)) continue;
+    if (detectLightingFromText(p)) continue;
+    if (locationNounRegex.test(p) || /^(?:ใน|ที่|ณ)\s*/.test(p)) {
+      return p.replace(/^(?:ใน|ที่|ณ)\s*/, '').trim();
+    }
+  }
+
+  // หากไม่มี noun ชัดเจน แต่ส่วนแรกไม่ใช่ mood และไม่ใช่เวลา
+  if (parts.length > 0 && !moodRegex.test(parts[0]) && !detectSceneTimeOfDay(parts[0]) && parts[0].length >= 2 && parts[0].length <= 30) {
+    return parts[0].replace(/^(?:ใน|ที่|ณ)\s*/, '').trim();
+  }
+
+  return '';
+}
+
+/**
+ * ดึงค่า "สถานที่" (Location) และ "ช่วงเวลา/สภาพแสง" (Lighting/Time) จากเนื้อเรื่องของฉากนั้นโดยตรง
+ */
+export function extractSceneEnvironment(title: string, actions: string[] = []): { location: string; timeOfDay: string; lighting: string } {
+  let location = extractSceneLocationFromHeading(title);
+  let timeOfDay = detectSceneTimeOfDay(title);
+  let lighting = detectLightingFromText(title);
+
+  // ตรวจสอบ directives ภายในฉาก เช่น (สถานที่: ...), (เวลา: ...), (แสง: ...)
+  for (const act of actions) {
+    if (!location) {
+      const m = act.match(/(?:สถานที่หลัก|สถานที่ถ่ายทำ|สถานที่|LOCATION)\s*[:：=]\s*([^)\n]+)/i);
+      if (m && m[1].trim()) location = m[1].trim().replace(/\)$/, '');
+    }
+    if (!timeOfDay) {
+      const m = act.match(/(?:เวลา|ช่วงเวลา|TIME)\s*[:：=]\s*([^)\n]+)/i);
+      if (m && m[1].trim()) timeOfDay = m[1].trim().replace(/\)$/, '');
+    }
+    if (!lighting) {
+      const m = act.match(/(?:แสง|การจัดแสง|สภาพแสง|LIGHTING)\s*[:：=]\s*([^)\n]+)/i);
+      if (m && m[1].trim()) lighting = m[1].trim().replace(/\)$/, '');
+    }
+  }
+
+  const combinedActions = actions.join(' ');
+  if (!location) {
+    const locMatch = combinedActions.match(/(?:^|[\s(,"“])(?:ใน|ที่|ณ)\s*([ก-๙a-zA-Z][ก-๙a-zA-Z0-9_\-]*?)(?=กลางคืน|ตอนกลางคืน|ยามค่ำคืน|ค่ำคืน|กลางวัน|ตอนกลางวัน|เช้าตรู่|ตอนเช้า|ยามเช้า|ยามเย็น|ตอนเย็น|ดึก|\s|$|[.,)"”])/);
+    if (locMatch && locMatch[1].trim().length >= 2) {
+      location = locMatch[1].trim();
+    }
+  }
+  if (!timeOfDay) {
+    timeOfDay = detectSceneTimeOfDay(combinedActions);
+  }
+  if (!lighting) {
+    lighting = detectLightingFromText(combinedActions);
+  }
+
+  return { location, timeOfDay, lighting };
 }
 
 /**
@@ -629,18 +1246,32 @@ export function parseSalaScript(
     const headerMatch = rawLine.match(/^(?:\[?(?:CLIP|ฉากที่|ฉาก|SCENE)\s*0*(\d+)\]?[:.]?\s*(.*)|STORY\s*[:{]\s*(.*))$/i);
     if (headerMatch) {
       if (currentClip) {
+        if (!currentClip.location || !currentClip.timeOfDay || !currentClip.lighting) {
+          const env = extractSceneEnvironment(currentClip.title, currentClip.actions);
+          if (!currentClip.location && env.location) currentClip.location = env.location;
+          if (!currentClip.timeOfDay && env.timeOfDay) currentClip.timeOfDay = env.timeOfDay;
+          if (!currentClip.lighting && env.lighting) currentClip.lighting = env.lighting;
+        }
         rawClips.push(currentClip);
       }
       const num = headerMatch[1] ? parseInt(headerMatch[1], 10) : autoClipNumber;
       autoClipNumber = num + 1;
       const sceneTitle = (headerMatch[2]?.trim() || headerMatch[3]?.trim() || '').replace(/^[—–\-:：]\s*/, '') || `ฉากที่ ${num}`;
 
+      // กฎข้อ 2: ล็อกสถานที่และแสงอัตโนมัติตามเนื้อเรื่อง (Auto Scene Environment)
+      // ดึงค่า "สถานที่" (Location) และ "ช่วงเวลา/สภาพแสง" (Lighting/Time) จากเนื้อเรื่องของฉากนั้นโดยตรง
+      // เมื่อขึ้นฉากใหม่ ให้รีเซ็ตค่าสภาพแวดล้อมเดิมทิ้งทันที ห้ามนำค่าเดิม (เช่น ป่าทึบ/แสงแดด) ข้ามมาใช้ในฉากใหม่ (เช่น ถ้ำโบราณ/กลางคืน)
+      const headingEnv = extractSceneEnvironment(sceneTitle, []);
+
       currentClip = {
         clipNumber: num,
         title: sceneTitle.startsWith('ฉากที่') || sceneTitle.startsWith('Clip') ? sceneTitle : `ฉากที่ ${num}: ${sceneTitle}`,
         actions: [],
         cameraDirectives: [],
-        dialogues: []
+        dialogues: [],
+        location: headingEnv.location || undefined,
+        timeOfDay: headingEnv.timeOfDay || undefined,
+        lighting: headingEnv.lighting || undefined
       };
 
       // If the header line had action text on the same line after the scene number:
@@ -681,6 +1312,27 @@ export function parseSalaScript(
       continue;
     }
 
+    // Check for per-scene Location directive: (สถานที่: ...) or LOCATION: ...
+    const locMatch = rawLine.match(/^(?:\(?(?:สถานที่หลัก|สถานที่ถ่ายทำ|สถานที่|LOCATION)\)?)\s*[:：=]\s*(.*)$/i);
+    if (locMatch) {
+      currentClip.location = locMatch[1].replace(/\)$/, '').trim();
+      continue;
+    }
+
+    // Check for per-scene Time directive: (เวลา: ...) or TIME: ...
+    const timeMatch = rawLine.match(/^(?:\(?(?:เวลา|ช่วงเวลา|TIME)\)?)\s*[:：=]\s*(.*)$/i);
+    if (timeMatch) {
+      currentClip.timeOfDay = timeMatch[1].replace(/\)$/, '').trim();
+      continue;
+    }
+
+    // Check for per-scene Lighting directive: (แสง: ...) or LIGHTING: ...
+    const lightMatch = rawLine.match(/^(?:\(?(?:แสง|การจัดแสง|สภาพแสง|LIGHTING)\)?)\s*[:：=]\s*(.*)$/i);
+    if (lightMatch) {
+      currentClip.lighting = lightMatch[1].replace(/\)$/, '').trim();
+      continue;
+    }
+
     // Check for start action directive: (เริ่มต้น: ...) or (จุดเริ่ม: ...) or START: ...
     const startMatch = rawLine.match(/^(?:\(?(?:เริ่มต้น|จุดเริ่มต้น|จุดเริ่ม|START)\)?)\s*[:：]\s*(.*)$/i);
     if (startMatch) {
@@ -700,6 +1352,17 @@ export function parseSalaScript(
     const cameraMatch = rawLine.match(/^(?:CAMERA|กล้อง|มุมกล้อง)\s*[:：]\s*(.*)$/i);
     if (cameraMatch) {
       currentClip.cameraDirectives.push(cameraMatch[1].trim());
+      continue;
+    }
+
+    // Check for Narration / Action / Thought / Facial expression directive (NEVER treated as dialogue!)
+    const narrMatch = rawLine.match(/^(?:\(?(?:การกระทำ|บทบรรยาย|คำบรรยาย|บรรยาย|ความคิด|สีหน้า|ACTION|NARRATION)\)?)\s*[:：]\s*(.*)$/i);
+    if (narrMatch) {
+      const actText = narrMatch[1].replace(/\)$/, '').trim();
+      if (actText) {
+        currentClip.actions.push(actText);
+        (currentClip.sequence ||= []).push({ kind: 'action', index: currentClip.actions.length - 1 });
+      }
       continue;
     }
 
@@ -730,18 +1393,17 @@ export function parseSalaScript(
 
     // Check for Dialogue line (supporting optional emotion/action in parentheses before colon)
     // e.g. "ภพ (น้ำเสียงดุดัน): 'บทพูด'" or "ภพ: 'บทพูด'"
-    const dialogueMatch = rawLine.match(/^([ก-๙a-zA-Z0-9_\s]{1,30})(?:\s*\(([^)]+)\))?[:：]\s*["“'‘«「]([^"”'’»」]+)["”'’»」]\s*$/);
+    const dialogueMatch = rawLine.match(/^([ก-๙a-zA-Z0-9_\s]{1,30})(?:\s*\(([^)]+)\))?[:：]\s*(?:["“'‘«「]([^"”'’»」]+)["”'’»」]|(.+))\s*$/);
     if (dialogueMatch) {
       const candidateSpeaker = dialogueMatch[1].trim();
       const emotionTone = dialogueMatch[2]?.trim() || 'ตามบทต้นฉบับ';
-      const speechText = dialogueMatch[3].trim();
+      const speechText = (dialogueMatch[3] || dialogueMatch[4] || '').trim();
 
-      if (!isReservedSystemKeyword(candidateSpeaker) && !isMetadataKeyword(candidateSpeaker)) {
+      if (!isReservedSystemKeyword(candidateSpeaker) && !isMetadataKeyword(candidateSpeaker) && !isReservedSystemKeyword(speechText)) {
         const canonicalChar = resolveDeclaredSpeaker(candidateSpeaker);
         const isKnown = declaredNameSet.size === 0 || !!canonicalChar;
 
         if (isKnown && speechText.length > 0) {
-
           currentClip.dialogues.push({
             id: `diag_${currentClip.clipNumber}_${currentClip.dialogues.length + 1}`,
             speaker: canonicalChar ? canonicalChar.name : candidateSpeaker,
@@ -755,31 +1417,102 @@ export function parseSalaScript(
       }
     }
 
+    // Check for Inline Dialogue without colon: e.g. น้องฟ้าใสกระซิบ "ได้ยินไหม" or พี่ต้นพูดว่า "อยู่ใกล้ๆ พี่ไว้นะ"
+    const inlineQuoteMatch = rawLine.match(/^(.*?)["“'‘«「]([^"”'’»」]+)["”'’»」]\s*(.*)$/);
+    if (inlineQuoteMatch && inlineQuoteMatch[2].trim()) {
+      const pre = inlineQuoteMatch[1].replace(/[:：,]\s*$/, '').trim();
+      const quote = inlineQuoteMatch[2].trim();
+      const after = inlineQuoteMatch[3].trim();
+      let speakerCandidate = '';
+      let delivery = 'ตามบทต้นฉบับ';
+
+      if (pre) {
+        const declared = metadata.declaredCharacters.map(c => c.name).sort((a, b) => b.length - a.length);
+        let bestIdx = -1;
+        let best = '';
+        for (const d of declared) {
+          const idx = pre.indexOf(d);
+          if (idx >= 0 && (bestIdx === -1 || idx < bestIdx)) {
+            bestIdx = idx;
+            best = d;
+          }
+        }
+        if (best) {
+          speakerCandidate = best;
+          const verbPart = pre.slice(bestIdx + best.length).trim();
+          if (verbPart) delivery = verbPart.replace(/ว่า$/, '').trim();
+          const actionBefore = pre.slice(0, bestIdx).trim();
+          if (actionBefore) {
+            currentClip.actions.push(actionBefore);
+            (currentClip.sequence ||= []).push({ kind: 'action', index: currentClip.actions.length - 1 });
+          }
+        } else {
+          const cutSpeaker = normalizeSpeakerForDedupe(pre, declared);
+          if (cutSpeaker && !isReservedSystemKeyword(cutSpeaker) && !isMetadataKeyword(cutSpeaker)) {
+            speakerCandidate = cutSpeaker;
+            const verbPart = pre.slice(pre.indexOf(cutSpeaker) + cutSpeaker.length).trim();
+            if (verbPart) delivery = verbPart.replace(/ว่า$/, '').trim();
+          }
+        }
+      }
+
+      if (speakerCandidate && !isReservedSystemKeyword(speakerCandidate) && !isMetadataKeyword(speakerCandidate) && quote.length > 0) {
+        const canonicalChar = resolveDeclaredSpeaker(speakerCandidate);
+        currentClip.dialogues.push({
+          id: `diag_${currentClip.clipNumber}_${currentClip.dialogues.length + 1}`,
+          speaker: canonicalChar ? canonicalChar.name : speakerCandidate,
+          line: quote,
+          emotionTone: delivery || 'ตามบทต้นฉบับ',
+          clipNumber: currentClip.clipNumber
+        });
+        (currentClip.sequence ||= []).push({ kind: 'dialogue', index: currentClip.dialogues.length - 1 });
+        if (after) {
+          currentClip.actions.push(after);
+          (currentClip.sequence ||= []).push({ kind: 'action', index: currentClip.actions.length - 1 });
+        }
+        continue;
+      }
+    }
+
     // Otherwise, treat as narrative action
     currentClip.actions.push(rawLine);
     (currentClip.sequence ||= []).push({ kind: 'action', index: currentClip.actions.length - 1 });
   }
 
   if (currentClip) {
+    if (!currentClip.location || !currentClip.timeOfDay || !currentClip.lighting) {
+      const env = extractSceneEnvironment(currentClip.title, currentClip.actions);
+      if (!currentClip.location && env.location) currentClip.location = env.location;
+      if (!currentClip.timeOfDay && env.timeOfDay) currentClip.timeOfDay = env.timeOfDay;
+      if (!currentClip.lighting && env.lighting) currentClip.lighting = env.lighting;
+    }
     rawClips.push(currentClip);
   }
 
-  // If no explicit scene headers existed, and only 1 big clip was created with multiple lines,
-  // split into requested defaultClipCount
-  const targetCount = options?.defaultClipCount || (metadata.protocol?.clipRange ? (metadata.protocol.clipRange.endClip - metadata.protocol.clipRange.startClip + 1) : 0);
-  if (firstSceneIndex === -1 && rawClips.length === 1 && targetCount > 1 && rawClips[0].actions.length >= targetCount) {
+  // กฎการแบ่งคลิปอัตโนมัติ:
+  // - ห้ามใช้ 1 Action = 1 Clip
+  // - Action/Narration ที่ต่อเนื่องกันในฉากและสถานที่เดียวกัน ให้รวมอยู่ในคลิปเดียวเท่าที่เวลา 10 วินาทีรองรับ
+  // - ห้ามสร้าง Action เพิ่มเองเพื่อยืดจำนวนคลิป
+  // - กฎแบ่ง 20 คำให้ทำงานเฉพาะ “บทพูด” ที่เกิน 20 คำเท่านั้น (Action/Narration ห้ามนำไปนับหรือแตกด้วยกฎ 20 คำ)
+  // - ไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป
+  // ห้ามนำ defaultClipCount มาบังคับแยก Action ต่อเนื่องในฉากเดียวกันออกเป็นหลายคลิป
+  // เฉพาะกรณีที่ผู้ใช้ระบุโปรโตคอล @SALA CLIP_RANGE ไว้ชัดเจนเท่านั้น
+  const protocolClipCount = metadata.protocol?.clipRange
+    ? (metadata.protocol.clipRange.endClip - metadata.protocol.clipRange.startClip + 1)
+    : 0;
+  if (firstSceneIndex === -1 && rawClips.length === 1 && protocolClipCount > 1 && rawClips[0].actions.length >= protocolClipCount) {
     const singleClip = rawClips[0];
     const totalLines = singleClip.actions;
-    const chunkSize = totalLines.length / targetCount;
+    const chunkSize = totalLines.length / protocolClipCount;
     rawClips.length = 0;
 
-    for (let c = 0; c < targetCount; c++) {
+    for (let c = 0; c < protocolClipCount; c++) {
       const start = Math.floor(c * chunkSize);
       const end = Math.floor((c + 1) * chunkSize);
       const slice = totalLines.slice(start, Math.max(start + 1, end));
       const clipNum = (metadata.protocol?.clipRange?.startClip || 1) + c;
       const sliceText = slice.join(' ');
-      const clipDiags = singleClip.dialogues.filter(d => sliceText.includes(d.speaker) || (c === targetCount - 1 && d.clipNumber === 1));
+      const clipDiags = singleClip.dialogues.filter(d => sliceText.includes(d.speaker) || (c === protocolClipCount - 1 && d.clipNumber === 1));
 
       rawClips.push({
         clipNumber: clipNum,
@@ -815,7 +1548,7 @@ export interface BuildPromptsOptions {
   scriptText: string;
   clipDurationSeconds: number;
   clipCount: number;
-  continuityLock: MasterContinuityLock;
+  continuityLock: Partial<MasterContinuityLock>;
   dialogues?: DialogueLockEntry[];
   audioDirectives?: AudioDirectives;
   knownCharacters?: string[];
@@ -826,6 +1559,43 @@ export interface BuildPromptsOptions {
   /** Density auto-split (default true). See DIALOGUE_DENSITY_RULE. */
   autoSplitDense?: boolean;
   densityRule?: Partial<DialogueDensityRule>;
+}
+
+/**
+ * จัดรูปแบบ Action/Narration ให้ทำหน้าที่ "บอกสิ่งที่กำลังเกิดขึ้นในช็อตนั้น" ตามลำดับเดิม
+ * กฎ:
+ * 1. ถ้าบทมี Action/Narration แม้ไม่มีบทพูด ต้องนำ Action/Narration นั้นไปสร้างเป็นเหตุการณ์ใน Prompt ตามลำดับเดิม
+ * 2. ห้ามนำ Action/Narration ไปรวมกับบทพูด, เปลี่ยนเป็นบทพูด, เพิ่มบทพูดใหม่
+ * 3. ห้ามเปลี่ยนอารมณ์ตัวละครเอง, ห้ามเปลี่ยนท่าทางอื่นที่บทไม่ได้สั่ง, ห้ามสร้าง Action เพิ่มเอง
+ * 4. ห้ามแก้ Character Lock, ห้ามแก้ Location Lock
+ * 5. Action/Narration ต้องทำหน้าที่เพียง "บอกสิ่งที่กำลังเกิดขึ้นในช็อตนั้น" เท่านั้น
+ *
+ * ตัวอย่าง:
+ * บท: "บรรยากาศป่ามืด ฝนตก ฟ้าใสเดินเข้าป่า"
+ * Event ใน Prompt: "ป่ามืด ฝนกำลังตก ฟ้าใสกำลังเดินเข้าป่า"
+ */
+export function formatActionAsHappeningEvent(actionText: string): string {
+  if (!actionText || !actionText.trim()) return '';
+  let clean = actionText
+    .replace(/^\[(?:ACT_TRIGGER|ACTION_END|ช็อต|ฉาก|เหตุการณ์)[^\]]*\]\s*/gi, '')
+    .replace(/\[\/?(?:ACT_TRIGGER|ACTION_END)\]/gi, '')
+    .trim();
+
+  // ตัดคำนำหน้า "บรรยากาศ" ถ้าตามด้วยการบรรยายฉาก/สภาพแวดล้อม (เช่น บรรยากาศป่ามืด -> ป่ามืด)
+  clean = clean.replace(/^บรรยากาศ\s*/, '');
+
+  // ปรับกริยาบอกสภาวะที่กำลังเกิดขึ้นตามลำดับเดิม (เช่น ฝนตก -> ฝนกำลังตก)
+  clean = clean.replace(/(?<!กำลัง)ฝนตก/g, 'ฝนกำลังตก');
+  clean = clean.replace(/(?<!กำลัง)ลมพัด/g, 'ลมกำลังพัด');
+  clean = clean.replace(/(?<!กำลัง)หมอกลง/g, 'หมอกกำลังลง');
+
+  // ปรับกริยาการกระทำที่กำลังเกิดขึ้นในช็อตตามลำดับเดิม (เช่น ฟ้าใสเดินเข้าป่า -> ฟ้าใสกำลังเดินเข้าป่า)
+  clean = clean.replace(/(?<!กำลัง)(เดินเข้า|เดินไป|เดินออก|เดินมา|เดินตาม|เดิน|ก้าวเข้า|ก้าวไป|ก้าวมา|วิ่งเข้า|วิ่งไป|วิ่งมา|วิ่ง|หันมา|หันไป|หันมอง|มองไป|มองดู|มอง|ยืนมอง|ยืนดู|ยืนรอ|ยืน|นั่งมอง|นั่งดู|นั่งรอ|นั่ง|เปิดประตู|เปิด|ปิดประตู|ปิด|ก้มลง|ก้ม|หยิบ|คว้า|ถือ)/g, 'กำลัง$1');
+
+  // ขจัด "กำลัง" ที่ซ้ำซ้อน เช่น กำลังกำลัง
+  clean = clean.replace(/(?:กำลัง)+/g, 'กำลัง');
+
+  return clean.trim();
 }
 
 /**
@@ -878,12 +1648,12 @@ export function deriveScenePhysicalStates({
   if (prevSceneEndState && prevSceneEndState.trim()) {
     startState = prevSceneEndState.trim();
   } else if (firstSentence) {
-    startState = firstSentence;
+    startState = formatActionAsHappeningEvent(firstSentence);
   } else {
     startState = [charsLabel, place ? `ที่${place}` : "", time].filter(Boolean).join(" ") || "เปิดฉาก";
   }
 
-  // END_STATE: this scene's own last beat
+  // END_STATE: this scene's own last beat (ห้ามสร้าง Action เพิ่มเอง, บอกสิ่งที่เกิดขึ้นในช็อตเท่านั้น)
   let endState = "";
   if (endOnDialogue && lastDiag) {
     const others = sceneActiveChars.filter(c => c && c !== lastDiag.speaker);
@@ -892,7 +1662,7 @@ export function deriveScenePhysicalStates({
     endState = `${who}${delivery} เพิ่งพูดจบว่า "${lastDiag.dialogue}"` +
       (others.length > 0 ? ` ขณะที่${others.join(" และ ")}หันมาตอบสนองต่อคำพูดนั้น` : "");
   } else if (lastSentence) {
-    endState = `ภาพค้างที่ช่วงท้ายของการกระทำ: ${lastSentence}`;
+    endState = formatActionAsHappeningEvent(lastSentence);
   } else if (lastDiag) {
     endState = `${lastDiag.speaker} พูดจบ: "${lastDiag.dialogue}"`;
   } else {
@@ -1114,29 +1884,18 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
     defaultClipCount: clipCount
   });
 
-  const targetCount = Math.max(1, Math.min(20, clipCount || parsed.totalClips || 3));
   const rawClips = parsed.clips;
 
-  // Align rawClips with targetCount
-  const processedRawClips: ParsedRawClip[] = [];
-  if (rawClips.length === targetCount) {
-    processedRawClips.push(...rawClips);
-  } else if (rawClips.length > targetCount) {
-    processedRawClips.push(...rawClips.slice(0, targetCount));
-  } else {
-    // Fill remaining
-    processedRawClips.push(...rawClips);
-    const lastClip = rawClips[rawClips.length - 1];
-    for (let i = rawClips.length; i < targetCount; i++) {
-      processedRawClips.push({
-        clipNumber: i + 1,
-        title: `Clip ${i + 1}`,
-        actions: [lastClip?.actions[0] || 'Continuing narrative sequence'],
-        cameraDirectives: lastClip?.cameraDirectives || [],
-        dialogues: []
-      });
-    }
-  }
+  // กฎการแบ่งคลิปอัตโนมัติ:
+  // - ห้ามใช้ 1 Action = 1 Clip
+  // - Action/Narration ที่ต่อเนื่องกันในฉากและสถานที่เดียวกัน ให้รวมอยู่ในคลิปเดียวเท่าที่เวลา 10 วินาทีรองรับ
+  // - ห้ามสร้าง Action เพิ่มเองเพื่อยืดจำนวนคลิป
+  // - กฎแบ่ง 20 คำให้ทำงานเฉพาะ “บทพูด” ที่เกิน 20 คำเท่านั้น (Action/Narration ห้ามนำไปนับหรือแตกด้วยกฎ 20 คำ)
+  // - ไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป
+  // ใช้ rawClips ตามเนื้อเรื่องจริง ห้ามสร้าง Action เพิ่มเองเพื่อยืดจำนวนคลิป
+  const processedRawClips: ParsedRawClip[] = (clipCount && rawClips.length > clipCount)
+    ? rawClips.slice(0, clipCount)
+    : [...rawClips];
 
   // Extract clean continuity lock fields (NO placeholders)
   const charName = cleanFieldValue(continuityLock.characterName) ||
@@ -1195,13 +1954,62 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
   ].filter(Boolean) as string[]);
 
   // 1. Per source scene: merge parsed + explicit dialogues (dedupe), keep beat order
+  const quotesInScript = extractVerbatimScriptQuotes(scriptText);
+
   const units: SceneUnitForSplit[] = processedRawClips.map((raw, i) => {
+    const rawDiags = [...raw.dialogues];
+    const explicitForClip = explicitDialogues.filter(d => Number(d.clipNumber) === i + 1);
+    const mergedRawDiags = mergeDialogueCameraControls(rawDiags, explicitForClip);
+
     const clipDialogues = [
-      ...raw.dialogues,
-      ...explicitDialogues.filter(d => Number(d.clipNumber) === i + 1)
+      ...mergedRawDiags,
+      ...explicitForClip
     ].filter(d => d.speaker && !isReservedSystemKeyword(d.speaker));
+
+    // Rule 1 & 2 & 4: Dialogue must be from original script verbatim only; filter out any non-verbatim / narration-turned-dialogue
+    const verifiedOriginalDialogues = clipDialogues.filter(d => isVerbatimDialogueInScript(d.line, scriptText, quotesInScript));
+
+    // Requirement 5: Before creating each CLIP, search dialogue from the original story section corresponding to that scene first
+    if (verifiedOriginalDialogues.length === 0 && raw.actions.length > 0) {
+      for (let actIdx = 0; actIdx < raw.actions.length; actIdx++) {
+        const actionLine = raw.actions[actIdx];
+        const quoteMatch = actionLine.match(/^(.*?)["“'‘«「]([^"”'’»」]+)["”'’»」]\s*(.*)$/);
+        if (quoteMatch) {
+          const quote = quoteMatch[2].trim();
+          if (quote && isVerbatimDialogueInScript(quote, scriptText, quotesInScript)) {
+            const pre = quoteMatch[1].replace(/[:：,]\s*$/, '').trim();
+            const after = quoteMatch[3].trim();
+            let speaker = '';
+            for (const c of dedupeKnown) {
+              if (pre.includes(c)) { speaker = c; break; }
+            }
+            if (!speaker) {
+              const spMatch = pre.match(/^([ก-๙a-zA-Z0-9_\- ]{2,30}?)(?:กระซิบ|ตะโกน|พูดว่า|พูด|บอกว่า|บอก|ถามว่า|ถาม|ร้องว่า|ร้อง|สั่งว่า|สั่ง)?$/);
+              speaker = spMatch ? spMatch[1].trim() : (dedupeKnown[0] || 'ตัวละคร');
+            }
+            if (speaker && !isReservedSystemKeyword(speaker) && !isMetadataKeyword(speaker)) {
+              verifiedOriginalDialogues.push({
+                id: `diag_auto_${i + 1}_${verifiedOriginalDialogues.length + 1}`,
+                speaker,
+                line: quote,
+                emotionTone: 'ตามบทต้นฉบับ',
+                clipNumber: i + 1
+              });
+              const remainingAction = [pre.replace(new RegExp(`${speaker}\\s*(?:กระซิบ|ตะโกน|พูดว่า|พูด|บอกว่า|บอก|ถามว่า|ถาม)?`), '').trim(), after].filter(Boolean).join(' ').trim();
+              if (remainingAction) {
+                raw.actions[actIdx] = remainingAction;
+              } else {
+                raw.actions.splice(actIdx, 1);
+                actIdx--;
+              }
+            }
+          }
+        }
+      }
+    }
+
     // Speakers normalized ("น้องฟ้าใสกระซิบ" = "น้องฟ้าใส"); same line text = one entry (real speaker wins)
-    const uniqueDialogues = dedupeDialogueEntries(clipDialogues, dedupeKnown);
+    const uniqueDialogues = dedupeDialogueEntries(verifiedOriginalDialogues, dedupeKnown);
     let sequence = raw.sequence ? [...raw.sequence] : undefined;
     if (sequence) for (let k = raw.dialogues.length; k < uniqueDialogues.length; k++) sequence.push({ kind: 'dialogue', index: k });
     if (sequence && raw.dialogues.length > uniqueDialogues.length) sequence = undefined;
@@ -1217,7 +2025,12 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
   for (let i = 0; i < pieces.length; i++) {
     const clipNum = i + 1;
     const { raw, dialogues: uniqueDialogues, splitPart } = pieces[i];
-    const narrativeAction = raw.actions.join(' ').trim() || `Scene ${clipNum} narrative development`;
+    const rawActionCombined = raw.actions.join(' ').trim();
+    // ถ้าบทมี Action/Narration แม้ไม่มีบทพูด ต้องนำ Action/Narration นั้นไปสร้างเป็นเหตุการณ์ใน Prompt ตามลำดับเดิม
+    // โดยทำหน้าที่เพียง "บอกสิ่งที่กำลังเกิดขึ้นในช็อตนั้น" เท่านั้น
+    const narrativeAction = rawActionCombined
+      ? formatActionAsHappeningEvent(rawActionCombined)
+      : `Scene ${clipNum} narrative development`;
 
     const prevPosition = i > 0 && outputClips[i - 1]?.characterPositions ? outputClips[i - 1].characterPositions : null;
     const clipPosition = raw.characterPositions || prevPosition || position || 'ตำแหน่งตัวละครล็อคสอดคล้องต่อเนื่อง';
@@ -1226,6 +2039,8 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
     const allKnownCandidates = Array.from(new Set([
       ...(params.knownCharacters || []),
       ...(continuityLock.characterNames || []),
+      ...(parsed.detectedCharacters || []),
+      ...uniqueDialogues.map(d => d.speaker),
       charName
     ])).filter(Boolean).filter(n => !isReservedSystemKeyword(n) && !isMetadataKeyword(n));
 
@@ -1239,13 +2054,63 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
 
     // Start / End with seamless handoff (also across auto-split parts)
     const prevEndState = i > 0 && outputClips[i - 1] ? outputClips[i - 1].endAction : '';
+
+    // Auto Scene Environment:
+    // ดึงค่า "สถานที่" (Location) และ "ช่วงเวลา/สภาพแสง" (Lighting/Time) จากเนื้อเรื่องของฉากนั้นโดยตรง
+    // เมื่อขึ้นฉากใหม่ ให้รีเซ็ตค่าสภาพแวดล้อมเดิมทิ้งทันที ห้ามนำค่าเดิม (เช่น ป่าทึบ/แสงแดด) ข้ามมาใช้ในฉากใหม่ (เช่น ถ้ำโบราณ/กลางคืน)
+    const rawEnv = extractSceneEnvironment(raw.title || `ฉากที่ ${clipNum}`, raw.actions);
+    const sceneLoc = raw.location || rawEnv.location || '';
+    const sceneTime = raw.timeOfDay || rawEnv.timeOfDay || '';
+    const sceneLight = raw.lighting || rawEnv.lighting || '';
+
+    const isExplicitContinuation = /(?:ต่อเนื่อง|\(ต่อ\)|continued|cont'?d?)/i.test(raw.title || '');
+    const isMoodOrTitleOnly = !sceneLoc && (
+      /(อารมณ์|ความรู้สึก|ตึงเครียด|เครียด|คืนดี|ดีกัน|ง้อ|หึง|ทะเลาะ|เริ่ม|บทสรุป|ตอนจบ|สรุป|ความจริง|เปิดใจ|สารภาพ|ขอโทษ|ให้อภัย|เข้าใจกัน|โกรธ|เสียใจ|ดีใจ|ตกใจ|ประทับใจ|ซึ้ง|อบอุ่น|หัวเราะ|ร้องไห้|ไคลแม็กซ์|จุดเปลี่ยน|บทนำ|เปิดเรื่อง|ความลับ|เผชิญหน้า|climax|ending|intro|mood|tension|reconcil)/i.test(raw.title || '') ||
+      !/(บ้าน|ห้อง|ร้าน|ตลาด|โรงเรียน|โรงพยาบาล|โรงแรม|โรงงาน|ป่า|ถนน|ซอย|สวน|วัด|ทะเล|ชายหาด|หาด|แม่น้ำ|ริมน้ำ|คลอง|ภูเขา|ทุ่ง|ไร่|แคมป์|เต็นท์|ออฟฟิศ|สำนักงาน|บริษัท|คาเฟ่|สถานี|ป้ายรถ|สนาม|ลาน|ระเบียง|ดาดฟ้า|ครัว|ประตู|หน้าต่าง|บันได|ทางเดิน|โถง|ศาลา|หมู่บ้าน|เมือง|วิหาร|ถ้ำ|สะพาน|ท่าเรือ|สนามบิน|มหาวิทยาลัย|ห้าง|หอพัก|คอนโด|ลิฟต์|รถ|เรือ|ชายป่า|โต๊ะ|เวที|\broom\b|house|home|street|road|cafe|office|school|forest|park|beach|kitchen|bedroom|hall|station|market|temple|village|city|cave)/i.test(raw.title || '')
+    );
+    const isContinuationFromPrev = isExplicitContinuation || isMoodOrTitleOnly;
+
+    let clipLocation = sceneLoc;
+    let clipTimeOfDay = sceneTime;
+    let clipLighting = sceneLight;
+
+    if (!clipLocation) {
+      if (isContinuationFromPrev && i > 0 && outputClips[i - 1]?.locationName) {
+        clipLocation = outputClips[i - 1].locationName || '';
+      } else if (i === 0 && continuityLock.location) {
+        clipLocation = cleanFieldValue(continuityLock.location) || '';
+      }
+    }
+
+    if (!clipTimeOfDay) {
+      if (isContinuationFromPrev && i > 0) {
+        clipTimeOfDay = (outputClips[i - 1] as any).timeOfDay || '';
+      } else if (i === 0 && continuityLock.timeOfDay) {
+        clipTimeOfDay = cleanFieldValue(continuityLock.timeOfDay) || '';
+      }
+    }
+
+    if (!clipLighting) {
+      if (isContinuationFromPrev && i > 0) {
+        clipLighting = (outputClips[i - 1] as any).lighting || '';
+      } else if (i === 0 && continuityLock.lighting) {
+        clipLighting = cleanFieldValue(continuityLock.lighting) || '';
+      }
+    }
+
+    // Architectural Environment:
+    // ห้ามนำรายละเอียดสภาพแวดล้อมสถาปัตยกรรมของสถานที่เดิมข้ามมาฉากใหม่ที่เปลี่ยนสถานที่แล้ว
+    const isSameAsLockLocation = continuityLock.location && clipLocation &&
+      clipLocation.toLowerCase() === continuityLock.location.toLowerCase();
+    const clipArchEnv = isSameAsLockLocation ? continuityLock.locationVisualDetails : undefined;
+
     const { startState: clipStartState, endState: clipEndState } = deriveScenePhysicalStates({
       sceneIndex: i,
       cleanAction: narrativeAction,
       dialogues: uniqueDialogues.map(d => ({ speaker: d.speaker, dialogue: d.line, emotionOrAction: d.emotionTone })),
       sceneActiveChars: activeInClip,
-      location,
-      timeOfDay,
+      location: clipLocation || location,
+      timeOfDay: clipTimeOfDay || timeOfDay,
       prevSceneEndState: prevEndState,
       actionBeats: raw.actions
     });
@@ -1256,12 +2121,12 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
     // Construct Clean Final Provider Prompt (1 Clip = 1 Prompt)
     const promptSegments: string[] = [];
     promptSegments.push(visualStyle);
-    if (location) promptSegments.push(`Location: ${location}`);
-    if (continuityLock.locationVisualDetails) {
-      promptSegments.push(`Architectural Environment: ${continuityLock.locationVisualDetails}`);
+    if (clipLocation) promptSegments.push(`Location: ${clipLocation}`);
+    if (clipArchEnv) {
+      promptSegments.push(`Architectural Environment: ${clipArchEnv}`);
     }
-    if (timeOfDay || lighting) {
-      promptSegments.push(`Atmosphere: ${[timeOfDay, lighting].filter(Boolean).join(', ')}`);
+    if (clipTimeOfDay || clipLighting) {
+      promptSegments.push(`Atmosphere: ${[clipTimeOfDay, clipLighting].filter(Boolean).join(', ')}`);
     }
 
     // Character Lock: every on-screen character with face / hair / outfit (never a placeholder)
@@ -1278,25 +2143,56 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
     promptSegments.push(`Spatial Positioning Lock: ${spatialText}`);
     if (props) promptSegments.push(`Props: ${props}`);
 
-    promptSegments.push(`Starting moment: ${startAction}`);
+    if (startAction && startAction !== narrativeAction) {
+      promptSegments.push(`Starting moment: ${startAction}`);
+    }
     promptSegments.push(`Core action: ${narrativeAction}`);
-    promptSegments.push(`Ending momentum: ${endAction}`);
+    if (endAction && endAction !== narrativeAction) {
+      promptSegments.push(`Ending momentum: ${endAction}`);
+    }
 
-    const cameraStr = raw.cameraDirectives.length > 0
-      ? raw.cameraDirectives.join(', ')
-      : `${cameraMovement}, ${lensType}`;
-    promptSegments.push(`Cinematography: ${cameraStr}`);
+    const hasManual = hasManualCameraAngles(uniqueDialogues);
+
+    // Rule: Never bundle camera commands at the start of the clip.
+    // Every camera command must be attached directly to the dialogue it controls and closest to it.
+    // If manual camera selected (OTS/CU/2S/MID/W), do NOT output Cinematography / smooth tracking shot
+    if (!hasManual) {
+      const cameraStr = raw.cameraDirectives.length > 0
+        ? raw.cameraDirectives.join(', ')
+        : `${cameraMovement}, ${lensType}`;
+      promptSegments.push(`Cinematography: ${cameraStr}`);
+    }
 
     if (uniqueDialogues.length > 0) {
-      const dialogueText = uniqueDialogues
-        .map(d => `${d.speaker} speaks: "${d.line}" (${d.emotionTone || 'natural emotion'})`)
-        .join('. ');
-      promptSegments.push(`Dialogue: ${dialogueText}`);
+      const dialogueText = formatDialogueWithCameraControl(
+        uniqueDialogues,
+        activeInClip,
+        clipLocation || location || 'เดิม'
+      );
+      promptSegments.push(`Dialogue:\n${dialogueText}`);
     }
     if (audioParts.length > 0) promptSegments.push(`Soundscape: ${audioSummary}`);
 
-    const cleanFinalPrompt = promptSegments.join('. ') + '.';
-    const negativePrompt = 'blurry, morphing, inconsistent costume, duplicate character, bad anatomy, text watermark, sudden jumpcut, flicker, low resolution';
+    let cleanFinalPrompt = promptSegments.join('. ') + '.';
+    if (hasManual) {
+      cleanFinalPrompt = stripAutoCameraPhrases(cleanFinalPrompt);
+    }
+    // Rule 7: If no real dialogue in this clip, remove any speech verbs (shouting, yelling, says, asks, speaks)
+    if (uniqueDialogues.length === 0) {
+      cleanFinalPrompt = stripProhibitedSpeechWords(cleanFinalPrompt);
+    }
+    const hasDialogue = uniqueDialogues.length > 0;
+    const isSilentScene = !hasDialogue;
+
+    let effectiveNegativePrompt = 'blurry, morphing, inconsistent costume, duplicate character, bad anatomy, text watermark, sudden jumpcut, flicker, low resolution';
+    let effectiveAudioSummary = audioSummary;
+
+    if (isSilentScene) {
+      effectiveNegativePrompt += ', speaking, talking, mouth moving, lips moving, opening mouth, mouthing words, voiceover, dialogue, speech, chatter, whispering';
+      if (!effectiveAudioSummary) {
+        effectiveAudioSummary = 'Ambient soundscape only (no dialogue)';
+      }
+    }
 
     outputClips.push({
       clipNumber: clipNum,
@@ -1307,14 +2203,27 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
       endAction,
       characterPositions: clipPosition,
       dialogues: uniqueDialogues.map(d => ({ ...d, clipNumber: clipNum })),
-      locationName: location || undefined,
-      continuityLockSummary: [charName ? `Character: ${charName}` : '', location ? `Location: ${location}` : '', timeOfDay, lighting].filter(Boolean).join(' | ') || 'Continuity Locked',
-      audioDirectiveSummary: audioSummary,
+      dialogue: hasDialogue
+        ? uniqueDialogues.map(d => `${d.speaker}: "${d.line}"`).join(' ')
+        : 'NONE',
+      locationName: clipLocation || location || undefined,
+      timeOfDay: clipTimeOfDay || timeOfDay || undefined,
+      lighting: clipLighting || lighting || undefined,
+      continuityLockSummary: [charName ? `Character: ${charName}` : '', clipLocation || location ? `Location: ${clipLocation || location}` : '', clipTimeOfDay || timeOfDay, clipLighting || lighting].filter(Boolean).join(' | ') || 'Continuity Locked',
+      audioDirectiveSummary: effectiveAudioSummary,
       generatedPrompt: cleanFinalPrompt,
-      negativePrompt,
+      negativePrompt: effectiveNegativePrompt,
       characterLockText,
       appearanceWarnings,
       estimatedSpeechSeconds: estimateSpeechSeconds(uniqueDialogues.map(d => d.line || ''), rule),
+      actionNarrationLock: {
+        action: narrativeAction,
+        movement: clipPosition || 'ขยับและเคลื่อนไหวตามบท',
+        emotionExpression: 'สีหน้าสื่ออารมณ์ตามสถานการณ์',
+        narration: narrativeAction,
+        isSilent: isSilentScene,
+        hasActTrigger: /\[ACT_TRIGGER\]/i.test(scriptText)
+      },
       ...(splitPart ? { splitPart } : {})
     });
   }
@@ -1334,12 +2243,20 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
   // Every clip: Character Lock for every character present (library card wins) + reference line
   const withCharacters = enforceLibraryCharacterLocks(withContinuity, suppliedChars, scriptDeclared);
   // Location Lock from the location library (verbatim description + reference photo line)
-  return enforceLibraryLocationLocks(withCharacters, params.locations, {
+  const lockedClips = enforceLibraryLocationLocks(withCharacters, params.locations, {
     selectedLocationId: continuityLock.locationId || undefined,
     lockedLocation: continuityLock.location || undefined,
     timeOfDay: continuityLock.timeOfDay || undefined,
     lighting: continuityLock.lighting || undefined
   });
+  // Final validation before output: strictly guarantee original verbatim dialogue only
+  const sanitizedClips = enforceOriginalDialogueOnly(lockedClips, scriptText).clips;
+  // Validation: if user selected CAM-1 / CAM-2 but prompt is missing camera tags, regenerate them automatically
+  const cameraClips = autoRegenerateClipsOnMissingCameraTags(sanitizedClips, params).clips;
+  // DIALOGUE 20-WORD SPLIT SYSTEM:
+  // ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ
+  const splitResult = applyDialogue20WordSplitToClips(cameraClips, clipDurationSeconds);
+  return splitResult.clips;
 }
 
 const LOCK_TAIL = 'identical face, hair and outfit in every clip';
@@ -1499,6 +2416,9 @@ export interface PromptValidationResult {
   errors: string[];
   warnings: string[];
   issues: ContinuityIssue[];
+  ORIGINAL_DIALOGUE_ONLY: boolean;
+  INVENT_DIALOGUE: boolean;
+  NARRATION_TO_DIALOGUE: boolean;
 }
 
 /** Problems of a finished prompt: each lock / library entry / tag must appear exactly once. */
@@ -1533,7 +2453,8 @@ export function lockDuplicationProblems(clip: DirectedClipItem): string[] {
 
 export function validateSalaMultiClipPrompts(
   clips: DirectedClipItem[],
-  declaredCharacters?: string[]
+  declaredCharacters?: string[],
+  scriptText?: string
 ): PromptValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -1542,9 +2463,47 @@ export function validateSalaMultiClipPrompts(
   const declaredSet = new Set(
     (declaredCharacters || []).map(c => c.trim().toLowerCase()).filter(Boolean)
   );
+  const scriptQuotes = scriptText ? extractVerbatimScriptQuotes(scriptText) : null;
 
   clips.forEach((clip, idx) => {
     const clipNum = clip.clipNumber || (idx + 1);
+
+    // Rule 1.1: ORIGINAL_DIALOGUE_ONLY / INVENT_DIALOGUE / NARRATION_TO_DIALOGUE
+    if (scriptText && scriptQuotes) {
+      clip.dialogues.forEach((d, dIdx) => {
+        if (!isVerbatimDialogueInScript(d.line, scriptText, scriptQuotes)) {
+          const msg = `Clip ${clipNum} พบบทพูดที่ไม่มีอยู่ในต้นฉบับ (Invented/Altered Dialogue): "${d.line}" (ORIGINAL_DIALOGUE_ONLY = true, INVENT_DIALOGUE = false)`;
+          errors.push(msg);
+          issues.push({
+            id: `err_invented_dialogue_${clipNum}_${dIdx}`,
+            clipNumber: clipNum,
+            type: 'dialogue',
+            severity: 'error',
+            title: `พบบทพูดที่ AI แต่งขึ้นมาเองหรือไม่ตรงตามต้นฉบับ`,
+            description: msg,
+            suggestion: 'ดึงบทพูดตรงตามต้นฉบับคำต่อคำ หรือตัดบทพูดที่ไม่ตรงออก'
+          });
+        }
+      });
+
+      // If clip has NO dialogues, check if generatedPrompt contains speech action words
+      if (clip.dialogues.length === 0 && clip.generatedPrompt) {
+        const speechMatch = clip.generatedPrompt.match(PROHIBITED_SPEECH_WORDS_RE);
+        if (speechMatch) {
+          const msg = `Clip ${clipNum} มีการใช้คำแสดงการพูด ("${speechMatch[0]}") ทั้งที่ไม่มีบทพูดจริงจากต้นฉบับในช็อตนี้`;
+          warnings.push(msg);
+          issues.push({
+            id: `warn_prohibited_speech_${clipNum}`,
+            clipNumber: clipNum,
+            type: 'dialogue',
+            severity: 'warning',
+            title: `พบคำแสดงการพูดในช็อตที่ไม่มีบทพูด`,
+            description: msg,
+            suggestion: 'ตัดคำว่า shouting, yelling, says, asks หรือ speaks ออกเมื่อช็อตนั้นไม่มีบทพูด'
+          });
+        }
+      }
+    }
 
     // Rule 1: Validate Dialogues for Reserved System Keywords
     clip.dialogues.forEach((d, dIdx) => {
@@ -1582,7 +2541,31 @@ export function validateSalaMultiClipPrompts(
       }
     });
 
-    // Rule 3: Check for Forbidden Placeholders in generatedPrompt
+    // Rule 2.1: Validate Camera Control Tags in generatedPrompt
+    // If dialogue specifies manual camera angles (OTS, MID, CU, 2S, W), the generatedPrompt MUST contain
+    // the corresponding CAM tag (e.g. [CAM-1: OTS ..., [CAM-2: MID ...). If missing, flag as error.
+    clip.dialogues.forEach((d, dIdx) => {
+      if (Array.isArray(d.cameraAngles)) {
+        d.cameraAngles.forEach((ang) => {
+          if (isManualCameraAngle(ang)) {
+            const hasCamTag = clip.generatedPrompt && new RegExp(`\\[CAM-\\d+:\\s*${ang}\\b`, 'i').test(clip.generatedPrompt);
+            if (!hasCamTag) {
+              const msg = `Clip ${clipNum} เลือกมุมกล้อง ${ang} ในบทพูด "${d.line}" แต่ไม่มี Camera Tag [CAM-: ${ang}] ปรากฏใน Generated Prompt`;
+              errors.push(msg);
+              issues.push({
+                id: `err_missing_cam_${clipNum}_${dIdx}_${ang}`,
+                clipNumber: clipNum,
+                type: 'camera',
+                severity: 'error',
+                title: `ไม่พบ Camera Tag สำหรับมุมกล้อง ${ang} ที่เลือกไว้`,
+                description: msg,
+                suggestion: `สร้าง Prompt ใหม่อัตโนมัติเพื่อให้มี Camera Tag [CAM-: ${ang}] ติดกับบทพูดที่ควบคุม`
+              });
+            }
+          }
+        });
+      }
+    });
     FORBIDDEN_PLACEHOLDER_SUBSTRINGS.forEach(placeholder => {
       if (clip.generatedPrompt && containsForbiddenPlaceholder(clip.generatedPrompt, placeholder)) {
         const msg = `Clip ${clipNum} พบ Placeholder ที่ไม่อนุญาตใน Prompt: "${placeholder}"`;
@@ -1687,6 +2670,9 @@ export function validateSalaMultiClipPrompts(
     isValid: errors.length === 0,
     errors,
     warnings,
-    issues
+    issues,
+    ORIGINAL_DIALOGUE_ONLY: true,
+    INVENT_DIALOGUE: false,
+    NARRATION_TO_DIALOGUE: false
   };
 }

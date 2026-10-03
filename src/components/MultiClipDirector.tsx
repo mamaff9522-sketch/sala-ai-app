@@ -38,6 +38,8 @@ import {
   Users,
   Building,
   Compass,
+  Camera,
+  Scissors,
   X
 } from 'lucide-react';
 import { User } from 'firebase/auth';
@@ -75,11 +77,19 @@ import { ContinuityCheckerModal } from './ContinuityCheckerModal';
 import { SocialPostAssistantModal } from './SocialPostAssistantModal';
 import { VideoQualityControlBar, VideoQualitySettings } from './VideoQualityControlBar';
 import { StoryContinuationPanel } from './StoryContinuationPanel';
+import { DialogueCameraControl } from './DialogueCameraControl';
+import { formatScriptWithActTriggerTags } from '../services/actionNarrationLock';
+import {
+  applyDialogue20WordSplitToClips,
+  splitScriptTextDialoguesAt20Words,
+  MAX_DIALOGUE_WORDS_PER_CLIP
+} from '../services/dialogueWordSplitter';
 import {
   isReservedSystemKeyword,
   isMetadataKeyword,
   validateSalaMultiClipPrompts,
   buildSalaMultiClipPrompts,
+  refreshClipPromptWithCameraControls,
   summarizeAutoSplit
 } from '../services/salaDirectorEngine';
 
@@ -183,9 +193,39 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
     }
     return '';
   });
-  const [scriptText, setScriptText] = useState('');
+  const [scriptText, setScriptText] = useState(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem('sala_current_director_script') || '';
+    }
+    return '';
+  });
   const [clipDurationSeconds, setClipDurationSeconds] = useState<number>(10);
   const [clipCount, setClipCount] = useState<number>(3);
+
+  // Sync scriptText to localStorage so state is preserved across tab navigation and refresh
+  useEffect(() => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('sala_current_director_script', scriptText);
+    }
+  }, [scriptText]);
+
+  // Sync with changes from HomeDashboard (when user saves new Full Story)
+  useEffect(() => {
+    const handleStorageChange = () => {
+      if (typeof localStorage !== 'undefined') {
+        const savedScript = localStorage.getItem('sala_current_director_script');
+        if (savedScript && savedScript !== scriptText) {
+          setScriptText(savedScript);
+        }
+        const savedStory = localStorage.getItem('sala_story');
+        if (savedStory && savedStory !== originalStory) {
+          setOriginalStory(savedStory);
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [scriptText, originalStory]);
 
   // Track previous originalStory (Source of Truth).
   // When Source of Truth changes to a new story, clear only the script/scene state derived from the old story.
@@ -209,27 +249,56 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
 
   // Master Continuity Lock State
   const [showContinuityPanel, setShowContinuityPanel] = useState<boolean>(true);
-  const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>([]);
-  const [continuityLock, setContinuityLock] = useState<MasterContinuityLock>({
-    characterId: '',
-    characterIds: [],
-    characterNames: [],
-    characterName: '',
-    characterAppearance: '',
-    location: '',
-    timeOfDay: '',
-    lighting: '',
-    visualStyle: 'Cinematic Photorealistic 8K',
-    aspectRatio: '16:9',
-    resolution: '720p',
-    cameraMovement: 'Cinematic tracking shot smoothly gliding alongside character',
-    cameraShotType: 'Medium Shot',
-    lensType: '35mm Anamorphic Prime f/1.8',
-    props: '',
-    characterPosition: '',
-    lockActionMomentum: true,
-    lockColorGrade: 'Film grain Kodak Vision3, rich warm contrast'
+  const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>(() => {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('sala_selected_character_ids');
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
+    return [];
   });
+  const [continuityLock, setContinuityLock] = useState<MasterContinuityLock>(() => {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('sala_master_continuity_lock');
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
+    return {
+      characterId: '',
+      characterIds: [],
+      characterNames: [],
+      characterName: '',
+      characterAppearance: '',
+      location: '',
+      timeOfDay: '',
+      lighting: '',
+      visualStyle: 'Cinematic Photorealistic 8K',
+      aspectRatio: '16:9',
+      resolution: '720p',
+      cameraMovement: 'Cinematic tracking shot smoothly gliding alongside character',
+      cameraShotType: 'Medium Shot',
+      lensType: '35mm Anamorphic Prime f/1.8',
+      props: '',
+      characterPosition: '',
+      lockActionMomentum: true,
+      lockColorGrade: 'Film grain Kodak Vision3, rich warm contrast'
+    };
+  });
+
+  // Preserve continuityLock & selected characters across page changes and browser refreshes
+  useEffect(() => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('sala_master_continuity_lock', JSON.stringify(continuityLock));
+    }
+  }, [continuityLock]);
+
+  useEffect(() => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('sala_selected_character_ids', JSON.stringify(selectedCharacterIds));
+    }
+  }, [selectedCharacterIds]);
 
   // Dialogue Lock State
   const [showDialoguePanel, setShowDialoguePanel] = useState<boolean>(true);
@@ -265,7 +334,26 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
   });
 
   // Generated Clips State
-  const [clips, setClips] = useState<DirectedClipItem[]>([]);
+  const [clips, setClips] = useState<DirectedClipItem[]>(() => {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('sala_director_clips');
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
+    return [];
+  });
+
+  // Sync clips to localStorage so they persist across page changes, reloads and tabs
+  useEffect(() => {
+    if (typeof localStorage !== 'undefined') {
+      if (clips.length > 0) {
+        localStorage.setItem('sala_director_clips', JSON.stringify(clips));
+      } else {
+        localStorage.removeItem('sala_director_clips');
+      }
+    }
+  }, [clips]);
   const [isGeneratingPrompts, setIsGeneratingPrompts] = useState<boolean>(false);
   const [generationSource, setGenerationSource] = useState<'gemini-ai' | 'deterministic' | null>(null);
   const [promptValidation, setPromptValidation] = useState<{ isValid: boolean; errors: string[]; warnings: string[] } | null>(null);
@@ -686,10 +774,15 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
     const lockedLibraryCharacters = library.payloads;
 
     const applyClips = (newClips: DirectedClipItem[], source: 'gemini-ai' | 'deterministic') => {
+      // ระบบ DIALOGUE 20-WORD SPLIT:
+      // ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ
+      const splitResult = applyDialogue20WordSplitToClips(newClips, clipDurationSeconds);
+      const finalizedClips = splitResult.clips;
+
       // Validate prompts and surface the result in the UI (not only the console)
-      const validation = validateSalaMultiClipPrompts(newClips, characterNames);
-      setPromptValidation({ isValid: validation.isValid, errors: validation.errors, warnings: Array.from(new Set([...library.notices, ...validation.warnings, ...autoSplitNotices(newClips, clipCount)])) });
-      setClips(newClips);
+      const validation = validateSalaMultiClipPrompts(finalizedClips, characterNames);
+      setPromptValidation({ isValid: validation.isValid, errors: validation.errors, warnings: Array.from(new Set([...library.notices, ...validation.warnings, ...autoSplitNotices(finalizedClips, clipCount)])) });
+      setClips(finalizedClips);
       setGenerationSource(source);
     };
 
@@ -799,6 +892,28 @@ ${c.negativePrompt}
       return updated;
     });
     setEditingClipIndex(null);
+  };
+
+  // Update a single dialogue's camera / background control inside a clip
+  const handleUpdateClipDialogue = (clipIdx: number, dialogueIdx: number, updatedDialogue: DialogueLockEntry) => {
+    setClips(prev => {
+      const updated = [...prev];
+      const targetClip = { ...updated[clipIdx] };
+      const nextDialogues = [...(targetClip.dialogues || [])];
+      nextDialogues[dialogueIdx] = updatedDialogue;
+      targetClip.dialogues = nextDialogues;
+
+      // Automatically refresh the prompt so the camera tags appear attached directly to dialogue
+      // Rule: "ห้ามรวมคำสั่งกล้องไว้ที่ต้นคลิป ทุกคำสั่งกล้องต้องถูกแทรกให้ติดกับบทพูดที่มันควบคุม และอยู่ใกล้บทพูดที่สุด"
+      const allSceneChars = targetClip.charactersPresent && targetClip.charactersPresent.length > 0
+        ? targetClip.charactersPresent
+        : (continuityLock.characterNames || []);
+      const refreshed = refreshClipPromptWithCameraControls(targetClip, allSceneChars);
+      targetClip.generatedPrompt = refreshed;
+
+      updated[clipIdx] = targetClip;
+      return updated;
+    });
   };
 
   // Regenerate Single Clip
@@ -1217,11 +1332,9 @@ ${c.negativePrompt}
             continuityLock={continuityLock}
             clipDurationSeconds={clipDurationSeconds}
             onContinuityLockSuggested={(suggested) => {
-              // Fill only empty Master Lock fields so the Continuity Checker has a Character Lock
+              // Rule 2 & Constraint: ห้ามแตะ Character Lock และไม่สร้าง/ดึงข้อมูล Character Lock จากช่องนี้
               setContinuityLock(prev => ({
                 ...prev,
-                characterName: prev.characterName?.trim() ? prev.characterName : (suggested.characterName || ''),
-                characterNames: prev.characterNames && prev.characterNames.length > 0 ? prev.characterNames : (suggested.characterNames || []),
                 location: prev.location?.trim() ? prev.location : (suggested.location && suggested.location !== 'ไม่ระบุจากต้นฉบับ' ? suggested.location : ''),
                 timeOfDay: prev.timeOfDay?.trim() ? prev.timeOfDay : (suggested.timeOfDay && suggested.timeOfDay !== 'ไม่ระบุจากต้นฉบับ' ? suggested.timeOfDay : '')
               }));
@@ -1235,9 +1348,44 @@ ${c.negativePrompt}
                 <FileText className="w-4 h-4 text-indigo-400" />
                 <span>วางบทหรือฉากหลายฉาก (Script)</span>
               </h2>
-              <span className="text-xs text-slate-400">
-                รองรับภาษาไทย
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  id="btn-split-dialogue-20words"
+                  onClick={() => {
+                    const result = splitScriptTextDialoguesAt20Words(scriptText);
+                    setScriptText(result.formattedText);
+                    if (result.totalSplits > 0) {
+                      alert(`ตัดแบ่งบทพูดที่ยาวเกิน 20 คำสำเร็จ ${result.totalSplits} จุด โดยไม่เสียความหมายและรักษาผู้พูดคนเดิม`);
+                    } else {
+                      alert('บทพูดทุกประโยคมีความยาวไม่เกิน 20 คำอยู่แล้ว (ได้มาตรฐาน)');
+                    }
+                  }}
+                  disabled={!scriptText.trim()}
+                  title="ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ"
+                  className="px-2.5 py-1 rounded-xl bg-purple-950/70 hover:bg-purple-900/90 text-purple-300 border border-purple-500/40 text-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                >
+                  <Scissors className="w-3.5 h-3.5 text-purple-400" />
+                  <span>ตัดบทพูด 20 คำ</span>
+                </button>
+                <button
+                  type="button"
+                  id="btn-format-act-trigger"
+                  onClick={() => {
+                    const formatted = formatScriptWithActTriggerTags(scriptText);
+                    setScriptText(formatted);
+                  }}
+                  disabled={!scriptText.trim()}
+                  title="ใส่แท็ก [ACT_TRIGGER] ... [ACTION_END] ครอบตำแหน่ง Action & Narration ตามลำดับเดิม"
+                  className="px-2.5 py-1 rounded-xl bg-teal-950/70 hover:bg-teal-900/90 text-teal-300 border border-teal-500/40 text-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 disabled:opacity-50"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-teal-400" />
+                  <span>ใส่แท็ก [ACT_TRIGGER]</span>
+                </button>
+                <span className="text-xs text-slate-400">
+                  รองรับภาษาไทย
+                </span>
+              </div>
             </div>
 
             <textarea
@@ -1252,6 +1400,48 @@ ${c.negativePrompt}
 ฉากที่ 3: แสงสีฟ้าส่องสว่างเปิดประตูสู่ห้องใต้ดิน..."
               className="w-full bg-slate-950/80 border border-slate-700/80 rounded-2xl p-3.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 leading-relaxed resize-none"
             />
+
+            {/* ACTION & NARRATION LOCK and DIALOGUE 20-WORD SPLIT System Info Cards */}
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2.5">
+              {/* ACTION & NARRATION LOCK */}
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-teal-950/70 via-slate-900 to-indigo-950/70 border border-teal-500/40 text-xs space-y-1.5 shadow-md">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 font-bold text-teal-300">
+                    <ShieldCheck className="w-4 h-4 text-teal-400" />
+                    <span>ACTION & NARRATION LOCK</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 text-[10px] font-bold border border-teal-500/40 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
+                    ACTIVE
+                  </span>
+                </div>
+                <ul className="text-slate-300 text-[11px] space-y-1 leading-relaxed list-disc list-inside">
+                  <li>อ่านบทตามลำดับเดิมจากบนลงล่าง รักษา Action/Narration ไว้ตำแหน่งเดิมก่อนหรือหลังบทพูด ห้ามข้าม ห้ามย้าย ห้ามตัด ห้ามแปลงเป็นบทพูด</li>
+                  <li>ใช้แท็ก <code className="text-amber-300 bg-black/50 px-1 py-0.5 rounded font-mono font-bold">[ACT_TRIGGER]</code> ... <code className="text-amber-300 bg-black/50 px-1 py-0.5 rounded font-mono font-bold">[ACTION_END]</code> ดึง Action, Movement, Emotion/Expression, Narration</li>
+                  <li><strong className="text-amber-300">กฎสำคัญ:</strong> ถ้าช่วงใดไม่มี Dialogue ให้ตัวละครเงียบ 100% ห้ามสร้างบทพูดใหม่เองเด็ดขาด</li>
+                </ul>
+              </div>
+
+              {/* DIALOGUE 20-WORD SPLIT */}
+              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-purple-950/70 via-slate-900 to-indigo-950/70 border border-purple-500/40 text-xs space-y-1.5 shadow-md">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 font-bold text-purple-300">
+                    <Scissors className="w-4 h-4 text-purple-400" />
+                    <span>DIALOGUE 20-WORD SPLIT</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/40 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                    MAX 20 WORDS
+                  </span>
+                </div>
+                <ul className="text-slate-300 text-[11px] space-y-1 leading-relaxed list-disc list-inside">
+                  <li>ถ้าบทพูดยาวเกิน 20 คำ ให้ตัดเฉพาะส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ ห้ามตัดคำกลางประโยคเสียความหมาย</li>
+                  <li>ห้ามแก้ ห้ามย่อ ห้ามแต่งบทพูดเพิ่ม และรักษาผู้พูดคนเดิม 100%</li>
+                  <li>คลิปถัดไปต่อเนื่องจาก END คลิปก่อนหน้า (ท่าทาง ตำแหน่ง สีหน้า กล้อง ฉาก เวลา และเสียง)</li>
+                  <li>ถ้าช่วงใดไม่มี Dialogue ใช้ STRICT SILENCE PROTOCOL เงียบ 100%</li>
+                </ul>
+              </div>
+            </div>
 
             {/* AI Auto-Split & Fill Button */}
             <div className="mt-3">
@@ -1816,7 +2006,7 @@ ${c.negativePrompt}
                         key={d.id}
                         className="bg-slate-950 border border-slate-800/80 rounded-xl p-2.5 flex items-start justify-between gap-2 text-xs"
                       >
-                        <div className="space-y-1">
+                        <div className="space-y-1 flex-1">
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">
                               [{d.speaker}]
@@ -1824,13 +2014,27 @@ ${c.negativePrompt}
                             <span className="text-[10px] text-emerald-400 font-mono">
                               คลิปที่ {d.clipNumber || (idx + 1)}
                             </span>
-                            <span className="text-[10px] text-slate-400">
-                              (อารมณ์: {d.emotionTone})
-                            </span>
+                            {d.emotionTone && (
+                              <span className="text-[10px] text-slate-400">
+                                (อารมณ์: {d.emotionTone})
+                              </span>
+                            )}
                           </div>
                           <p className="text-slate-200 pl-1 italic">
                             "{d.line}"
                           </p>
+
+                          <DialogueCameraControl
+                            dialogue={d}
+                            dialogueIndex={idx}
+                            speakerName={d.speaker}
+                            allSceneCharacters={continuityLock.characterNames || []}
+                            locationName={continuityLock.location}
+                            compact={true}
+                            onChange={(updatedDialogue) => {
+                              setDialogues(prev => prev.map(item => item.id === d.id ? updatedDialogue : item));
+                            }}
+                          />
                         </div>
                         <button
                           onClick={() => handleRemoveDialogue(d.id)}
@@ -2385,7 +2589,82 @@ ${c.negativePrompt}
                       บทพูดล็อค ({clip.dialogues.length} ประโยค)
                     </span>
                   )}
+                  {/* ACTION & NARRATION LOCK TAG */}
+                  <span className={`border px-2 py-0.5 rounded-md flex items-center gap-1 font-semibold ${
+                    clip.dialogues && clip.dialogues.length > 0
+                      ? 'bg-teal-500/10 text-teal-300 border-teal-500/30'
+                      : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                  }`}>
+                    <ShieldCheck className="w-3 h-3 text-teal-400" />
+                    <span>[ACT_TRIGGER] Action & Narration Lock:</span>
+                    {clip.dialogues && clip.dialogues.length > 0 ? (
+                      <span className="text-slate-300 font-normal">ตามลำดับบทพูด</span>
+                    ) : (
+                      <span className="text-amber-300 font-bold">เงียบ 100% (Ambient Only)</span>
+                    )}
+                  </span>
+                  {/* DIALOGUE 20-WORD SPLIT TAG */}
+                  {clip.splitPart && (
+                    <span className="bg-purple-500/15 text-purple-300 border border-purple-500/40 px-2 py-0.5 rounded-md flex items-center gap-1 font-semibold">
+                      <Scissors className="w-3 h-3 text-purple-400" />
+                      <span>20-WORD SPLIT: ตอนที่ {clip.splitPart.part}/{clip.splitPart.total}</span>
+                    </span>
+                  )}
+                  {(!clip.dialogues || clip.dialogues.length === 0) && (
+                    <span className="bg-amber-500/15 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-md flex items-center gap-1 font-semibold">
+                      <span>STRICT SILENCE PROTOCOL (100% Silent)</span>
+                    </span>
+                  )}
                 </div>
+
+                {/* Dialogue Segments with Camera Control & Background Control Directly Underneath */}
+                {clip.dialogues && clip.dialogues.length > 0 && (
+                  <div className="bg-slate-950/70 border border-slate-800/90 rounded-2xl p-3 mb-3 space-y-2.5">
+                    <div className="flex items-center justify-between text-[11px] font-semibold text-slate-300 border-b border-slate-800/80 pb-2">
+                      <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        <span>บทพูดในคลิปนี้ ({clip.dialogues.length} ช่วงบทพูด) — Camera & Background Control:</span>
+                      </span>
+                      <span className="text-[10px] text-slate-500 font-mono">Original Dialogue Only</span>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      {clip.dialogues.map((d, dIdx) => (
+                        <div
+                          key={d.id || `clip_${clip.clipNumber}_dlg_${dIdx}`}
+                          className="bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 space-y-1.5 shadow-sm"
+                        >
+                          {/* Dialogue Spoken Line */}
+                          <div className="flex items-baseline gap-2">
+                            <span className="font-bold text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-md text-xs">
+                              {d.speaker}
+                            </span>
+                            {d.emotionTone && (
+                              <span className="text-[10px] text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded font-medium">
+                                ({d.emotionTone})
+                              </span>
+                            )}
+                            <p className="text-slate-100 font-medium text-xs flex-1">
+                              “{d.line}”
+                            </p>
+                          </div>
+
+                          {/* Camera Control directly under dialogue */}
+                          <DialogueCameraControl
+                            dialogue={d}
+                            dialogueIndex={dIdx}
+                            speakerName={d.speaker}
+                            allSceneCharacters={clip.charactersPresent || continuityLock.characterNames || []}
+                            locationName={clip.locationName || continuityLock.location}
+                            onChange={(updatedDialogue) => {
+                              handleUpdateClipDialogue(index, dIdx, updatedDialogue);
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Continuity Prompt & Visual Prompt Header */}
                 <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 mb-1.5">

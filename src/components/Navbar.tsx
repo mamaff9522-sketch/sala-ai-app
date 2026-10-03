@@ -1,5 +1,5 @@
 import React from 'react';
-import { Coins, ShieldAlert, Cpu, Layers, User as UserIcon, Image as ImageIcon, LogIn, LogOut, Key, Loader2, PlusCircle } from 'lucide-react';
+import { Coins, ShieldAlert, Cpu, Layers, User as UserIcon, Image as ImageIcon, LogIn, LogOut, Key, Loader2, PlusCircle, Users } from 'lucide-react';
 import { CreditAccount, ProviderInfo, ProviderId } from '../types';
 
 interface NavbarProps {
@@ -12,6 +12,7 @@ interface NavbarProps {
   authUser?: any;
   onLogin?: () => void;
   onLogout?: () => void;
+  onSwitchAccount?: () => void;
   onOpenApiKeyModal?: () => void;
   isLoggingIn?: boolean;
   isAdmin?: boolean;
@@ -27,33 +28,61 @@ export const Navbar: React.FC<NavbarProps> = ({
   authUser,
   onLogin,
   onLogout,
+  onSwitchAccount,
   onOpenApiKeyModal,
   isLoggingIn,
   isAdmin,
 }) => {
   const currentProvider = providers.find(p => p.id === selectedProvider);
+  const isRealUser = Boolean(authUser && authUser.uid && authUser.uid !== 'demo_creator');
 
   return (
-    <header className="sticky top-0 z-40 bg-[#090d16]/90 backdrop-blur-md border-b border-slate-800/80 px-4 py-3 sm:px-6">
+    <header className={`sticky top-0 z-40 bg-[#070514]/90 backdrop-blur-md border-b border-purple-500/20 px-4 py-3 sm:px-6 ${activeTab === 'home' ? 'hidden' : ''}`}>
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         {/* Brand & Logo */}
         <div
-          onClick={() => setActiveTab('director')}
+          onClick={() => setActiveTab('home')}
           className="flex items-center gap-2.5 cursor-pointer group"
           id="nav-brand-logo"
         >
-          <img
-            src="/logo.png"
-            alt="Sala AI"
-            className="w-10 h-10 rounded-xl object-cover shadow-lg group-hover:scale-105 transition-transform"
-          />
-          <span className="font-bold text-xl text-white tracking-wide">
-            SALA AI
-          </span>
+          <div className="w-9 h-9 rounded-2xl overflow-hidden p-[1.5px] bg-gradient-to-tr from-[#00D8FF] via-[#7B2CFF] to-[#FF35D4] shadow-[0_0_12px_rgba(0,216,255,0.6)] group-hover:shadow-[0_0_18px_rgba(255,53,212,0.8)] transition-all duration-300">
+            <img
+              src="/robot-mascot.svg"
+              alt="Sala AI Robot"
+              className="w-full h-full object-cover rounded-[13px] group-hover:scale-105 transition-transform"
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="font-bold text-xl text-white tracking-wide">
+              SALA
+            </span>
+            <span
+              className="font-bold text-xl tracking-wide bg-gradient-to-r from-[#00D8FF] via-[#7B2CFF] to-[#FF35D4] bg-clip-text text-transparent"
+              style={{
+                filter: 'drop-shadow(0 0 8px rgba(0, 216, 255, 0.7))'
+              }}
+            >
+              AI
+            </span>
+            <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-gradient-to-r from-[#FF35D4] via-[#FF4ECF] to-[#7B2CFF] text-white shadow-[0_0_10px_rgba(255,53,212,0.7)] border border-pink-400/40">
+              Pro
+            </span>
+          </div>
         </div>
 
         {/* Desktop Navigation Tabs */}
         <nav className="hidden md:flex items-center gap-1.5 bg-slate-900/80 border border-slate-800 p-1.5 rounded-2xl">
+          <button
+            onClick={() => setActiveTab('home')}
+            id="nav-desktop-home"
+            className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'home'
+                ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-600/30 ring-1 ring-purple-400/40'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800/70'
+            }`}
+          >
+            <span>หน้าแรก</span>
+          </button>
           <button
             onClick={() => setActiveTab('director')}
             id="nav-desktop-director"
@@ -177,7 +206,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
 
           {/* Firebase Authentication & User Profile */}
-          {authUser ? (
+          {isRealUser ? (
             <div className="flex items-center gap-2">
               <button
                 onClick={onOpenApiKeyModal}
@@ -210,48 +239,69 @@ export const Navbar: React.FC<NavbarProps> = ({
                     {authUser.email || ''}
                   </span>
                 </div>
+
+                {/* สลับบัญชี (Switch Account) */}
+                <button
+                  onClick={onSwitchAccount || onLogin}
+                  id="nav-switch-account-btn"
+                  title="สลับบัญชี Google (Switch Account)"
+                  disabled={isLoggingIn}
+                  className="px-2 py-1 rounded-lg text-indigo-300 hover:text-white bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 transition-all text-[11px] font-medium flex items-center gap-1 cursor-pointer active:scale-95 ml-1"
+                >
+                  <Users className="w-3.5 h-3.5 text-indigo-400" />
+                  <span className="hidden sm:inline">สลับบัญชี</span>
+                </button>
+
+                {/* ออกจากระบบ (Logout) */}
                 <button
                   onClick={onLogout}
                   id="nav-logout-btn"
                   title="ออกจากระบบ"
-                  className="p-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 transition-all ml-1"
+                  className="p-1 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 transition-all ml-0.5 cursor-pointer"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
           ) : (
-            <button
-              onClick={onLogin}
-              id="nav-login-google-btn"
-              disabled={isLoggingIn}
-              className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl shadow-md shadow-indigo-600/20 transition-all active:scale-95 cursor-pointer disabled:opacity-50"
-            >
-              {isLoggingIn ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <svg className="w-4 h-4" viewBox="0 0 24 24">
-                  <path
-                    fill="#EA4335"
-                    d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"
-                  />
-                  <path
-                    fill="#4285F4"
-                    d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5.1 3.7-8.8z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12.3 0 15.2s.7 5.5 1.9 7.9l3.7-2.9c-.2-.7-.4-1.5-.4-2.4z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16c1.8 3.7 5.6 7 10.1 7z"
-                  />
-                </svg>
+            <div className="flex items-center gap-2">
+              {authUser?.uid === 'demo_creator' && (
+                <span className="hidden md:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-800 text-amber-300 border border-amber-500/30">
+                  โหมดทดลอง
+                </span>
               )}
-              <span className="hidden sm:inline">{isLoggingIn ? 'กำลังเชื่อมต่อ...' : 'เข้าสู่ระบบด้วย Google'}</span>
-              <span className="sm:hidden">{isLoggingIn ? '...' : 'เข้าสู่ระบบ'}</span>
-            </button>
+              <button
+                onClick={onLogin}
+                id="nav-login-google-btn"
+                disabled={isLoggingIn}
+                className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl shadow-md shadow-indigo-600/20 transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+              >
+                {isLoggingIn ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                    <path
+                      fill="#EA4335"
+                      d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.4 9 5 12 5z"
+                    />
+                    <path
+                      fill="#4285F4"
+                      d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5.1 3.7-8.8z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.3s.2-1.6.4-2.3L1.9 7.3C.7 9.7 0 12.3 0 15.2s.7 5.5 1.9 7.9l3.7-2.9c-.2-.7-.4-1.5-.4-2.4z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2.4-6.4-5.2L1.9 16c1.8 3.7 5.6 7 10.1 7z"
+                    />
+                  </svg>
+                )}
+                <span className="hidden sm:inline">{isLoggingIn ? 'กำลังเชื่อมต่อ...' : 'เข้าสู่ระบบด้วย Google'}</span>
+                <span className="sm:hidden">{isLoggingIn ? '...' : 'เข้าสู่ระบบ'}</span>
+              </button>
+            </div>
           )}
         </div>
       </div>

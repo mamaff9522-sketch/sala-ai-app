@@ -14,7 +14,9 @@ import {
   ChevronDown,
   ChevronUp,
   Info,
-  Check
+  Check,
+  ShieldCheck,
+  Scissors
 } from 'lucide-react';
 import {
   DirectedClipItem,
@@ -26,6 +28,13 @@ import {
 } from '../types';
 import { api } from '../services/api';
 import { toCharacterLockPayload } from '../services/characterAppearance';
+import { applyDialogue20WordSplitToClips } from '../services/dialogueWordSplitter';
+import {
+  analyzeStoryLocationSegments,
+  getStoryFlowState,
+  saveStoryFlowState,
+  LocationSceneSegment
+} from '../services/salaStoryFlowEngine';
 
 const SAMPLE_ORIGINAL_STORIES = [
   {
@@ -114,6 +123,11 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
   const [useOfflineEngine, setUseOfflineEngine] = useState<boolean>(false);
   const [lastSource, setLastSource] = useState<string>('');
 
+  // Location Transition Tracking (ข้อ 3, 4, 5)
+  const [waitingForNextLocation, setWaitingForNextLocation] = useState<boolean>(false);
+  const [nextLocationPromptName, setNextLocationPromptName] = useState<string | null>(null);
+  const [currentSegmentIdx, setCurrentSegmentIdx] = useState<number>(() => getStoryFlowState().segmentIndex);
+
   const stopAutoRunRef = useRef<boolean>(false);
   const prevStoryRef = useRef<string>(originalStory);
   // Always-current mirrors of clips / episode so auto-run iterations never read stale closures
@@ -156,22 +170,27 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
     } catch {}
   }, []);
 
-  // When Source of Truth (originalStory) changes to a new story:
-  // Clean up all script states created from the old story immediately.
+  // When Source of Truth (originalStory) changes to a NEW non-empty story:
+  // Clean up all script states created from the old story only when replaced by a new one or cleared.
   // Characters and Location Library remain completely untouched!
   React.useEffect(() => {
     if (prevStoryRef.current !== originalStory) {
-      setScriptText('');
-      setClips([]);
-      setIsStoryFinished(false);
-      setFinishMessage('');
-      setProgressPercentage(0);
-      setCurrentMilestone('');
-      setCurrentEpisode(1);
-      setLastGeneratedScene(null);
-      try {
-        localStorage.removeItem('sala_story_continuation_state');
-      } catch {}
+      // If the story was changed to a new story or cleared:
+      if (!originalStory.trim() || (prevStoryRef.current && prevStoryRef.current !== originalStory)) {
+        setScriptText('');
+        setClips([]);
+        setIsStoryFinished(false);
+        setFinishMessage('');
+        setProgressPercentage(0);
+        setCurrentMilestone('');
+        setCurrentEpisode(1);
+        setLastGeneratedScene(null);
+        try {
+          localStorage.removeItem('sala_story_continuation_state');
+          localStorage.removeItem('sala_current_director_script');
+          localStorage.removeItem('sala_director_clips');
+        } catch {}
+      }
       prevStoryRef.current = originalStory;
     }
   }, [originalStory, setScriptText, setClips]);
@@ -224,12 +243,13 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
   ): Promise<ContinueStepResult> => {
     const fail: ContinueStepResult = { ok: false, newSceneCount: 0, hasMore: false };
     if (!originalStory.trim()) {
-      alert('กรุณากรอกหรือวาง "เนื้อเรื่องต้นฉบับ" ก่อน เพื่อให้ AI ใช้เป็นฐานข้อมูลในการต่อบท');
+      setStatusNotification('⚠️ กรุณากรอกหรือวาง "เนื้อเรื่องต้นฉบับ" ก่อน เพื่อให้ AI ใช้เป็นฐานข้อมูลในการต่อบท');
+      setErrorMessage('กรุณากรอกหรือวาง "เนื้อเรื่องต้นฉบับ" ก่อนเริ่มเขียนบท');
       return fail;
     }
 
     if (isStoryFinished && !forceContinueEvenIfFinished) {
-      if (confirm('เนื้อเรื่องตามต้นฉบับเดิมจบแล้ว คุณต้องการขยายเรื่องหรือเขียนฉากเพิ่มเติมต่อจากจุดนี้หรือไม่?')) {
+      if (typeof window !== 'undefined' && window.confirm && window.confirm('เนื้อเรื่องตามต้นฉบับเดิมจบแล้ว คุณต้องการขยายเรื่องหรือเขียนฉากเพิ่มเติมต่อจากจุดนี้หรือไม่?')) {
         setIsStoryFinished(false);
         setFinishMessage('');
       } else {
@@ -357,6 +377,16 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
         // One Location Lock: the same lighting description for every clip at this location
         const lighting = sc.locationLock?.lighting || continuityLock.lighting || '';
 
+        const hasDiag = clipDialogues.length > 0;
+        const isSilent = !hasDiag;
+        const audioDirectiveSummary = isSilent
+          ? 'ACTION & NARRATION LOCK: 100% Silent Characters (Ambient Only)'
+          : 'Cinematic Ambient & Thai Voice';
+        const negativePrompt = isSilent
+          ? 'blurry, low resolution, duplicate characters, distorted faces, amateurish, morphing, speaking, talking, mouth moving, lips moving, opening mouth, mouthing words, voiceover, dialogue, speech, chatter, whispering'
+          : 'blurry, low resolution, duplicate characters, distorted faces, amateurish, morphing';
+        const finalPrompt = sc.visualPrompt;
+
         return {
           clipNumber: sc.sceneNumber,
           title: sc.sceneHeading,
@@ -380,9 +410,17 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
           endPoses: sc.endPoses || [],
           continuityWarnings: sc.continuityWarnings || [],
           continuityLockSummary: [mainCharacter ? `Character: ${mainCharacter}` : '', `Location: ${sc.location}`, `Time: ${sc.timeOfDay}`, lighting ? `Lighting: ${lighting}` : ''].filter(Boolean).join(' | '),
-          audioDirectiveSummary: 'Cinematic Ambient & Thai Voice',
-          generatedPrompt: sc.visualPrompt,
-          negativePrompt: 'blurry, low resolution, duplicate characters, distorted faces, amateurish, morphing'
+          audioDirectiveSummary,
+          generatedPrompt: finalPrompt,
+          negativePrompt,
+          actionNarrationLock: {
+            action: sc.actionDescription,
+            movement: sc.characterPositions || 'ตามบท',
+            emotionExpression: 'สีหน้าสื่ออารมณ์ตามสถานการณ์',
+            narration: sc.actionDescription,
+            isSilent,
+            hasActTrigger: /\[ACT_TRIGGER\]/i.test(originalStory)
+          }
         };
       });
 
@@ -391,8 +429,13 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
       const trulyNew = newClips.filter(c => !existingNums.has(c.clipNumber));
       const merged = [...currentClips.filter(c => !newClips.some(n => n.clipNumber === c.clipNumber)), ...newClips]
         .sort((a, b) => a.clipNumber - b.clipNumber);
-      clipsRef.current = merged;
-      setClips(merged);
+
+      // DIALOGUE 20-WORD SPLIT SYSTEM:
+      // ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ
+      const splitResult = applyDialogue20WordSplitToClips(merged, clipDurationSeconds);
+      const finalizedMergedClips = splitResult.clips;
+      clipsRef.current = finalizedMergedClips;
+      setClips(finalizedMergedClips);
 
       if (trulyNew.length === 0) {
         setStatusNotification('ไม่มีฉากใหม่ (ฉากที่ได้รับซ้ำกับฉากเดิมทั้งหมด) ระบบหยุดสร้างต่อ');
@@ -411,13 +454,28 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
         setClipCount(generatedScenes.length);
       }
 
-      // 7. Suggest Master Continuity Lock values (only fills empty fields in the parent)
-      const firstMain = newClips.find(c => c.continuityLock?.characterName)?.continuityLock;
+      // Check Location Transition (กฎข้อ 4 และข้อ 5)
+      // วิเคราะห์การเปลี่ยนสถานที่: เมื่อหมดช่วงสถานที่เดิมและกำลังจะเปลี่ยนไปสถานที่ใหม่ ให้หยุดทันที
+      const segments = analyzeStoryLocationSegments(originalStory);
+      if (segments.length > 1) {
+        // ตรวจสอบว่าในฉากใหม่นี้ มีการเปลี่ยนสถานที่ หรือจบช่วงสถานที่ปัจจุบันแล้วหรือไม่
+        const currentLoc = generatedScenes[0]?.location || '';
+        const hasLocationShift = generatedScenes.some(sc => sc.location && sc.location !== currentLoc);
+        
+        // ถ้าถึงขอบเขตสถานที่ถัดไป หรือมีสถานที่ใหม่รออยู่
+        if (currentSegmentIdx < segments.length) {
+          const nextSeg = segments[currentSegmentIdx];
+          if (nextSeg && nextSeg.locationName !== currentLoc) {
+            setWaitingForNextLocation(true);
+            setNextLocationPromptName(nextSeg.locationName);
+          }
+        }
+      }
+
+      // 7. Suggest Master Continuity Lock values (Do NOT touch Character Lock - Rule 2)
+      const firstMain = newClips.find(c => c.continuityLock?.location)?.continuityLock;
       if (onContinuityLockSuggested && firstMain) {
-        const allNames = Array.from(new Set(merged.flatMap(c => c.continuityLock?.characterNames || [])));
         onContinuityLockSuggested({
-          characterName: firstMain.characterName,
-          characterNames: allNames,
           location: firstMain.location,
           timeOfDay: firstMain.timeOfDay,
           ...(firstMain.lighting ? { lighting: firstMain.lighting } : {})
@@ -473,20 +531,22 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
       } else {
         setContinuityNotice(null);
       }
-      setStatusNotification(
-        `✨ สร้างตอนที่ ${episodeToGenerate} (${trulyNew.length} ฉากใหม่) สำเร็จ${sourceLabel}` +
-        (hasMore ? '' : ' — ใช้เนื้อเรื่องต้นฉบับครบแล้ว')
-      );
-      setTimeout(() => setStatusNotification(null), 6000);
+      if (res.fallbackNotice) {
+        setStatusNotification(`⚠️ ${res.fallbackNotice} (ตอนที่ ${episodeToGenerate}, ${trulyNew.length} ฉากใหม่)`);
+      } else {
+        setStatusNotification(
+          `✨ สร้างตอนที่ ${episodeToGenerate} (${trulyNew.length} ฉากใหม่) สำเร็จ${sourceLabel}` +
+          (hasMore ? '' : ' — ใช้เนื้อเรื่องต้นฉบับครบแล้ว')
+        );
+      }
+      setTimeout(() => setStatusNotification(null), 7000);
 
       return { ok: true, newSceneCount: trulyNew.length, hasMore };
     } catch (err: any) {
       console.error('Continue story error:', err?.message || err);
       const msg = err?.message || 'การเชื่อมต่อขัดข้อง / Connection error';
       setErrorMessage(msg);
-      if (!opts.silentErrors) {
-        alert(`เกิดข้อผิดพลาดในการต่อบท / Story continuation failed:\n${msg}`);
-      }
+      setStatusNotification(`❌ เกิดข้อผิดพลาดในการต่อบท: ${msg}`);
       return fail;
     } finally {
       setIsContinuing(false);
@@ -496,11 +556,12 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
   // Auto-run sequentially until the story finishes or no new scenes are produced
   const handleAutoRunUntilFinished = async () => {
     if (!originalStory.trim()) {
-      alert('กรุณากรอก "เนื้อเรื่องต้นฉบับ" ก่อนเริ่มระบบอัตโนมัติ');
+      setStatusNotification('⚠️ กรุณากรอก "เนื้อเรื่องต้นฉบับ" ก่อนเริ่มระบบอัตโนมัติ');
+      setErrorMessage('กรุณากรอก "เนื้อเรื่องต้นฉบับ" ก่อนเริ่มระบบอัตโนมัติ');
       return;
     }
     if (isStoryFinished) {
-      alert('เนื้อเรื่องจบแล้วตามต้นฉบับเรียบร้อยแล้ว');
+      setStatusNotification('ℹ️ เนื้อเรื่องจบแล้วตามต้นฉบับเรียบร้อยแล้ว');
       return;
     }
 
@@ -666,51 +727,31 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
             </div>
           </div>
 
-          {/* Tab Content 1: Original Story */}
+          {/* Tab Content 1: Full Story Info (ช่องเนื้อเรื่องเต็มอยู่หน้าแรกเท่านั้น ตามกฎข้อ 1) */}
           {activeTab === 'original' && (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <div className="flex items-center justify-between text-xs text-slate-400">
-                <span>วางเรื่องเล่าทั้งหมดที่ต้องการให้ AI จดจำและทยอยเขียนทีละฉาก:</span>
-                <span className="text-[11px] text-slate-500">
-                  {originalStory.length} ตัวอักษร
+                <span className="flex items-center gap-1.5 font-medium text-slate-300">
+                  <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>เนื้อเรื่องเต็ม (อ้างอิงจากช่องหน้าแรก):</span>
+                </span>
+                <span className="text-[11px] text-slate-400 font-mono">
+                  {originalStory.length.toLocaleString()} ตัวอักษร
                 </span>
               </div>
-              <textarea
-                value={originalStory}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setOriginalStory(val);
-                  if (val !== originalStory) {
-                    setScriptText('');
-                    setClips([]);
-                    setIsStoryFinished(false);
-                    setFinishMessage('');
-                    setProgressPercentage(0);
-                    setCurrentMilestone('');
-                    setCurrentEpisode(1);
-                    setLastGeneratedScene(null);
-                    try {
-                      localStorage.removeItem('sala_story_continuation_state');
-                    } catch {}
-                  }
-                }}
-                onPaste={() => {
-                  setScriptText('');
-                  setClips([]);
-                  setIsStoryFinished(false);
-                  setFinishMessage('');
-                  setProgressPercentage(0);
-                  setCurrentMilestone('');
-                  setCurrentEpisode(1);
-                  setLastGeneratedScene(null);
-                  try {
-                    localStorage.removeItem('sala_story_continuation_state');
-                  } catch {}
-                }}
-                rows={5}
-                placeholder="วางเนื้อเรื่องต้นฉบับทั้งหมดที่นี่ เช่น นิยายสั้น, เรื่องเล่า, หรือโครงเรื่องทั้งหมด... AI จะจดจำตัวละคร สถานที่ และเหตุการณ์ทั้งหมด แล้วเขียนฉากถัดไปให้สอดคล้องกัน 100%"
-                className="w-full bg-slate-950/90 border border-slate-700 rounded-2xl p-3.5 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 leading-relaxed resize-none font-sans"
-              />
+              <div className="relative">
+                <textarea
+                  value={originalStory}
+                  readOnly
+                  rows={5}
+                  placeholder="ยังไม่มีเนื้อเรื่องเต็มในระบบ กรุณาไปที่หน้าแรก เพื่อวางบทตั้งแต่ต้นจนจบลงในช่อง 'เนื้อเรื่องเต็ม' แล้วกดบันทึก"
+                  className="w-full bg-slate-950/70 border border-slate-700/80 rounded-2xl p-3.5 text-xs text-slate-300 placeholder:text-slate-500 leading-relaxed resize-none font-sans cursor-default select-text"
+                />
+              </div>
+              <p className="text-[11px] text-slate-500 flex items-center gap-1">
+                <Info className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <span>ช่องสำหรับวางบทและแก้ไขเนื้อเรื่องเต็มอยู่ที่ <strong>หน้าแรก</strong> เท่านั้น เพื่อความเป็นระเบียบและเป็นศูนย์กลางข้อมูลของทั้งเรื่อง</span>
+              </p>
             </div>
           )}
 
@@ -819,6 +860,46 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
             )}
           </label>
 
+          {/* Location Transition Halt Alert & "เดินเรื่องต่อไป" Button (กฎข้อ 5) */}
+          {waitingForNextLocation && !isStoryFinished && (
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-950/80 via-slate-900 to-indigo-950/80 border-2 border-amber-500/60 shadow-xl space-y-2.5 animate-in fade-in">
+              <div className="flex items-center gap-2 text-amber-300 font-bold text-sm">
+                <AlertCircle className="w-5 h-5 text-amber-400 shrink-0" />
+                <span>เนื้อเรื่องในสถานที่เดิมเสร็จสิ้นแล้ว — กำลังจะเปลี่ยนไปสถานที่ใหม่: "{nextLocationPromptName || 'สถานที่ถัดไป'}"</span>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                ตามกฎข้อ 5: ระบบหยุดอัตโนมัติ ไม่ดึงฉากถัดไปเอง เพื่อให้ผู้กำกับตรวจทานฉากก่อนหน้า กรุณากดปุ่ม <strong>"เดินเรื่องต่อไป"</strong> ด้านล่างเพื่อดึงฉากในสถานที่ถัดไปเข้าสู่ Story
+              </p>
+              <button
+                type="button"
+                id="btn-advance-next-location"
+                onClick={async () => {
+                  setWaitingForNextLocation(false);
+                  const nextIdx = currentSegmentIdx + 1;
+                  setCurrentSegmentIdx(nextIdx);
+                  saveStoryFlowState(nextIdx);
+
+                  // ดึงฉากในสถานที่ถัดไปจากเนื้อเรื่องเต็มเข้า Story อัตโนมัติ (ตามกฎข้อ 5)
+                  const segments = analyzeStoryLocationSegments(originalStory);
+                  if (segments[nextIdx - 1]) {
+                    const nextScript = segments[nextIdx - 1].scriptText;
+                    setScriptText(nextScript);
+                    if (typeof localStorage !== 'undefined') {
+                      localStorage.setItem('sala_current_director_script', nextScript);
+                    }
+                    setStatusNotification(`ดึงฉากสถานที่ถัดไป: "${segments[nextIdx - 1].locationName}" (${segments[nextIdx - 1].sceneRange}) เข้า Story เรียบร้อยแล้ว`);
+                  }
+                  await handleContinueStory();
+                }}
+                disabled={isContinuing}
+                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-indigo-600 hover:brightness-110 text-white font-bold text-sm shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95"
+              >
+                <FastForward className="w-4 h-4 text-white" />
+                <span>เดินเรื่องต่อไป (ดึงฉากสถานที่: {nextLocationPromptName || 'ถัดไป'} เข้า Story)</span>
+              </button>
+            </div>
+          )}
+
           {/* Action Buttons: "ตอนต่อไป / ต่อเนื่อง" and "ต่ออัตโนมัติ" */}
           <div className="flex flex-col sm:flex-row items-stretch gap-2.5 pt-2">
             {/* Main "ต่อเรื่อง" / "ตอนต่อไป" Button */}
@@ -883,11 +964,21 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
           </div>
 
           {/* Rule note */}
-          <div className="flex items-center gap-2 text-[11px] text-slate-500 pt-1">
-            <Info className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" />
-            <span>
-              ระบบแบ่งตอนต่อเนื่อง: วางเนื้อเรื่องเต็มครั้งเดียว กด "ต่อเรื่อง" สร้างตอนที่ 1 (5-6 ฉาก) ลงช่อง Script อัตโนมัติ และกด "ตอนต่อไป" เพื่อสร้างตอนถัดไป โดย END scene เชื่อมโยงเป็น START scene ถัดไปเสมอ พร้อมล็อคตำแหน่งตัวละครและ Continuity Prompt
-            </span>
+          <div className="flex flex-col gap-2 text-[11px] text-slate-400 pt-1 border-t border-slate-800/80">
+            <div className="flex items-center gap-2 text-teal-300 font-semibold">
+              <ShieldCheck className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+              <span>ACTION & NARRATION LOCK: อ่านบทบนลงล่าง • [ACT_TRIGGER]...[ACTION_END] • เงียบ 100% ถ้าไม่มี Dialogue</span>
+            </div>
+            <p className="text-slate-400 leading-relaxed pl-5 text-[11px]">
+              รักษาตำแหน่ง Action/Narration ไว้ตำแหน่งเดิมก่อนหรือหลังบทพูด เมื่อไม่มีบทพูดตัวละครจะเงียบ 100% (ไม่มีเสียงพูด/ปากขยับ) มีเฉพาะการกระทำ อารมณ์ และเสียงบรรยากาศตามบท
+            </p>
+            <div className="flex items-center gap-2 text-purple-300 font-semibold pt-1 border-t border-slate-800/40">
+              <Scissors className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+              <span>DIALOGUE 20-WORD SPLIT: บทพูดยาวเกิน 20 คำ แยกไปต่อคลิปถัดไปอัตโนมัติ</span>
+            </div>
+            <p className="text-slate-400 leading-relaxed pl-5 text-[11px]">
+              ห้ามตัดคำกลางประโยคแบบเสียความหมาย ห้ามแก้/ย่อ/แต่งเพิ่ม รักษาผู้พูดคนเดิม Action/Narration คงตำแหน่งเดิม คลิปถัดไปต่อเนื่องจาก END คลิปก่อนหน้า (ท่าทาง ตำแหน่ง สีหน้า กล้อง ฉาก เวลา เสียง) และทำซ้ำจนกว่าบทพูดจะครบ
+            </p>
           </div>
         </div>
       )}

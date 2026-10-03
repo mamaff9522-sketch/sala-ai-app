@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 512" width="1024" height="512">
+  <defs>
+    <radialGradient id="bg2" cx="70%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#2D0A24" />
+      <stop offset="60%" stop-color="#0E0720" />
+      <stop offset="100%" stop-color="#03020C" />
+    </radialGradient>
+    <linearGradient id="border2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F7C94A" />
+      <stop offset="50%" stop-color="#FF35D4" />
+      <stop offset="100%" stop-color="#7B2CFF" />
+    </linearGradient>
+    <linearGradient id="icon2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F43F5E" />
+      <stop offset="100%" stop-color="#A855F7" />
+    </linearGradient>
+    <filter id="glow2" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="512" rx="40" fill="url(#bg2)" />
+
+  <!-- Stars -->
+  <circle cx="850" cy="80" r="3.5" fill="#F43F5E" opacity="0.9" filter="url(#glow2)" />
+  <circle cx="940" cy="220" r="2.5" fill="#38BDF8" opacity="0.9" />
+  <circle cx="680" cy="460" r="3" fill="#F59E0B" opacity="0.9" />
+
+  <!-- Clapperboard Artwork -->
+  <g transform="translate(420, 60)">
+    <!-- Clapperboard Lower Slate -->
+    <rect x="0" y="90" width="310" height="230" rx="14" fill="#0D091A" stroke="#C084FC" stroke-width="4" filter="url(#glow2)" />
+    <!-- Clapperboard Upper Open Stick -->
+    <g transform="translate(0, 90) rotate(-22)">
+      <rect x="0" y="-38" width="310" height="38" rx="6" fill="#18112C" stroke="#E879F9" stroke-width="3" />
+      <!-- Stripes -->
+      <polygon points="40,-38 65,-38 35,0 10,0" fill="#E879F9" />
+      <polygon points="100,-38 125,-38 95,0 70,0" fill="#E879F9" />
+      <polygon points="160,-38 185,-38 155,0 130,0" fill="#E879F9" />
+      <polygon points="220,-38 245,-38 215,0 190,0" fill="#E879F9" />
+      <polygon points="280,-38 305,-38 275,0 250,0" fill="#E879F9" />
+    </g>
+    <!-- Clapperboard Lower Striped Lip -->
+    <rect x="0" y="90" width="310" height="32" rx="4" fill="#18112C" stroke="#C084FC" stroke-width="2" />
+    <polygon points="35,90 60,90 40,122 15,122" fill="#E879F9" />
+    <polygon points="95,90 120,90 100,122 75,122" fill="#E879F9" />
+    <polygon points="155,90 180,90 160,122 135,122" fill="#E879F9" />
+    <polygon points="215,90 240,90 220,122 195,122" fill="#E879F9" />
+    <polygon points="275,90 300,90 280,122 255,122" fill="#E879F9" />
+
+    <!-- 4 Radiating Glowing Storyboard Tiles -->
+    <!-- Tile 1 (Center Hero Scene) -->
+    <g transform="translate(60, 140)">
+      <rect width="180" height="120" rx="10" fill="#0369A1" stroke="#38BDF8" stroke-width="3" filter="url(#glow2)" />
+      <path d="M 0 90 Q 60 70 120 85 T 180 80 L 180 120 L 0 120 Z" fill="#082F49" />
+      <!-- Silhouette of director/hero -->
+      <circle cx="90" cy="72" r="8" fill="#020617" />
+      <path d="M 82 82 L 98 82 L 96 110 L 84 110 Z" fill="#020617" />
+      <circle cx="130" cy="40" r="14" fill="#38BDF8" opacity="0.6" />
+    </g>
+
+    <!-- Tile 2 (Right Fantasy Castle) -->
+    <g transform="translate(230, 70) rotate(12)">
+      <rect width="170" height="110" rx="10" fill="#4C1D95" stroke="#F43F5E" stroke-width="3" filter="url(#glow2)" />
+      <polygon points="40,90 55,40 70,90 90,90 105,25 120,90" fill="#F43F5E" />
+      <circle cx="40" cy="35" r="12" fill="#FDE047" opacity="0.7" />
+    </g>
+
+    <!-- Tile 3 (Lower Right Sunset) -->
+    <g transform="translate(260, 195) rotate(-6)">
+      <rect width="170" height="105" rx="10" fill="#1E1B4B" stroke="#A855F7" stroke-width="3" filter="url(#glow2)" />
+      <path d="M 0 75 Q 85 55 170 70 L 170 105 L 0 105 Z" fill="#4C1D95" />
+      <circle cx="85" cy="50" r="16" fill="#FB923C" opacity="0.8" />
+    </g>
+  </g>
+
+  <!-- Left Icon Box (Clapperboard) -->
+  <rect x="52" y="52" width="112" height="112" rx="28" fill="url(#icon2)" filter="url(#glow2)" />
+  <g transform="translate(80, 80)">
+    <rect x="0" y="16" width="56" height="40" rx="4" fill="none" stroke="#FFFFFF" stroke-width="4.5" />
+    <g transform="translate(0, 16) rotate(-20)">
+      <rect x="0" y="-12" width="56" height="12" rx="2" fill="none" stroke="#FFFFFF" stroke-width="4" />
+      <line x1="14" y1="-12" x2="8" y2="0" stroke="#FFFFFF" stroke-width="4" />
+      <line x1="28" y1="-12" x2="22" y2="0" stroke="#FFFFFF" stroke-width="4" />
+      <line x1="42" y1="-12" x2="36" y2="0" stroke="#FFFFFF" stroke-width="4" />
+    </g>
+    <polygon points="22,30 38,40 22,50" fill="#FFFFFF" />
+  </g>
+
+  <!-- Left Thai Text: แยกเป็นฉาก / ช็อต -->
+  <text x="56" y="275" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="900" font-size="54" fill="#FFFFFF">แยกเป็นฉาก / ช็อต</text>
+  <text x="56" y="352" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="500" font-size="34" fill="#FFFFFF">จัดโครงสร้างฉาก</text>
+  <text x="56" y="415" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="500" font-size="34" fill="#FFFFFF">และสตอรี่บอร์ดอัตโนมัติ</text>
+
+  <!-- Outer Neon Glowing Frame -->
+  <rect x="8" y="8" width="1008" height="496" rx="36" fill="none" stroke="url(#border2)" stroke-width="12" filter="url(#glow2)" />
+  <rect x="8" y="8" width="1008" height="496" rx="36" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.6" />
+</svg>

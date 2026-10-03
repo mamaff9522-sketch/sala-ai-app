@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 512" width="1024" height="512">
+  <defs>
+    <radialGradient id="bg4" cx="65%" cy="40%" r="70%">
+      <stop offset="0%" stop-color="#1E40AF" />
+      <stop offset="50%" stop-color="#0C1F4A" />
+      <stop offset="100%" stop-color="#020817" />
+    </radialGradient>
+    <linearGradient id="border4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D8FF" />
+      <stop offset="100%" stop-color="#1E90FF" />
+    </linearGradient>
+    <linearGradient id="icon4" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+    <filter id="glow4" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="512" rx="40" fill="url(#bg4)" />
+
+  <!-- Giant Celestial Moon -->
+  <g transform="translate(560, 30)">
+    <circle cx="100" cy="100" r="85" fill="#E2E8F0" opacity="0.9" filter="url(#glow4)" />
+    <!-- Craters -->
+    <circle cx="70" cy="80" r="18" fill="#CBD5E1" opacity="0.6" />
+    <circle cx="120" cy="110" r="24" fill="#CBD5E1" opacity="0.5" />
+    <circle cx="140" cy="65" r="14" fill="#CBD5E1" opacity="0.6" />
+  </g>
+
+  <!-- Floating Islands & Towering Castle -->
+  <g transform="translate(420, 40)">
+    <!-- Floating Rocks -->
+    <polygon points="50,150 70,130 90,150 70,200" fill="#0C1A38" stroke="#38BDF8" stroke-width="1.5" />
+    <polygon points="120,220 145,195 170,220 145,280" fill="#0C1A38" stroke="#38BDF8" stroke-width="1.5" />
+    <polygon points="520,180 545,160 570,180 545,240" fill="#0C1A38" stroke="#38BDF8" stroke-width="1.5" />
+
+    <!-- Majestic Gothic Fantasy Castle -->
+    <g transform="translate(180, 0)">
+      <!-- Main Castle Spire -->
+      <polygon points="140,40 160,0 180,40" fill="#93C5FD" filter="url(#glow4)" />
+      <rect x="142" y="40" width="36" height="240" fill="#1E293B" stroke="#60A5FA" stroke-width="2" />
+      <!-- Flanking Spires -->
+      <polygon points="90,100 105,60 120,100" fill="#93C5FD" />
+      <rect x="93" y="100" width="24" height="180" fill="#1E293B" stroke="#60A5FA" stroke-width="1.5" />
+      <polygon points="200,100 215,60 230,100" fill="#93C5FD" />
+      <rect x="203" y="100" width="24" height="180" fill="#1E293B" stroke="#60A5FA" stroke-width="1.5" />
+      <!-- Outer Wall & Buttresses -->
+      <rect x="60" y="220" width="200" height="90" fill="#0F172A" />
+      <!-- Glowing Windows -->
+      <rect x="155" y="80" width="10" height="20" rx="5" fill="#FEF08A" filter="url(#glow4)" />
+      <rect x="155" y="130" width="10" height="20" rx="5" fill="#FEF08A" />
+      <rect x="155" y="180" width="10" height="20" rx="5" fill="#FEF08A" />
+    </g>
+
+    <!-- Cliff & Cascading Waterfalls -->
+    <path d="M 0 310 Q 150 280 300 290 Q 450 280 600 310 L 600 480 L 0 480 Z" fill="#030816" />
+    <!-- Waterfalls -->
+    <rect x="230" y="300" width="18" height="180" fill="#E0F2FE" filter="url(#glow4)" opacity="0.9" />
+    <rect x="260" y="300" width="12" height="180" fill="#BAE6FD" opacity="0.8" />
+    <rect x="330" y="305" width="25" height="175" fill="#E0F2FE" filter="url(#glow4)" opacity="0.9" />
+    <rect x="380" y="310" width="15" height="170" fill="#BAE6FD" opacity="0.8" />
+
+    <!-- Clouds & Mist -->
+    <ellipse cx="280" cy="460" rx="90" ry="30" fill="#FFFFFF" opacity="0.4" filter="url(#glow4)" />
+    <ellipse cx="360" cy="465" rx="80" ry="25" fill="#FFFFFF" opacity="0.5" filter="url(#glow4)" />
+  </g>
+
+  <!-- Left Icon Box (Mountain) -->
+  <rect x="52" y="52" width="112" height="112" rx="28" fill="url(#icon4)" filter="url(#glow4)" />
+  <g transform="translate(80, 80)">
+    <polygon points="12,48 28,16 44,48" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linejoin="round" />
+    <polygon points="32,48 42,28 52,48" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linejoin="round" />
+    <circle cx="28" cy="10" r="4" fill="#FFFFFF" />
+  </g>
+
+  <!-- Left Thai Text: สถานที่ -->
+  <text x="56" y="275" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="900" font-size="54" fill="#FFFFFF">สถานที่</text>
+  <text x="56" y="352" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="500" font-size="34" fill="#FFFFFF">สร้างโลก สถานที่</text>
+  <text x="56" y="415" font-family="'Prompt', 'Plus Jakarta Sans', sans-serif" font-weight="500" font-size="34" fill="#FFFFFF">และบรรยากาศของเรื่อง</text>
+
+  <!-- Outer Neon Glowing Frame -->
+  <rect x="8" y="8" width="1008" height="496" rx="36" fill="none" stroke="url(#border4)" stroke-width="12" filter="url(#glow4)" />
+  <rect x="8" y="8" width="1008" height="496" rx="36" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.6" />
+</svg>

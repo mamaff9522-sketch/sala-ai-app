@@ -18,7 +18,18 @@ import {
   attachClipContinuity,
   summarizeAutoSplit,
   dedupeDialogueEntries,
-  enforceLibraryCharacterLocks
+  enforceLibraryCharacterLocks,
+  isVerbatimDialogueInScript,
+  extractVerbatimScriptQuotes,
+  stripProhibitedSpeechWords,
+  enforceOriginalDialogueOnly,
+  ORIGINAL_DIALOGUE_ONLY,
+  INVENT_DIALOGUE,
+  NARRATION_TO_DIALOGUE,
+  mergeDialogueCameraControls,
+  formatDialogueWithCameraControl,
+  hasManualCameraAngles,
+  stripAutoCameraPhrases
 } from './src/services/salaDirectorEngine';
 import { enforceLibraryLocationLocks, findLocationByName, locationDescriptionOf } from './src/services/locationAppearance';
 import {
@@ -32,19 +43,14 @@ import {
 import { expandCombinedCharacterNames, buildCharacterLockText, lightingForTime, analyzeClipContinuity, formatContinuityForPrompt, normalizePoseList, sceneWarningsFor, syncLocationLockInPrompt } from './src/services/continuityEngine';
 import { resolveCharacterProfiles, formatCharacterAppearanceLock, parseScriptCharacterList, buildCharacterAppearanceLock, mergeDeclaredCharacters, continuityLockCharacter } from './src/services/characterAppearance';
 import { parseScriptLocally, applySplitLocks } from './src/services/localScriptParser';
+import { applyDialogue20WordSplitToClips } from './src/services/dialogueWordSplitter';
 import { verifyFirebaseIdToken, createSessionToken, verifySessionToken, isAdminIdentity, parseAdminEmails, type VerifiedFirebaseClaims } from './serverAuth';
 
 dotenv.config();
 
-// Ensure both GEMINI_API_KEY and alias "GEMINI_API KEY" are synchronized
-if (!process.env.GEMINI_API_KEY && process.env['GEMINI_API KEY']) {
-  process.env.GEMINI_API_KEY = process.env['GEMINI_API KEY'];
-} else if (process.env.GEMINI_API_KEY && !process.env['GEMINI_API KEY']) {
-  process.env['GEMINI_API KEY'] = process.env.GEMINI_API_KEY;
-}
-
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+console.log('Using PORT:', PORT);
 
 // Support large payload for base64 image reference uploads & capture rawBody for Stripe Webhook signature verification
 app.use(express.json({
@@ -724,64 +730,8 @@ let locationsStore: LocationItem[] = [
   }
 ];
 
-// Initial Projects Store with realistic demo storyboard
-let projectsStore: Project[] = [
-  {
-    id: 'proj_sample_01',
-    userId: 'default_system',
-    title: 'ตัวอย่าง: แสงแรกแห่งอยุธยา (Dawn of Ayutthaya)',
-    description: 'โปรเจกต์สาธิต Multi-Clip Director และการรักษาความต่อเนื่องของตัวละครฟ้าใสในฉากประวัติศาสตร์',
-    aspectRatio: '16:9',
-    defaultCharacterId: 'char_fahsai_01',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    scenes: [
-      {
-        id: 'scene_ayutthaya_1',
-        sceneNumber: 1,
-        title: 'ฉากที่ 1: ก้าวสู่โบราณสถานยามเช้าตรู่',
-        prompt: 'ฟ้าใส (Fahsai) เดินก้าวเข้าสู่โบราณสถานอยุธยา แสงอาทิตย์สีทองยามเช้าสาดส่องกระทบเจดีย์โบราณ บรรยากาศเงียบสงบ ภาพยนตร์คุณภาพสูง',
-        negativePrompt: 'blurry, low quality, distorted, extra limbs',
-        mediaType: 'video',
-        aspectRatio: '16:9',
-        characterId: 'char_fahsai_01',
-        locationId: 'loc_ayutthaya_temple_02',
-        usePreviousSceneAsRef: false,
-        status: 'completed',
-        outputUrl: 'https://images.unsplash.com/photo-1528181304800-259b08848526?auto=format&fit=crop&w=1280&q=80',
-        durationSeconds: 5
-      },
-      {
-        id: 'scene_ayutthaya_2',
-        sceneNumber: 2,
-        title: 'ฉากที่ 2: หยุดมองลวดลายปูนปั้น',
-        prompt: 'ฟ้าใส (Fahsai) หยุดยืนมองลวดลายปูนปั้นบนซุ้มประตูวัดอยุธยาอย่างประทับใจ ลมพัดผมยาวประบ่าปลิวเบาๆ แสงแดดยามสายอบอุ่น',
-        negativePrompt: 'blurry, bad anatomy, deformed',
-        mediaType: 'video',
-        aspectRatio: '16:9',
-        characterId: 'char_fahsai_01',
-        locationId: 'loc_ayutthaya_temple_02',
-        usePreviousSceneAsRef: true,
-        status: 'completed',
-        outputUrl: 'https://images.unsplash.com/photo-1508009603885-50cf7c579365?auto=format&fit=crop&w=1280&q=80',
-        durationSeconds: 5
-      },
-      {
-        id: 'scene_ayutthaya_3',
-        sceneNumber: 3,
-        title: 'ฉากที่ 3: บันทึกภาพความทรงจำริมแม่น้ำ',
-        prompt: 'ฟ้าใส (Fahsai) นั่งพักริมแม่น้ำเจ้าพระยาข้างวัดไชยวัฒนาราม ยิ้มอย่างมีความสุขกับวิวเรือหางยาวแล่นผ่าน ท้องฟ้าสดใส',
-        negativePrompt: 'blurry, bad face, poor lighting',
-        mediaType: 'image',
-        aspectRatio: '16:9',
-        characterId: 'char_fahsai_01',
-        usePreviousSceneAsRef: true,
-        status: 'completed',
-        outputUrl: 'https://images.unsplash.com/photo-1508672019048-805c876b67e2?auto=format&fit=crop&w=1280&q=80'
-      }
-    ]
-  }
-];
+// Initial Projects Store (Empty)
+let projectsStore: Project[] = [];
 
 // ==========================================
 // USER AUTHENTICATION, ROLES & ENCRYPTION
@@ -1105,51 +1055,15 @@ async function getAuthenticatedUser(req: express.Request): Promise<{ user: Store
   return { user, account, identity };
 }
 
-// Middleware: Require valid session token with seamless Mock/Guest demo fallback
+// Middleware: Require valid session token
 async function requireAuth(req: any, res: express.Response, next: express.NextFunction) {
   let auth: Awaited<ReturnType<typeof getAuthenticatedUser>> = null;
   try { auth = await getAuthenticatedUser(req); } catch { auth = null; }
   if (!auth) {
-    const demoUser: StoredUser = {
-      id: 'demo_creator',
-      username: 'demo_creator',
-      email: 'creator@sala.ai',
-      firstName: 'ผู้ใช้ทดสอบ',
-      lastName: '(Demo Mode)',
-      role: 'user',
-      status: 'active',
-      isVerified: true,
-      createdAt: new Date().toISOString()
-    };
-    let demoAccount = creditAccountsStore.get('demo_creator');
-    if (!demoAccount) {
-      demoAccount = {
-        userId: 'demo_creator',
-        userName: 'ผู้ใช้ทดสอบ (Demo Mode)',
-        userRole: 'user',
-        remainingCredits: 2000,
-        totalUsedCredits: 0,
-        dailyUsedCredits: 0,
-        dailyLimit: 5000,
-        monthlyUsedCredits: 0,
-        monthlyLimit: 20000,
-        perGenerationLimit: 100,
-        transactions: [
-          {
-            id: 'tx_demo_init',
-            timestamp: new Date().toISOString(),
-            amount: 2000,
-            type: 'bonus',
-            description: 'เครดิตเริ่มต้นสำหรับโหมดทดสอบจำลอง (Mock Demo)',
-            balanceAfter: 2000
-          }
-        ]
-      };
-      creditAccountsStore.set('demo_creator', demoAccount);
-    }
-    req.user = demoUser;
-    req.creditAccount = demoAccount;
-    return next();
+    return res.status(401).json({
+      success: false,
+      message: 'กรุณาเข้าสู่ระบบก่อนดำเนินการ (Unauthorized: Valid Session Token Required)'
+    });
   }
   req.user = auth.user;
   req.creditAccount = auth.account;
@@ -1350,7 +1264,7 @@ function formatGenAIError(err: any): string {
     return 'ไม่มีสิทธิ์เข้าถึงโมเดล Google Veo หรือคีย์ไม่มีสิทธิ์เข้าถึง (403 Permission Denied - จำเป็นต้องใช้คีย์ที่เปิดใช้ Veo API)';
   }
   if (str.includes('404') || str.includes('NOT_FOUND')) {
-    return 'ไม่พบโมเดล Google Veo บน API เวอร์ชันนี้ (404 Model Not Found)';
+    return 'ไม่พบโมเดล AI หรือโมเดลนี้ไม่เปิดให้บริการแล้ว (404 Model Not Found)';
   }
   if (str.includes('Internal error') || str.includes('internal error') || str.includes('INTERNAL')) {
     return 'เซิร์ฟเวอร์ Google GenAI เกิดข้อผิดพลาดภายใน (Internal Server Error) หรือชื่อโมเดลไม่ถูกต้อง กรุณาตรวจสอบสถานะ Billing และ API Key';
@@ -1965,48 +1879,7 @@ function processJobInBackground(jobId: string, params: GenerationParams) {
         }
       }
     } catch (err: any) {
-      console.warn(`Error processing job ${jobId} via ${params.provider}, falling back to Mock Simulator:`, err?.message || err);
-      try {
-        const mockAdapter = providerManager.find('mock') || providerManager.list()[0];
-        if (mockAdapter && params.provider !== 'mock') {
-          job.stage = 'กำลังจำลองผลลัพธ์ผ่าน Sala AI Simulator...';
-          jobsStore.set(jobId, job);
-          let mockRes: { outputUrl: string; isMock: boolean };
-          if (params.type === 'video') {
-            mockRes = await mockAdapter.generateVideo(params, jobId, (prog, stage) => {
-              const current = jobsStore.get(jobId);
-              if (current) {
-                current.progress = prog;
-                current.stage = stage;
-                jobsStore.set(jobId, current);
-              }
-            });
-          } else {
-            mockRes = await mockAdapter.generateImage(params, jobId);
-          }
-          job.status = 'completed';
-          job.progress = 100;
-          job.stage = 'สำเร็จสมบูรณ์ (โหมดจำลอง Mock Simulator)';
-          const finalUrl = params.type === 'video' ? `/api/video-stream/${jobId}` : mockRes.outputUrl;
-          job.outputUrl = finalUrl;
-          job.thumbnailUrl = mockRes.outputUrl;
-          job.isMock = true;
-          job.completedAt = new Date().toISOString();
-          jobsStore.set(jobId, job);
-          if (params.projectId && params.sceneId) {
-            const proj = projectsStore.find(p => p.id === params.projectId);
-            const scene = proj?.scenes.find(s => s.id === params.sceneId);
-            if (scene) {
-              scene.status = 'completed';
-              scene.outputJobId = jobId;
-              scene.outputUrl = finalUrl;
-            }
-          }
-          return;
-        }
-      } catch (fallbackErr) {
-        console.error('Mock fallback error:', fallbackErr);
-      }
+      console.error(`Error processing job ${jobId}:`, err);
       job.status = 'failed';
       job.progress = 0;
       job.stage = 'สร้างไม่สำเร็จ (Generation failed)';
@@ -2207,14 +2080,60 @@ CRITICAL CONTINUITY DIRECTIVES (MASTER CONTINUITY LOCK):
 - Action Momentum Continuity: The starting action of Clip N MUST seamlessly and directly continue from the ending frame and momentum of Clip N-1.
 - POSE HANDOFF: For every clip list the characters present and each character's start pose and end pose (posture: standing | sitting | lying | kneeling | walking, plus where, e.g. "at the front door", "on the bench"). The startPoses of Clip N MUST equal the endPoses of Clip N-1 unless the script explicitly says the character moves (stands up, sits down, walks to ...).
 - CHARACTER PRESENCE: A locked character who is in the scene must stay in every following clip until the script says they leave. Put leaving characters in "charactersLeft".
-- LOCATION LOCK: use the same location name and ONE identical lighting description in every clip at that location. Scene headings that are titles or moods (e.g. "อารมณ์เริ่มตึงเครียด", "คืนดีกัน") or "…ต่อเนื่อง" are NOT new locations.
+- LOCATION LOCK & AUTO SCENE ENVIRONMENT:
+  * ดึงค่า "สถานที่" (Location) และ "ช่วงเวลา/สภาพแสง" (Lighting/Time) จากเนื้อเรื่องของฉากนั้นโดยตรง
+  * เมื่อขึ้นฉากใหม่ ให้รีเซ็ตค่าสภาพแวดล้อมเดิมทิ้งทันที ห้ามนำค่าเดิม (เช่น ป่าทึบ/แสงแดด) ข้ามมาใช้ในฉากใหม่ (เช่น ถ้ำโบราณ/กลางคืน)
+  * หัวข้อฉากที่เป็นชื่อตอน/อารมณ์ (เช่น "อารมณ์เริ่มตึงเครียด", "คืนดีกัน") หรือ "…ต่อเนื่อง" ไม่ใช่สถานที่ใหม่ ให้ใช้สถานที่และเวลาของฉากเดิมต่อเนื่อง
 ${buildLockedContinuityContext(continuityLock, characters, locations)}
+
+CRITICAL ORIGINAL DIALOGUE INTEGRITY RULES:
+- ORIGINAL_DIALOGUE_ONLY = true
+- INVENT_DIALOGUE = false
+- NARRATION_TO_DIALOGUE = false
+- Dialogue MUST be extracted from the original script ONLY, verbatim word-for-word.
+- NEVER invent, extrapolate, add, shorten, or alter dialogue lines.
+- If a clip has NO dialogue in the original script, set "dialogues": [] and "dialogue": "NONE". Never create spoken lines!
+- Narration, character action, thoughts, facial expressions, and scene descriptions MUST NEVER be converted to dialogue.
+- Before creating each CLIP, search dialogue from the original story section corresponding to that scene first.
+- If there is dialogue, clearly output character name + exact original line.
+- NEVER use words like "shouting", "yelling", "says", "asks", or "speaks" in generatedPrompt if there is no real dialogue from the original script in that clip.
+
+ACTION & NARRATION RULE:
+- ถ้าบทมี Action/Narration แม้ไม่มีบทพูด ต้องนำ Action/Narration นั้นไปสร้างเป็นเหตุการณ์ใน Prompt ตามลำดับเดิม
+- ตัวอย่าง:
+  บท: "บรรยากาศป่ามืด ฝนตก ฟ้าใสเดินเข้าป่า"
+  Prompt ต้องสื่อเพียงว่า: "ป่ามืด ฝนกำลังตก ฟ้าใสกำลังเดินเข้าป่า"
+- Action/Narration ต้องทำหน้าที่เพียง "บอกสิ่งที่กำลังเกิดขึ้นในช็อตนั้น" เท่านั้น ไม่ให้ไปเปลี่ยนโครงสร้าง Prompt เดิมหรือผสมกับระบบ Lock อื่น
+- ห้ามนำ Action/Narration ไป:
+  * รวมกับบทพูด หรือเปลี่ยนเป็นบทพูด หรือเพิ่มบทพูดใหม่
+  * เปลี่ยนอารมณ์ตัวละครเอง หรือเปลี่ยนท่าทางอื่นที่บทไม่ได้สั่ง
+  * แก้ Character Lock หรือแก้ Location Lock
+  * สร้าง Action เพิ่มเอง
+
+CLIP SPLITTING RULES:
+- ห้ามใช้ 1 Action = 1 Clip เด็ดขาด
+- Action/Narration ที่ต่อเนื่องกันในฉากและสถานที่เดียวกัน ให้รวมอยู่ในคลิปเดียวเท่าที่เวลา ${duration} วินาทีรองรับ (เช่น “หันมอง → เดินเข้าไป → ทำหน้าโมโห → หยิบมีด → ฟันต้นไม้” เป็นเหตุการณ์ต่อเนื่องกันในฉากเดียวกัน ให้รวมอยู่ในคลิปเดียว)
+- ห้ามสร้าง Action เพิ่มเองเพื่อยืดจำนวนคลิป
+- กฎแบ่ง 20 คำให้ทำงานเฉพาะ “บทพูด” ที่เกิน 20 คำเท่านั้น (Action/Narration ห้ามนำไปนับหรือแตกด้วยกฎ 20 คำ)
+- ไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป ให้แบ่งตามเหตุการณ์จริงในบท
+
+DIALOGUE 20-WORD SPLIT PROTOCOL:
+- ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ (Action/Narration ห้ามนำไปนับหรือแตกด้วยกฎ 20 คำ)
+- ห้ามตัดคำกลางประโยคแบบเสียความหมาย
+- ห้ามแก้ ห้ามย่อ ห้ามแต่งบทพูดเพิ่ม และต้องรักษาผู้พูดคนเดิม 100%
+- Action/Narration ก่อนและหลังบทพูดต้องคงตำแหน่งเดิม
+- คลิปถัดไปต้องต่อเนื่องจาก END คลิปก่อนหน้า ทั้งท่าทาง ตำแหน่ง สีหน้า กล้อง ฉาก เวลา และเสียง
+- ถ้าช่วงใดไม่มี Dialogue ให้ใช้ STRICT SILENCE PROTOCOL และห้ามตัวละครพูดเอง
+- [กฎแก้ไขบทพูดซ้ำซ้อน - FIX REDUNDANT DIALOGUE]:
+  * ในคลิปที่ถูกตัดแบ่งบทพูด (Dialogue Split Parts) ให้ลบบทพูดยาวเต็มประโยค (Full Dialogue Text) ออกจากต้นพรอมต์และเนื้อหาพรอมต์
+  * บังคับให้แสดงเฉพาะประโยคย่อยที่ตัดแบ่งแล้ว (Part 1/N) ของคลิปนั้น ๆ เพียงจุดเดียว (ในส่วน Dialogue: เท่านั้น ห้ามใส่บทพูดซ้ำที่ต้นพรอมต์หรือใน Action)
+- ทำซ้ำจนกว่าบทพูดทั้งหมดจะครบ
 
 DIALOGUE LOCK:
 ${sanitizedDialogues.length > 0
   ? `Strictly bind dialogues verbatim to matching clips in Thai. Do NOT change speaker or wording:\n` +
     sanitizedDialogues.map((d: any) => `- [${d.speaker}]: "${d.line}" (Tone: ${d.emotionTone || 'natural'}, Clip: ${d.clipNumber || 'auto'})`).join('\n')
-  : 'If characters speak, output [DIALOGUE_LOCK: Speaker says: "Thai dialogue"] with a real character name'}
+  : 'If no dialogue in original script, set "dialogues": [] and "dialogue": "NONE". Do not invent dialogues.'}
 
 AUDIO DIRECTIVES:
 - Voice: ${audioDirectives?.voice?.enabled ? `Enabled (${audioDirectives.voice.voiceType}, ${audioDirectives.voice.accent}, ${audioDirectives.voice.emotion})` : 'Disabled'}
@@ -2251,7 +2170,7 @@ Respond ONLY with a JSON array containing exactly ${count} objects (no markdown 
 ]`;
 
           const response = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
+            model: 'gemini-3.1-flash-lite',
             contents: promptInstruction,
             config: { responseMimeType: 'application/json' }
           });
@@ -2274,16 +2193,34 @@ Respond ONLY with a JSON array containing exactly ${count} objects (no markdown 
             });
           }
           if (Array.isArray(parsed) && parsed.length > 0) {
-            // Sanitize parsed clips to guarantee no reserved keyword leaks into dialogues or prompts
-            clips = parsed.map((clip: any) => {
+            // Sanitize parsed clips to guarantee original dialogue only, no reserved keywords, and no invented dialogue
+            const initialClips = parsed.map((clip: any) => {
               const safeDialogues = Array.isArray(clip.dialogues)
                 ? clip.dialogues.filter((d: any) => d && d.speaker && !isReservedSystemKeyword(d.speaker))
                 : [];
+              // Preserve camera controls from user's sanitizedDialogues
+              const dialoguesWithCamera = mergeDialogueCameraControls(safeDialogues, sanitizedDialogues);
               return {
                 ...clip,
-                dialogues: safeDialogues
+                dialogues: dialoguesWithCamera
               };
             });
+            const dialogueEnforced = enforceOriginalDialogueOnly(initialClips, scriptText);
+            if (dialogueEnforced.rejectedCount > 0) {
+              console.warn(`[Dialogue Validation] Rejected ${dialogueEnforced.rejectedCount} invented dialogue line(s) from Gemini. Auto-regenerating clips from source script...`);
+              clips = buildSalaMultiClipPrompts({
+                scriptText,
+                clipDurationSeconds: duration,
+                clipCount: count,
+                continuityLock,
+                dialogues: sanitizedDialogues,
+                locations: libraryLocs,
+                knownCharacters: lockedNames,
+                audioDirectives
+              });
+            } else {
+              clips = dialogueEnforced.clips;
+            }
           }
         }
       } catch (geminiErr: any) {
@@ -2337,7 +2274,14 @@ Respond ONLY with a JSON array containing exactly ${count} objects (no markdown 
     // Library is the source of truth for the set too: Gemini's Location / Setting / Environment text is
     // replaced by the verbatim library description + reference photo line, Atmosphere rebuilt from the lock
     clips = enforceLibraryLocationLocks(clips, libraryLocs, { ...locationLockOpts, rebuildAtmosphere: true });
-    const validation = validateSalaMultiClipPrompts(clips, lockedNames);
+    // Final check: strictly enforce original dialogue only (reject invented/narration dialogues)
+    clips = enforceOriginalDialogueOnly(clips, scriptText).clips;
+
+    // Apply DIALOGUE 20-WORD SPLIT SYSTEM (ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ)
+    const splitResult = applyDialogue20WordSplitToClips(clips, duration);
+    clips = splitResult.clips;
+
+    const validation = validateSalaMultiClipPrompts(clips, lockedNames, scriptText);
 
     return res.json({
       success: true,
@@ -2366,11 +2310,17 @@ app.post('/api/director/regenerate-single-clip', requireAuth, async (req: any, r
       nextClipStartAction = '',
       continuityLock = {},
       dialogues = [],
-      audioDirectives = {}
+      audioDirectives = {},
+      scriptText = ''
     } = req.body;
 
+    const quotes = scriptText ? extractVerbatimScriptQuotes(scriptText) : null;
     const safeDialogues = Array.isArray(dialogues)
-      ? dialogues.filter((d: any) => d && d.speaker && !isReservedSystemKeyword(d.speaker))
+      ? dialogues.filter((d: any) => {
+          if (!d || !d.speaker || isReservedSystemKeyword(d.speaker)) return false;
+          if (quotes && !isVerbatimDialogueInScript(d.line, scriptText, quotes)) return false;
+          return true;
+        })
       : [];
 
     const charName = continuityLock.characterName || '';
@@ -2393,9 +2343,8 @@ app.post('/api/director/regenerate-single-clip', requireAuth, async (req: any, r
       ? `${charName ? `${charName} ` : ''}กำลังเคลื่อนไหวอย่างมีทิศทาง ส่งต่อมุมกล้องและโมเมนตัมไปยังคลิปที่ ${clipNumber + 1}`
       : `${charName ? `${charName} ` : ''}สิ้นสุดการกระทำในฉากอย่างสมบูรณ์ กล้อง Cinematic Fade Out`;
 
-    const dialogueSnippet = safeDialogues.length > 0
-      ? safeDialogues.map((d: any) => `[DIALOGUE_LOCK: ${d.speaker} says in Thai ("${d.line}"), emotion: ${d.emotionTone || 'focused'}]`).join(', ')
-      : '';
+    const mergedDialogues = mergeDialogueCameraControls(safeDialogues, dialogues);
+    const hasManual = hasManualCameraAngles(mergedDialogues);
 
     const audioSnippets = [];
     if (audioDirectives?.voice?.enabled) audioSnippets.push(`Voice: ${audioDirectives.voice.voiceType}`);
@@ -2414,20 +2363,35 @@ app.post('/api/director/regenerate-single-clip', requireAuth, async (req: any, r
     if (props) lockParts.push(`Props: ${props}`);
 
     const masterLockSnippet = lockParts.length > 0 ? `[MASTER CONTINUITY LOCK: ${lockParts.join(', ')}] ` : '';
+    const cameraSection = hasManual ? '' : `Camera: ${cameraMovement}, ${lensType}. `;
 
-    const generatedPrompt = `${masterLockSnippet}[SCENE ${clipNumber}/${totalClips} - DURATION ${durationSeconds}s]: ${startAction}. Core action: ${sceneSummary}. Camera: ${cameraMovement}, ${lensType}. ${dialogueSnippet ? dialogueSnippet + '.' : ''} Outro momentum: ${endAction}. [AV Directives: ${audioDirectiveSummary}]. Ultra-consistent visual identity.`;
+    const formattedDialogue = mergedDialogues.length > 0
+      ? formatDialogueWithCameraControl(mergedDialogues, [charName].filter(Boolean), location || 'เดิม')
+      : '';
+    const dialogueBlock = formattedDialogue ? `Dialogue:\n${formattedDialogue}. ` : '';
+
+    let generatedPrompt = `${masterLockSnippet}[SCENE ${clipNumber}/${totalClips} - DURATION ${durationSeconds}s]: ${startAction}. Core action: ${sceneSummary}. ${cameraSection}${dialogueBlock}Outro momentum: ${endAction}. [AV Directives: ${audioDirectiveSummary}]. Ultra-consistent visual identity.`;
+    if (hasManual) {
+      generatedPrompt = stripAutoCameraPhrases(generatedPrompt);
+    }
+    if (mergedDialogues.length === 0) {
+      generatedPrompt = stripProhibitedSpeechWords(generatedPrompt);
+    }
 
     res.json({
       success: true,
       clip: {
         clipNumber,
-        title: `คลิปที่ ${clipNumber} (สร้างใหม่)`,
+        title: `Clip ${clipNumber}`,
         durationSeconds,
         sceneSummary,
         startAction,
         endAction,
-        dialogues: safeDialogues,
-        continuityLockSummary: `ล็อค: ${charName || 'ตัวละคร'}, ${location || 'สถานที่'}, ${timeOfDay || 'เวลา'}, ${lighting || 'แสง'}, ${aspectRatio}`,
+        characterPositions: continuityLock.characterPosition || 'ตำแหน่งตัวละครล็อคสอดคล้องต่อเนื่อง',
+        dialogues: mergedDialogues,
+        dialogue: mergedDialogues.length > 0 ? mergedDialogues.map((d: any) => `${d.speaker}: "${d.line}"`).join(' ') : 'NONE',
+        locationName: location || undefined,
+        continuityLockSummary: [charName ? `Character: ${charName}` : '', location ? `Location: ${location}` : '', timeOfDay, lighting].filter(Boolean).join(' | ') || 'Continuity Locked',
         audioDirectiveSummary,
         generatedPrompt,
         negativePrompt: 'blurry, morphing face, inconsistent outfit, extra limbs, bad anatomy, text watermark, sudden jumpcut'
@@ -2562,20 +2526,52 @@ app.post('/api/script/split', async (req: express.Request, res: express.Response
 - ห้ามได้ Scene 1 ซ้ำสองครั้ง
 - ห้ามทำ Scene 3 หาย
 
-4. [Dialogue ต้องอยู่ใน Scene และมีเครื่องหมายคำพูด]:
-- Dialogue จะถือว่าเป็นบทพูดได้ต่อเมื่อ:
-  a) อยู่ภายใน Scene
-  b) ผู้พูด (speaker) เป็นชื่อตัวละครที่ประกาศไว้จริง
-  c) มีรูปแบบ CharacterName: "ข้อความ" (หรือ 'ข้อความ')
-- ห้ามเอา Character Description, Title, Scene Description, หรือคำว่า END มาเป็น Dialogue เด็ดขาด
+4. [กฎเหล็ก ORIGINAL_DIALOGUE_ONLY]:
+- ORIGINAL_DIALOGUE_ONLY = true
+- INVENT_DIALOGUE = false
+- NARRATION_TO_DIALOGUE = false
+- Dialogue ต้องดึงจากบทต้นฉบับเท่านั้น แบบคำต่อคำ (Verbatim) ห้าม AI แต่ง เพิ่ม ย่อ เปลี่ยน หรือเดาบทพูดเองเด็ดขาด
+- ถ้าฉากนั้นไม่มีบทพูดในต้นฉบับ ให้กำหนด dialogue = "NONE" และ dialogues = [] ห้ามสร้างคำพูดขึ้นมาเองเด็ดขาด
+- ข้อความบรรยาย การกระทำ ความคิด สีหน้า และคำบรรยายฉาก ห้ามแปลงเป็นบทพูดเด็ดขาด
+- ก่อนสร้างแต่ละฉาก ให้ค้นหาบทพูดจากช่วงเนื้อเรื่องต้นฉบับที่ตรงกับฉากนั้นก่อนเสมอ
+- ถ้ามีบทพูด ให้ระบุชื่อตัวละคร + ประโยคต้นฉบับชัดเจน
+- ห้ามใช้คำเช่น shouting, yelling, says, asks หรือ speaks ใน prompt หรือ action ถ้าไม่มี dialogue จริงจากต้นฉบับ
 
 5. [กฎเหล็กคำสงวนระบบ RESERVED KEYWORDS]:
 คำต่อไปนี้เป็นคำสั่งระบบ ห้ามนำมาเป็นชื่อตัวละครหรือผู้พูดเด็ดขาด:
 LOCK, CONT, FRAME, AUTO, RULE, NO, OUT, STORY, CHARACTERS, END, SALA_MULTI_CLIP
 
-6. [LOCKED CONTINUITY CONTEXT]:
+6. [LOCKED CONTINUITY & AUTO SCENE ENVIRONMENT]:
 ถ้ามีตัวละคร/สถานที่ที่ผู้ใช้ล็อคไว้ ต้องใช้ชื่อ รูปลักษณ์ ชุด สถานที่ เวลา และแสงตามที่ล็อคในทุกฉาก ห้ามเปลี่ยนหรือแต่งเพิ่ม
-หัวข้อฉากที่เป็นชื่อตอน/อารมณ์ (เช่น "อารมณ์เริ่มตึงเครียด", "คืนดีกัน") หรือ "…ต่อเนื่อง" ไม่ใช่สถานที่ ให้ใช้สถานที่และเวลาของฉากก่อนหน้า
+- ดึงค่า "สถานที่" (Location) และ "ช่วงเวลา/สภาพแสง" (Lighting/Time) จากเนื้อเรื่องของฉากนั้นโดยตรง
+- เมื่อขึ้นฉากใหม่ ให้รีเซ็ตค่าสภาพแวดล้อมเดิมทิ้งทันที ห้ามนำค่าเดิม (เช่น ป่าทึบ/แสงแดด) ข้ามมาใช้ในฉากใหม่ (เช่น ถ้ำโบราณ/กลางคืน)
+- หัวข้อฉากที่เป็นชื่อตอน/อารมณ์ (เช่น "อารมณ์เริ่มตึงเครียด", "คืนดีกัน") หรือ "…ต่อเนื่อง" ไม่ใช่สถานที่ใหม่ ให้ใช้สถานที่และเวลาของฉากเดิมต่อเนื่อง
+
+7. [กฎการสร้างเหตุการณ์จาก Action/Narration และการรวมคลิป]:
+- ถ้าบทมี Action/Narration แม้ไม่มีบทพูด ต้องนำ Action/Narration นั้นไปสร้างเป็นเหตุการณ์ใน Prompt ตามลำดับเดิม
+- ตัวอย่าง: บท "บรรยากาศป่ามืด ฝนตก ฟ้าใสเดินเข้าป่า" -> นำเสนอเหตุการณ์ "ป่ามืด ฝนกำลังตก ฟ้าใสกำลังเดินเข้าป่า"
+- Action/Narration ต้องทำหน้าที่เพียง "บอกสิ่งที่กำลังเกิดขึ้นในช็อตนั้น" เท่านั้น ไม่ให้ไปเปลี่ยนโครงสร้าง Prompt เดิมหรือผสมกับระบบ Lock อื่น
+- ห้ามนำ Action/Narration ไป:
+  * รวมกับบทพูด หรือเปลี่ยนเป็นบทพูด หรือเพิ่มบทพูดใหม่
+  * เปลี่ยนอารมณ์ตัวละครเอง หรือเปลี่ยนท่าทางอื่นที่บทไม่ได้สั่ง
+  * แก้ Character Lock หรือแก้ Location Lock
+  * สร้าง Action เพิ่มเอง
+- [กฎการแบ่งคลิปอัตโนมัติ]:
+  * ห้ามใช้ 1 Action = 1 Clip เด็ดขาด
+  * Action/Narration ที่ต่อเนื่องกันในฉากและสถานที่เดียวกัน ให้รวมอยู่ในคลิปเดียวเท่าที่เวลา 10 วินาทีรองรับ (เช่น “หันมอง → เดินเข้าไป → ทำหน้าโมโห → หยิบมีด → ฟันต้นไม้” เป็นเหตุการณ์ต่อเนื่องกันในฉากเดียวกัน ให้รวมอยู่ในคลิปเดียว)
+  * ห้ามสร้าง Action เพิ่มเองเพื่อยืดจำนวนคลิป
+  * กฎแบ่ง 20 คำให้ทำงานเฉพาะ “บทพูด” ที่เกิน 20 คำเท่านั้น (Action/Narration ห้ามนำไปนับหรือแตกด้วยกฎ 20 คำ)
+  * ไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป (ถ้าบทมีเพียง 1 หรือ 2 คลิป ให้แบ่งตามเนื้อเรื่องจริง ไม่ต้องยืดเป็น 5-6 คลิป)
+
+8. [ระบบ DIALOGUE 20-WORD SPLIT & FIX REDUNDANT DIALOGUE]:
+- ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ (Action/Narration ห้ามนำไปนับหรือแตกด้วยกฎ 20 คำ)
+- ห้ามตัดคำกลางประโยคแบบเสียความหมาย
+- ห้ามแก้ ห้ามย่อ ห้ามแต่งบทพูดเพิ่ม และต้องรักษาผู้พูดคนเดิม 100%
+- Action/Narration ก่อนและหลังบทพูดต้องคงตำแหน่งเดิม
+- คลิปถัดไปต้องต่อเนื่องจาก END คลิปก่อนหน้า ทั้งท่าทาง ตำแหน่ง สีหน้า กล้อง ฉาก เวลา และเสียง
+- ถ้าช่วงใดไม่มี Dialogue ให้ใช้ STRICT SILENCE PROTOCOL และห้ามตัวละครพูดเอง
+- [กฎแก้ไขบทพูดซ้ำซ้อน]: ในคลิปที่ถูกตัดแบ่งบทพูด (Dialogue Split Parts) ให้ลบบทพูดยาวเต็มประโยค (Full Dialogue Text) ออกจากต้นพรอมต์และเนื้อหาพรอมต์ บังคับให้แสดงเฉพาะประโยคย่อยที่ตัดแบ่งแล้ว (Part 1/N) ของคลิปนั้น ๆ เพียงจุดเดียว (ในส่วน Dialogue: เท่านั้น ห้ามใส่บทพูดซ้ำที่ต้นพรอมต์หรือใน Action)
+- ทำซ้ำจนกว่าบทพูดทั้งหมดจะครบ
 
 ส่งผลลัพธ์เป็น JSON ล้วน (valid JSON format) เท่านั้น ห้ามใส่ markdown code block หรือคำอธิบายเสริม`;
 
@@ -2584,7 +2580,7 @@ LOCK, CONT, FRAME, AUTO, RULE, NO, OUT, STORY, CHARACTERS, END, SALA_MULTI_CLIP
 ${scriptText.trim()}
 """
 
-${clipCount ? `ต้องการให้แบ่งออกเป็นประมาณ ${clipCount} ฉาก/คลิปต่อเนื่องกัน` : 'ให้แบ่งฉากตามโครงเรื่องจริงที่ระบุไว้ในบท'}
+${clipCount ? `ต้องการให้แบ่งออกเป็นประมาณ ${clipCount} ฉาก/คลิปต่อเนื่องกัน (ไม่ต้องกำหนดขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip)` : 'ให้แบ่งฉากตามโครงเรื่องจริงที่ระบุไว้ในบท โดยไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip รวม Action ต่อเนื่องในฉากเดียวกันไว้ในคลิปเดียว'}
 ${lockedContext}
 
 โครงสร้าง JSON ที่ต้องส่งกลับ (JSON format strictly):
@@ -2609,7 +2605,14 @@ ${lockedContext}
       "camera": "มุมกล้องและการเคลื่อนไหว",
       "characters": ["ชื่อตัวละคร"],
       "action": "การกระทำของตัวละครในฉาก",
-      "dialogue": "บทพูดในฉากนี้ (ถ้ามี)",
+      "dialogue": "บทพูดในฉากนี้ (ถ้าไม่มีให้ระบุ NONE)",
+      "actionNarrationLock": {
+        "action": "การกระทำตามลำดับบท",
+        "movement": "การเคลื่อนไหว",
+        "emotionExpression": "อารมณ์/การแสดงออกทางสีหน้า",
+        "narration": "คำบรรยาย",
+        "isSilent": true
+      },
       "prompt": "Prompt คุณภาพสูงสำหรับสร้างภาพหรือวิดีโอของฉากนี้"
     }
   ],
@@ -2634,7 +2637,7 @@ ${lockedContext}
 }`;
 
         const response = await ai.models.generateContent({
-          model: 'gemini-3.6-flash',
+          model: 'gemini-3.1-flash-lite',
           contents: userPrompt,
           config: {
             systemInstruction,
@@ -2666,7 +2669,7 @@ ${lockedContext}
           parsed.characters = parsed.characters.filter((c: any) => c && c.name && !isReservedSystemKeyword(c.name) && !isMetadataKeyword(c.name));
         }
 
-        // Sanitize dialogues
+        // Sanitize dialogues: strictly enforce original dialogue only (reject invented/narration dialogues)
         const validCharNames = new Set((parsed.characters || []).map((c: any) => c.name.toLowerCase()));
         if (Array.isArray(parsed.dialogues)) {
           parsed.dialogues = parsed.dialogues.filter((d: any) => {
@@ -2674,6 +2677,8 @@ ${lockedContext}
             if (isReservedSystemKeyword(d.speaker) || isMetadataKeyword(d.speaker)) return false;
             if (validCharNames.size > 0 && !validCharNames.has(d.speaker.toLowerCase())) return false;
             if (parsed.characters?.some((c: any) => c.description && d.line.includes(c.description))) return false;
+            // Rule 1 & 2 & 4: Must be verbatim in original script
+            if (!isVerbatimDialogueInScript(d.line, scriptText)) return false;
             return true;
           });
         }
@@ -2698,7 +2703,19 @@ ${lockedContext}
               s.title = `ฉากที่ ${idx + 1}`;
             }
 
-            const sceneText = `${s.title || ''} ${s.action || ''} ${s.dialogue || ''}`;
+            // Ensure dialogue for this scene: verbatim if present, otherwise "NONE"
+            const matchingDiags = (parsed.dialogues || []).filter((d: any) => d.sceneNumber === idx + 1 || (s.dialogue && s.dialogue.includes(d.line)));
+            if (matchingDiags.length > 0) {
+              s.dialogue = matchingDiags.map((d: any) => `${d.speaker}: "${d.line}"`).join(' ');
+            } else if (s.dialogue && isVerbatimDialogueInScript(s.dialogue, scriptText)) {
+              // Verbatim dialogue kept
+            } else {
+              s.dialogue = 'NONE';
+              if (s.prompt) s.prompt = stripProhibitedSpeechWords(s.prompt);
+              if (s.action) s.action = stripProhibitedSpeechWords(s.action);
+            }
+
+            const sceneText = `${s.title || ''} ${s.action || ''} ${s.dialogue !== 'NONE' ? s.dialogue : ''}`;
             const mentioned = allDeclaredNames.filter((name: string) => {
               const firstName = name.split(' ')[0];
               return sceneText.includes(name) || (firstName.length >= 2 && sceneText.includes(firstName));
@@ -2720,10 +2737,19 @@ ${lockedContext}
         }
         splitCombinedCharactersInSplit(parsed);
 
+        const splitData = applySplitLocks(parsed, continuityLock, { characters: libChars, scriptText });
         return res.json({
           success: true,
           source: 'gemini-flash',
-          data: applySplitLocks(parsed, continuityLock, { characters: libChars, scriptText })
+          ORIGINAL_DIALOGUE_ONLY: true,
+          INVENT_DIALOGUE: false,
+          NARRATION_TO_DIALOGUE: false,
+          data: {
+            ...splitData,
+            ORIGINAL_DIALOGUE_ONLY: true,
+            INVENT_DIALOGUE: false,
+            NARRATION_TO_DIALOGUE: false
+          }
         });
       } catch (geminiErr: any) {
         const reason = formatGenAIError(geminiErr);
@@ -2745,7 +2771,8 @@ ${lockedContext}
 });
 
 // 6.2.1.B AI Story Continuation / Progressive Episodic Scene Generator Endpoint
-app.post('/api/story/continue', async (req: express.Request, res: express.Response) => {
+app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Request, res: express.Response) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try {
     const {
       originalStory,
@@ -2776,13 +2803,15 @@ app.post('/api/story/continue', async (req: express.Request, res: express.Respon
       ? reqEpisodeNumber
       : (existingCount === 0 ? 1 : Math.max(1, Math.floor(existingCount / 5) + 1));
 
-    const scenesPerEpisode = Math.max(5, Math.min(6, targetSceneCount || 5));
+    // Declared / parsed characters (used to normalize speakers and pick the Character Lock)
+    const parsedSource = parseStoryStructure(originalStory);
+    const scenesPerEpisode = targetSceneCount && targetSceneCount > 0
+      ? targetSceneCount
+      : (parsedSource.hasSceneHeaders && parsedSource.scenes.length > 0 ? parsedSource.scenes.length : 5);
     const startSceneNum = effectiveLastScene?.sceneNumber ? effectiveLastScene.sceneNumber + 1 : (existingCount > 0 ? existingCount + 1 : 1);
 
     const offline = req.body?.offline === true;
 
-    // Declared / parsed characters (used to normalize speakers and pick the Character Lock)
-    const parsedSource = parseStoryStructure(originalStory);
     const declaredNames = Array.from(new Set([
       ...parsedSource.characters.map(c => c.name),
       ...(Array.isArray(characters)
@@ -2827,29 +2856,58 @@ app.post('/api/story/continue', async (req: express.Request, res: express.Respon
 *** กฎเหล็กบังคับเข้มงวดสูงสุด (STRICT EPISODIC & CONTINUITY PROTOCOL) ***:
 
 1. [จำเนื้อเรื่องต้นฉบับทั้งหมด และห้ามสรุปเรื่องทั้งหมดในตอนเดียว (SOURCE OF TRUTH & EPISODIC PACING)]:
-   - ผู้ใช้วางเนื้อเรื่องเต็มครั้งเดียวในช่อง Story แล้วระบบต้องจัดการแบ่งตอนและฉากต่อเนื่องเองจนจบ
+   - ผู้ใช้วางเนื้อเรื่องเต็มครั้งเดียวในช่องเนื้อเรื่องเต็มหน้าแรก แล้วระบบต้องจัดการแบ่งตอนและฉากต่อเนื่องเองจนจบ
    - สำหรับ "ตอนที่ 1" ให้สร้างจากช่วงต้นเรื่องเท่านั้น (ห้ามสรุปเรื่องทั้งหมดในตอนเดียวเด็ดขาด! เจาะลึกเฉพาะเหตุการณ์ช่วงเปิดเรื่อง)
    - สำหรับ "ตอนต่อไป (ตอนที่ 2, 3...)" ให้อ่าน story เดิมและ state ล่าสุดแล้วสร้างตอนถัดไปต่อจากจุดเดิมทันที ไม่รีเซ็ต ไม่กระโดด ไม่จบเอง
-   - แต่ละตอนต้องมีความยาวพอสำหรับ 5-6 ฉาก (โดยเฉลี่ยฉากละประมาณ ${clipDurationSeconds} วินาที)
+   - ให้แบ่งฉากตามเหตุการณ์จริง ไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป
+   - ห้ามใช้ 1 Action = 1 Clip และ Action/Narration ที่ต่อเนื่องกันในฉากและสถานที่เดียวกัน ให้รวมอยู่ในคลิปเดียวเท่าที่เวลา ${clipDurationSeconds} วินาทีรองรับ
+   - ห้ามสร้าง Action เพิ่มเองเพื่อยืดจำนวนคลิป
+   - กฎแบ่ง 20 คำให้ทำงานเฉพาะ “บทพูด” ที่เกิน 20 คำเท่านั้น (Action/Narration ห้ามนำไปนับหรือแตกด้วยกฎ 20 คำ)
 
-2. [กฎเหล็กความต่อเนื่อง: END scene ของฉากก่อน ต้องเป็น START scene ของฉากถัดไปทุกครั้ง]:
+2. [กฎการสร้างเหตุการณ์จาก Action/Narration]:
+   - ถ้าบทมี Action/Narration แม้ไม่มีบทพูด ต้องนำ Action/Narration นั้นไปสร้างเป็นเหตุการณ์ใน Prompt ตามลำดับเดิม
+   - Action/Narration ต้องทำหน้าที่เพียง "บอกสิ่งที่กำลังเกิดขึ้นในช็อตนั้น" เท่านั้น ไม่ให้ไปเปลี่ยนโครงสร้าง Prompt เดิมหรือผสมกับระบบ Lock อื่น
+   - ห้ามนำ Action/Narration ไป:
+     * รวมกับบทพูด หรือเปลี่ยนเป็นบทพูด หรือเพิ่มบทพูดใหม่
+     * เปลี่ยนอารมณ์ตัวละครเอง หรือเปลี่ยนท่าทางอื่นที่บทไม่ได้สั่ง
+     * แก้ Character Lock หรือแก้ Location Lock
+     * สร้าง Action เพิ่มเอง
+   - หากในเนื้อเรื่องต้นฉบับมีบทพูด ให้ใช้บทพูดตามต้นฉบับตรงเป๊ะ ห้ามแปลงหรือแต่งเติมถ้อยคำ
+
+3. [ระบบ DIALOGUE 20-WORD SPLIT & FIX REDUNDANT DIALOGUE]:
+   - ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ
+   - ห้ามตัดคำกลางประโยคแบบเสียความหมาย
+   - ห้ามแก้ ห้ามย่อ ห้ามแต่งบทพูดเพิ่ม และต้องรักษาผู้พูดคนเดิม 100%
+   - Action/Narration ก่อนและหลังบทพูดต้องคงตำแหน่งเดิม
+   - คลิปถัดไปต้องต่อเนื่องจาก END คลิปก่อนหน้า ทั้งท่าทาง ตำแหน่ง สีหน้า กล้อง ฉาก เวลา และเสียง
+   - ถ้าช่วงใดไม่มี Dialogue ให้ใช้ STRICT SILENCE PROTOCOL และห้ามตัวละครพูดเอง
+   - [กฎแก้ไขบทพูดซ้ำซ้อน]: ในคลิปที่ถูกตัดแบ่งบทพูด (Dialogue Split Parts) ให้ลบบทพูดยาวเต็มประโยค (Full Dialogue Text) ออกจากต้นพรอมต์และเนื้อหาพรอมต์ บังคับให้แสดงเฉพาะประโยคย่อยที่ตัดแบ่งแล้ว (Part 1/N) ของคลิปนั้น ๆ เพียงจุดเดียว (ในส่วน Dialogue: เท่านั้น ห้ามใส่บทพูดซ้ำที่ต้นพรอมต์หรือใน Action)
+   - ทำซ้ำจนกว่าบทพูดทั้งหมดจะครบ
+
+4. [ล็อกสถานที่และแสงอัตโนมัติตามเนื้อเรื่อง (AUTO SCENE ENVIRONMENT)]:
+   - ดึงค่า "สถานที่" (Location) และ "ช่วงเวลา/สภาพแสง" (Lighting/Time) จากเนื้อเรื่องของฉากนั้นโดยตรง
+   - เมื่อขึ้นฉากใหม่ ให้รีเซ็ตค่าสภาพแวดล้อมเดิมทิ้งทันที ห้ามนำค่าเดิม (เช่น ป่าทึบ/แสงแดด) ข้ามมาใช้ในฉากใหม่ (เช่น ถ้ำโบราณ/กลางคืน)
+   - ในสถานที่เดียวกัน ให้ Story เดินเรื่องต่อเนื่องจนหมดช่วงเหตุการณ์นั้น ไม่จำกัดจำนวนคลิป
+   - เมื่อเนื้อเรื่องกำลังเปลี่ยนไปสถานที่ใหม่ ให้หยุดทันที ห้ามดึงฉากถัดไปเอง รอผู้ใช้กด "เดินเรื่องต่อไป"
+
+4. [กฎเหล็กความต่อเนื่อง: END scene ของฉากก่อน ต้องเป็น START scene ของฉากถัดไปทุกครั้ง]:
    - "startAction" ของฉากใหม่ทุกฉาก ต้องรับและเชื่อมต่อจาก "endAction" ของฉากก่อนหน้าอย่างไร้รอยต่อ
    - ฉากที่ 1 ของตอนใหม่ ต้องรับและสืบเนื่องต่อจาก "endAction" ของฉากสุดท้ายจากตอนก่อนหน้า (${effectiveLastScene?.endAction || 'จุดเปิดเรื่อง'})
 
-3. [กฎเหล็กล็อคตำแหน่งตัวละคร (SPATIAL POSITION LOCK)]:
+5. [กฎเหล็กล็อคตำแหน่งตัวละคร (SPATIAL POSITION LOCK)]:
    - ตำแหน่งตัวละครในฉาก เช่น "พี่ทุยอยู่ซ้ายเสา, น้องน้ำอยู่ขวาเสา" ต้องถูกระบุอย่างชัดเจนใน characterPositions
    - ตำแหน่งนี้ต้องถูกล็อคและต่อเนื่องเข้าไปในฉากถัดไป ห้ามสลับฝั่งหรือกระโดดตำแหน่งโดยไม่มีการเคลื่อนไหวต่อเนื่อง
 
-4. [กฎเหล็กการแสดงผลทุกฉาก (CHARACTER LOCK & CONTINUITY PROMPT)]:
-   - ทุกฉากต้องระบุ Character Lock (ชื่อตัวละคร รูปลักษณ์ เสื้อผ้า)
+6. [กฎเหล็กการแสดงผลทุกฉาก (CHARACTER LOCK & CONTINUITY PROMPT)]:
+   - ไม่ต้องสร้างหรือดึงข้อมูล Character Lock จากช่องเนื้อเรื่องเต็มนี้ ให้ใช้เฉพาะข้อมูล Character Lock ที่มีอยู่แล้วในระบบ
    - ทุกฉากต้องสร้าง Continuity Prompt คุณภาพสูงระดับ Cinematic 8K เป็นภาษาอังกฤษ สำหรับนำไปสร้างวิดีโอ 10 วินาที พร้อมระบุ Character Lock, Spatial Positioning, Starting Moment จาก END ฉากก่อน, Core Action, และ Ending Momentum
 
-5. [กฎเหล็กการตรวจสอบจุดสิ้นสุดของเนื้อเรื่อง (STORY COMPLETION DETECTION)]:
+7. [กฎเหล็กการตรวจสอบจุดสิ้นสุดของเนื้อเรื่อง (STORY COMPLETION DETECTION)]:
    - ห้ามขึ้นว่าจบเด็ดขาดจนกว่าจะเจอคำว่า "จบเรื่อง", "จบบริบูรณ์", "จบฉาก", "ตอนจบ", "จบ", "-จบ-", "THE END" ในช่วงท้าย (ฉากสุดท้าย) ของเนื้อเรื่องเต็มเท่านั้น
    - หากในเนื้อเรื่องต้นฉบับไม่มีคำระบุจุดจบชัดเจนเหล่านี้ ห้ามตอบ isStoryFinished: true เด็ดขาด
    - ห้ามตอบ isStoryFinished: true ถ้ายังเหลือเหตุการณ์ในต้นฉบับที่ยังไม่ได้เขียน (ตอนที่ 1 จบได้เฉพาะเมื่อครอบคลุมเรื่องทั้งหมดแล้ว)
 
-6. [โครงสร้าง JSON ที่ต้องส่งกลับ (valid JSON format เท่านั้น)]:
+8. [โครงสร้าง JSON ที่ต้องส่งกลับ (valid JSON format เท่านั้น)]:
 {
   "isStoryFinished": boolean,
   "finishMessage": string,
@@ -2868,13 +2926,13 @@ app.post('/api/story/continue', async (req: express.Request, res: express.Respon
   "timeOfDay": "เวลา",
   "characters": ["ชื่อตัวละคร"],
   "characterPositions": "ตำแหน่งตัวละคร เช่น พี่ทุยอยู่ซ้ายเสา, น้องน้ำอยู่ขวาเสา",
-  "actionDescription": "คำอธิบายภาพ การกระทำ และ Subtext",
+  "actionDescription": "คำอธิบายภาพ การกระทำจริงของตัวละครและ Subtext (ห้ามเป็นเสียงบรรยาย)",
   "startAction": "จุดเริ่มต้นฉาก รับช่วงต่อจาก endAction ของฉากก่อนหน้า",
   "dialogues": [
     {
       "speaker": "ชื่อตัวละคร",
       "emotionOrAction": "สีหน้า/อารมณ์/อากัปกิริยาขณะพูด เช่น (สบตาตรงๆ นิ่งสุขุม)",
-      "dialogue": "ข้อความบทพูดตรงตามอารมณ์เรื่อง"
+      "dialogue": "ข้อความบทพูดตรงตามต้นฉบับ"
     }
   ],
   "endState": "จุดจบของฉาก ส่งต่อโมเมนตัมสู่ฉากถัดไป",
@@ -2891,25 +2949,31 @@ ${originalStory.trim()}
 
 [เป้าหมายการสร้าง]:
 - สร้าง "ตอนที่ ${episodeNumber}"
-- ความยาวสำหรับ ${scenesPerEpisode} ฉากต่อเนื่องกัน (ฉากละประมาณ ${clipDurationSeconds} วินาที)
+- ความยาวตามเหตุการณ์จริง (ฉากละประมาณ ${clipDurationSeconds} วินาที ไม่ต้องกำหนดขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip)
 ${episodeNumber === 1 ? '- สำคัญมาก: ตอนที่ 1 ให้สร้างจากช่วงต้นเรื่องเท่านั้น ห้ามสรุปเรื่องทั้งหมดในตอนเดียว' : `- สร้างตอนที่ ${episodeNumber} ต่อจากจุดจบของตอนก่อนหน้าทันที ไม่รีเซ็ต ไม่กระโดด`}
 
 [สถานะล่าสุดของฉากสุดท้ายก่อนหน้านี้ (LAST_SCENE_STATE)]:
 ${JSON.stringify(effectiveLastScene || 'เริ่มตอนที่ 1 ฉากแรก (ยังไม่มีฉากก่อนหน้า)', null, 2)}
 
-[ตัวละครที่ล็อคไว้]:
-${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(characters) ? characters : [], parseScriptCharacterList(originalStory)).profiles.map(p => ({ name: p.name, face: p.face || undefined, hair: p.hair || undefined, outfit: p.outfit || undefined, appearance: p.appearance || undefined, personality: p.personality || undefined, characterLock: formatCharacterAppearanceLock(p) })), null, 2)}
+[ตัวละครที่ล็อคไว้ (ใช้เฉพาะตัวละครเดิมที่มีในระบบ ห้ามสร้างใหม่จากเนื้อเรื่องเต็ม)]:
+${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(characters) ? characters : [], []).profiles.map(p => ({ name: p.name, face: p.face || undefined, hair: p.hair || undefined, outfit: p.outfit || undefined, appearance: p.appearance || undefined, personality: p.personality || undefined, characterLock: formatCharacterAppearanceLock(p) })), null, 2)}
 
 คำสั่งบังคับเข้มงวด:
-1. เขียนบท "ตอนที่ ${episodeNumber}" ออกมาเป็น ${scenesPerEpisode} ฉาก (เริ่มต้นที่ฉากที่ ${startSceneNum})
+1. เขียนบท "ตอนที่ ${episodeNumber}" ออกมาตามเนื้อเรื่องจริง (เริ่มต้นที่ฉากที่ ${startSceneNum}) โดยไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip รวม Action ที่ต่อเนื่องกันในฉากเดียวกันไว้ในคลิปเดียว
 2. END scene ของฉากก่อน ต้องเป็น START scene ของฉากถัดไปทุกครั้ง
-3. ล็อคตำแหน่งตัวละคร (เช่น พี่ทุยอยู่ซ้ายเสา, น้องน้ำอยู่ขวาเสา) ให้ต่อเนื่องในทุกฉาก
-4. จัดเตรียม episodeScriptText สำหรับวางลงช่อง "วางบทหรือฉากหลายฉาก" อัตโนมัติ
-5. ห้ามสรุปว่าจบเรื่องเด็ดขาด เว้นแต่จะเจอคำว่า "จบเรื่อง", "จบบริบูรณ์", "จบฉาก", "ตอนจบ", "จบ", "-จบ-", "THE END" ในฉากสุดท้าย/บรรทัดท้ายของเนื้อเรื่องต้นฉบับ
-6. ตั้งค่า "sourceCovered": true เฉพาะเมื่อตอนนี้ครอบคลุมเหตุการณ์สุดท้ายของเนื้อเรื่องต้นฉบับแล้ว (ไม่มีเหตุการณ์เหลือให้สร้างตอนต่อไป) มิฉะนั้นให้เป็น false
-7. หัวข้อฉากที่เป็นชื่อตอน/อารมณ์ (เช่น "อารมณ์เริ่มตึงเครียด", "คืนดีกัน") หรือ "หน้าบ้านต่อเนื่อง" ไม่ใช่สถานที่: "location" ต้องเป็นสถานที่จริงของฉากก่อนหน้า (เช่น "หน้าบ้าน") และ "timeOfDay" เดิม
-8. ท่าทาง/ตำแหน่งตอนเริ่มฉาก (ยืน/นั่ง อยู่ตรงไหน) ต้องเท่ากับตอนจบฉากก่อนหน้า เว้นแต่บทบอกว่าขยับ และตัวละครหลักที่อยู่ในฉากต้องไม่หายไปโดยบทไม่ได้บอกว่าออกไป
-9. "speaker" และ "characters" ต้องเป็นชื่อตัวละครล้วนๆ ห้ามมีคำกริยาต่อท้าย (เช่น ใช้ "น้องฟ้าใส" ไม่ใช่ "น้องฟ้าใสกระซิบ") ให้ใส่กริยา/อารมณ์ไว้ใน "emotionOrAction" แทน${declaredNames.length > 0 ? `\n10. ใช้ชื่อตัวละครตามที่ประกาศไว้เท่านั้น: ${declaredNames.join(', ')} (เสียงนอกจอ เช่น "เสียงปริศนา" ให้ระบุเป็น speaker ได้ แต่ห้ามใส่ใน "characters")` : ''}`;
+3. [กฎ Action/Narration]: ถ้าบทมี Action/Narration แม้ไม่มีบทพูด ต้องนำ Action/Narration นั้นไปสร้างเป็นเหตุการณ์ใน Prompt ตามลำดับเดิม โดยทำหน้าที่เพียง "บอกสิ่งที่กำลังเกิดขึ้นในช็อตนั้น" เท่านั้น ห้ามนำไปรวมกับบทพูด ห้ามเปลี่ยนเป็นบทพูด ห้ามเพิ่มบทพูดใหม่ ห้ามเปลี่ยนอารมณ์ตัวละครเอง ห้ามเปลี่ยนท่าทางอื่นที่บทไม่ได้สั่ง ห้ามแก้ Character Lock ห้ามแก้ Location Lock และห้ามสร้าง Action เพิ่มเอง
+4. [DIALOGUE 20-WORD SPLIT]: ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ โดยไม่ตัดคำกลางประโยคเสียความหมาย รักษาผู้พูดคนเดิม ห้ามแก้/ย่อ/แต่งเพิ่ม และคลิปถัดไปต้องต่อเนื่องจาก END คลิปก่อนหน้า (ท่าทาง ตำแหน่ง สีหน้า กล้อง ฉาก เวลา เสียง) และ Action/Narration ห้ามนำไปนับหรือแตกด้วยกฎ 20 คำ
+5. คำบรรยายการกระทำต้องถูกแปลงเป็นภาพ ท่าทาง และ Action ของตัวละครจริง ไม่ใช่เสียงบรรยาย
+6. ถ้ามีบทพูดให้ใช้บทพูดตามต้นฉบับตรงเป๊ะ ห้ามแปลงคำพูด
+7. ในสถานที่เดียวกัน ให้ Story เดินเรื่องต่อเนื่องจนหมดช่วงนั้น
+8. เมื่อเนื้อเรื่องกำลังเปลี่ยนไปสถานที่ใหม่ ให้หยุดทันที ห้ามสร้างฉากข้ามไปยังสถานที่ใหม่
+9. ล็อคตำแหน่งตัวละคร (เช่น พี่ทุยอยู่ซ้ายเสา, น้องน้ำอยู่ขวาเสา) ให้ต่อเนื่องในทุกฉาก
+10. จัดเตรียม episodeScriptText สำหรับวางลงช่อง "วางบทหรือฉากหลายฉาก" อัตโนมัติ
+11. ห้ามสรุปว่าจบเรื่องเด็ดขาด เว้นแต่จะเจอคำว่า "จบเรื่อง", "จบบริบูรณ์", "จบฉาก", "ตอนจบ", "จบ", "-จบ-", "THE END" ในฉากสุดท้าย/บรรทัดท้ายของเนื้อเรื่องต้นฉบับ
+12. ตั้งค่า "sourceCovered": true เฉพาะเมื่อตอนนี้ครอบคลุมเหตุการณ์สุดท้ายของเนื้อเรื่องต้นฉบับแล้ว (ไม่มีเหตุการณ์เหลือให้สร้างตอนต่อไป) มิฉะนั้นให้เป็น false
+13. หัวข้อฉากที่เป็นชื่อตอน/อารมณ์ หรือ "หน้าบ้านต่อเนื่อง" ไม่ใช่สถานที่: "location" ต้องเป็นสถานที่จริงของฉากก่อนหน้า และ "timeOfDay" เดิม
+14. ท่าทาง/ตำแหน่งตอนเริ่มฉาก ต้องเท่ากับตอนจบฉากก่อนหน้า เว้นแต่บทบอกว่าขยับ
+15. "speaker" และ "characters" ต้องเป็นชื่อตัวละครล้วนๆ ห้ามมีคำกริยาต่อท้าย ให้ใส่กริยา/อารมณ์ไว้ใน "emotionOrAction" แทน${declaredNames.length > 0 ? `\n16. ใช้ชื่อตัวละครตามที่ประกาศไว้เท่านั้น: ${declaredNames.join(', ')}` : ''}`;
 
     const storySceneSchema = {
       type: Type.OBJECT,
@@ -2960,7 +3024,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
     let rawText = '';
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-3.1-flash-lite',
         contents: prompt,
         config: {
           systemInstruction,
@@ -2973,7 +3037,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
     } catch (geminiErr: any) {
       const reason = formatGenAIError(geminiErr);
       console.warn('Gemini story continuation failed:', reason);
-      return res.status(502).json({
+      return res.status(400).json({
         success: false,
         code: 'GEMINI_API_ERROR',
         message: `Gemini สร้างบทต่อไม่สำเร็จ: ${reason} / Gemini story generation failed. Please retry, check your API key, or choose offline mode.`
@@ -3447,7 +3511,7 @@ app.post('/api/character/analyze-image', async (req: express.Request, res: expre
         });
 
         const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
+          model: 'gemini-3.1-flash-lite',
           contents: {
             parts
           },
@@ -4037,7 +4101,7 @@ app.post('/api/location/analyze-image', async (req: express.Request, res: expres
       ];
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: 'gemini-3.1-flash-lite',
         contents: parts,
         config: {
           systemInstruction,
@@ -4143,12 +4207,19 @@ app.post('/api/generate', requireAuth, (req: any, res) => {
     return res.status(400).json({ success: false, message: 'กรุณากรอก Prompt ก่อนเริ่มสร้างผลงาน' });
   }
 
-  // Resolve provider strictly, with graceful fallback to Mock simulator
-  params.provider = (params.provider || 'mock') as ProviderId;
-  let adapter = providerManager.find(params.provider);
-  if (!adapter || (adapter.id !== 'mock' && !adapter.hasKey)) {
-    adapter = providerManager.find('mock') || providerManager.list()[0];
-    params.provider = 'mock';
+  // Resolve provider strictly (no silent fallback to mock/sample output)
+  params.provider = (params.provider || 'gemini') as ProviderId;
+  const adapter = providerManager.find(params.provider);
+  if (!adapter) {
+    return res.status(400).json({ success: false, message: `ไม่รู้จักผู้ให้บริการ "${params.provider}" (Unknown provider)` });
+  }
+  // Fail fast before charging credits when the selected real provider has no server API key
+  if (adapter.id !== 'mock' && !adapter.hasKey) {
+    return res.status(503).json({
+      success: false,
+      code: 'PROVIDER_KEY_MISSING',
+      message: `ยังไม่ได้ตั้งค่า ${(adapter as any).requiresKeyEnv || 'API key'} บนเซิร์ฟเวอร์ จึงไม่สามารถสร้างด้วย ${adapter.name} ได้ (${(adapter as any).requiresKeyEnv || 'API key'} is not configured)`
+    });
   }
 
   // Cost calculation
@@ -4382,73 +4453,59 @@ app.get('/api/download/video/:jobId', (req, res) => {
   handleVideoDownload(req, res, req.params.jobId);
 });
 
-// Download full project ZIP
-app.get(['/api/download/project-zip', '/sala-ai-project.zip', '/sala-ai-android-project.zip'], (req, res) => {
-  const primaryPath = path.resolve(process.cwd(), 'public', 'sala-ai-project.zip');
-  const fallbackPath = path.resolve(process.cwd(), 'public', 'sala-ai-android-project.zip');
-  const zipPath = fs.existsSync(primaryPath) ? primaryPath : fallbackPath;
-  if (fs.existsSync(zipPath)) {
-    const stat = fs.statSync(zipPath);
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', 'attachment; filename="sala-ai-project.zip"');
-    res.setHeader('Content-Length', stat.size);
-    fs.createReadStream(zipPath).pipe(res);
-  } else {
-    res.status(404).json({ success: false, message: 'ZIP file not found' });
-  }
-});
-
 // 6.6 Character Library Endpoints
 // 6.6 Character Library Endpoints (Synced with Firestore by UID)
 app.get('/api/characters', async (req, res) => {
   const auth = await getAuthenticatedUser(req);
-  const currentUserId = auth?.user?.id || 'demo_creator';
-
-  // Sync with Firestore collection strictly for this user's UID (if authenticated)
-  if (auth?.user?.id) {
-    try {
-      const db = getServerFirestore();
-      if (db) {
-        // 1. Query Top-level collection by userId
-        const q = queryServer(collectionServer(db, 'characters'), whereServer('userId', '==', currentUserId));
-        const snap = await getDocsServer(q);
-        snap.forEach(docSnap => {
-          const charData = docSnap.data() as Character;
-          if (charData && charData.name) {
-            const charItem: Character = { ...charData, id: docSnap.id, userId: currentUserId };
-            const existingIdx = charactersStore.findIndex(c => c.id === charItem.id);
-            if (existingIdx >= 0) {
-              charactersStore[existingIdx] = charItem;
-            } else {
-              charactersStore.unshift(charItem);
-            }
-          }
-        });
-
-        // 2. Query user's subcollection /users/{uid}/characters
-        const userCol = collectionServer(db, 'users', currentUserId, 'characters');
-        const userSnap = await getDocsServer(userCol);
-        userSnap.forEach(docSnap => {
-          const charData = docSnap.data() as Character;
-          if (charData && charData.name) {
-            const charItem: Character = { ...charData, id: docSnap.id, userId: currentUserId };
-            const existingIdx = charactersStore.findIndex(c => c.id === charItem.id);
-            if (existingIdx >= 0) {
-              charactersStore[existingIdx] = charItem;
-            } else {
-              charactersStore.unshift(charItem);
-            }
-          }
-        });
-      }
-    } catch (err) {
-      console.warn('[Server Firestore] Could not sync characters from Firestore for user:', err);
-    }
+  if (!auth || !auth.user || !auth.user.id) {
+    return res.json({ success: true, characters: [] });
   }
 
-  // User sees their own characters + sample demo characters
-  const userChars = charactersStore.filter(c => !c.userId || c.userId === currentUserId || c.userId === 'default_system' || c.userId === 'demo_creator');
-  res.json({ success: true, characters: userChars.length > 0 ? userChars : charactersStore });
+  const currentUserId = auth.user.id;
+
+  // Sync with Firestore collection strictly for this user's UID
+  try {
+    const db = getServerFirestore();
+    if (db) {
+      // 1. Query Top-level collection by userId
+      const q = queryServer(collectionServer(db, 'characters'), whereServer('userId', '==', currentUserId));
+      const snap = await getDocsServer(q);
+      snap.forEach(docSnap => {
+        const charData = docSnap.data() as Character;
+        if (charData && charData.name) {
+          const charItem: Character = { ...charData, id: docSnap.id, userId: currentUserId };
+          const existingIdx = charactersStore.findIndex(c => c.id === charItem.id);
+          if (existingIdx >= 0) {
+            charactersStore[existingIdx] = charItem;
+          } else {
+            charactersStore.unshift(charItem);
+          }
+        }
+      });
+
+      // 2. Query user's subcollection /users/{uid}/characters
+      const userCol = collectionServer(db, 'users', currentUserId, 'characters');
+      const userSnap = await getDocsServer(userCol);
+      userSnap.forEach(docSnap => {
+        const charData = docSnap.data() as Character;
+        if (charData && charData.name) {
+          const charItem: Character = { ...charData, id: docSnap.id, userId: currentUserId };
+          const existingIdx = charactersStore.findIndex(c => c.id === charItem.id);
+          if (existingIdx >= 0) {
+            charactersStore[existingIdx] = charItem;
+          } else {
+            charactersStore.unshift(charItem);
+          }
+        }
+      });
+    }
+  } catch (err) {
+    console.warn('[Server Firestore] Could not sync characters from Firestore for user:', err);
+  }
+
+  // Strict isolation: Admin sees ONLY Admin's characters. Each user sees ONLY their own characters.
+  const userChars = charactersStore.filter(c => c.userId === currentUserId);
+  res.json({ success: true, characters: userChars });
 });
 
 app.post('/api/characters', requireAuth, async (req: any, res) => {
@@ -4653,9 +4710,9 @@ app.get('/api/locations', async (req, res) => {
     }
   }
 
-  // User sees their own locations + sample locations
-  const userLocations = locationsStore.filter(l => !l.userId || l.userId === currentUserId || l.userId === 'default_system' || l.userId === 'demo_creator');
-  res.json({ success: true, locations: userLocations.length > 0 ? userLocations : locationsStore });
+  // Strict isolation: User sees their own locations + sample locations
+  const userLocations = locationsStore.filter(l => !l.userId || l.userId === currentUserId || l.userId === 'default_system');
+  res.json({ success: true, locations: userLocations });
 });
 
 app.post('/api/locations', requireAuth, async (req: any, res) => {
@@ -4811,8 +4868,8 @@ app.get('/api/projects', requireAuth, (req: any, res) => {
   if (req.user.role === 'admin') {
     return res.json({ success: true, projects: projectsStore });
   }
-  const userProjects = projectsStore.filter(p => !p.userId || p.userId === req.user.id || p.userId === 'default_system' || p.userId === 'demo_creator');
-  res.json({ success: true, projects: userProjects.length > 0 ? userProjects : projectsStore });
+  const userProjects = projectsStore.filter(p => !p.userId || p.userId === req.user.id);
+  res.json({ success: true, projects: userProjects });
 });
 
 app.post('/api/projects', requireAuth, (req: any, res) => {
@@ -6541,6 +6598,11 @@ app.post('/api/projects/:id/restore-version', (req, res) => {
   project.updatedAt = new Date().toISOString();
 
   res.json({ success: true, project, message: `ย้อนกลับโปรเจ็กต์สู่เวอร์ชันที่ ${targetVer.versionNumber} เรียบร้อยแล้ว` });
+});
+
+// Explicit 404 for unhandled API routes so they never fall through to Vite HTML
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ success: false, message: `API endpoint ${req.method} ${req.path} not found` });
 });
 
 // ==========================================
