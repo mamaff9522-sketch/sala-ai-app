@@ -15,8 +15,14 @@
         <item name="android:background">@null</item>
     </style>
 
-
+    <!-- System splash is a blank dark frame. The poster itself is drawn
+         full-screen with centerCrop from MainActivity, not the launcher icon. -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_empty_icon</item>
+        <item name="windowSplashScreenAnimationDuration">0</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+        <item name="android:windowBackground">@drawable/splash</item>
         <item name="android:background">@drawable/splash</item>
     </style>
 </resources>
