@@ -314,8 +314,8 @@ export function analyzeClipContinuity(params: {
         if (ev.kind === 'static') checkedFirstPose.add(who);
         const moved = ev.kind === 'transition' || ev.kind === 'enter';
         if (moved) movedInClip.add(who);
-        // Walking ends standing wherever the character walked to
-        const posture: Posture = ev.posture === 'walking' ? 'standing' : ev.posture;
+        // Keep the pose the action actually has. Walking in must not be rewritten as standing.
+        const posture: Posture = ev.posture;
         // Place: explicit place wins; walking somewhere unnamed makes the place unknown; otherwise keep the old spot
         const place = ev.place || (ev.posture === 'walking' ? '' : prev.place || '');
         // A described movement ends the previous gesture / facing (hand props stay in hand)

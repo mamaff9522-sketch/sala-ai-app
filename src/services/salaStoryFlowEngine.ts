@@ -60,16 +60,37 @@ const STORAGE_KEY_FLOW_STATE = 'sala_story_flow_state';
  */
 function cleanLocationName(raw: string): string {
   if (!raw || raw === UNSPECIFIED) return 'สถานที่ตามเนื้อเรื่อง';
-  return raw
-    .replace(/^([ฉากที่\s\d.:\-]+)/, '')
-    .replace(/(ยามเช้า|ยามเย็น|กลางคืน|กลางวัน|ตอนค่ำ|รุ่งเช้า|พลบค่ำ|ดึก|night|day|morning|evening)/gi, '')
+  // Strip only a real "ฉากที่ N" prefix. A character class here turned "ฉากเปิดเรื่อง" into "เปิดเรื่อง".
+  const cleaned = raw
+    .replace(/^ฉากที่\s*\d+\s*[:.\-–—]*\s*/, '')
+    .replace(/(ยามเช้า|ยามเย็น|กลางคืน|กลางวัน|ตอนค่ำ|รุ่งเช้า|พลบค่ำ|ดึก|\b(?:night|day|morning|evening)\b)/gi, '')
     .replace(/[,\-–—:：]/g, ' ')
-    .trim() || 'สถานที่ตามเนื้อเรื่อง';
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || 'สถานที่ตามเนื้อเรื่อง';
 }
 
 /**
  * ตัดแบ่งเนื้อเรื่องเต็มออกเป็นฉากๆ และจัดกลุ่มตาม "สถานที่เดียวกัน"
  */
+
+export interface StoryLockChoice {
+  sceneNumber: number;
+  location: string;
+  timeOfDay: string;
+}
+
+/** One time and one place per scene, taken only from that scene. A blank scene stays blank. */
+export function storyLockChoices(fullStory: string): StoryLockChoice[] {
+  const parsed = parseStoryStructure(fullStory || '');
+  return (parsed.scenes || []).map((sc, i) => {
+    let location = sc.location && sc.location !== UNSPECIFIED ? cleanLocationName(sc.location) : '';
+    if (location === 'สถานที่ตามเนื้อเรื่อง') location = '';
+    const timeOfDay = sc.timeOfDay && sc.timeOfDay !== UNSPECIFIED ? sc.timeOfDay : '';
+    return { sceneNumber: sc.sceneNumber || i + 1, location, timeOfDay };
+  }).filter(c => c.sceneNumber > 0);
+}
+
 export function analyzeStoryLocationSegments(fullStory: string): LocationSceneSegment[] {
   if (!fullStory || !fullStory.trim()) return [];
 
@@ -102,7 +123,7 @@ export function analyzeStoryLocationSegments(fullStory: string): LocationSceneSe
         sceneIndex: sc.sceneNumber || idx + 1,
         originalHeading: sc.heading || `ฉากที่ ${idx + 1}: ${sc.location || 'สถานที่ตามเนื้อเรื่อง'}`,
         location: cleanLocationName(sc.location || parsed.metadata['สถานที่'] || 'สถานที่ตามเนื้อเรื่อง'),
-        timeOfDay: sc.timeOfDay && sc.timeOfDay !== UNSPECIFIED ? sc.timeOfDay : (parsed.metadata['เวลา'] || 'กลางวัน'),
+        timeOfDay: sc.timeOfDay && sc.timeOfDay !== UNSPECIFIED ? sc.timeOfDay : (parsed.metadata['เวลา'] || ''),
         actionText,
         dialogues: dlgs,
         charactersInvolved: charsInvolved
@@ -116,16 +137,11 @@ export function analyzeStoryLocationSegments(fullStory: string): LocationSceneSe
       .map(p => p.trim())
       .filter(p => p.length > 0);
 
-    let currentLocation = cleanLocationName(parsed.metadata['สถานที่'] || 'ฉากเปิดเรื่อง');
+    // No scene headings: ONE continuous segment. Do not treat ริม/ที่/ในห้อง as a new place.
+    let currentLocation = cleanLocationName(parsed.metadata['สถานที่'] || parsed.metadata['สถานที่หลัก'] || '');
     let currentTime = parsed.metadata['เวลา'] || 'กลางวัน';
 
     paragraphs.forEach((para, idx) => {
-      // ตรวจสอบว่าในย่อหน้ามีคำบอกสถานที่ใหม่หรือไม่
-      const locMatch = para.match(/(ณ|ที่|บริเวณ|ภายใน|ด้านหน้า|ในห้อง|ริม)\s*([ก-๙a-zA-Z0-9_\- ]{3,30})/);
-      if (locMatch && idx > 0) {
-        currentLocation = cleanLocationName(locMatch[0]);
-      }
-
       // ดึงบทพูดในย่อหน้า
       const dlgs: Array<{ speaker: string; emotionOrAction: string; dialogue: string }> = [];
       const quoteMatches = para.matchAll(/([ก-๙a-zA-Z0-9_\- ]{2,25})[:：]\s*["“'‘«「]([^"”'’»」]+)["”'’»」]/g);

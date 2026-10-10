@@ -83,7 +83,7 @@ export const LocationEditModal: React.FC<{
   const field = (label: string, value: string, set: (v: string) => void, rows = 2, id = '', hint = '') => (
     <label className="block space-y-1">
       <span className="text-xs font-semibold text-slate-300">{label}</span>
-      {hint && <span className="block text-[10px] text-slate-500">{hint}</span>}
+      {hint && <span className="block text-xs text-slate-400">{hint}</span>}
       <textarea id={id} value={value} onChange={e => set(e.target.value)} rows={rows}
         className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500" />
     </label>
@@ -97,7 +97,7 @@ export const LocationEditModal: React.FC<{
           <button type="button" onClick={onClose} className="p-1.5 text-slate-400 hover:text-white" title="ปิด"><X className="w-4 h-4" /></button>
         </div>
         {location.lockStatus === 'LOCKED' && (
-          <div className="text-[11px] text-emerald-300 flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> สถานที่นี้ LOCKED — สถานะล็อคจะคงเดิมหลังบันทึก</div>
+          <div className="text-xs text-emerald-300 flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> สถานที่นี้ LOCKED — สถานะล็อคจะคงเดิมหลังบันทึก</div>
         )}
         <div className="flex items-center gap-3">
           <img src={newImage || currentImage || location.referenceImageBackup} alt={location.name}

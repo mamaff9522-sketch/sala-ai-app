@@ -253,7 +253,7 @@ export function getLocalStorageCharacters(uid?: string): Character[] {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
           parsed.forEach((item: any) => {
-            if (item && item.name && (item.userId === currentUid || !item.userId)) {
+            if (item && item.name && item.userId === currentUid) {
               map.set(item.id, { ...item, userId: currentUid });
             }
           });
@@ -325,7 +325,7 @@ export async function fetchCharactersFromFirestore(uid?: string): Promise<Charac
       const snap = await getDocs(q);
       snap.forEach(d => {
         const data = d.data() as Character;
-        if (data && (data.userId === currentUid || !data.userId)) {
+        if (data && data.userId === currentUid) {
           charMap.set(d.id, { ...data, id: d.id, userId: currentUid });
         }
       });

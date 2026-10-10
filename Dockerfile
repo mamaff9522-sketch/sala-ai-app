@@ -1,7 +1,8 @@
-FROM node:18
+FROM node:20
 WORKDIR /app
-COPY package.json . ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm install --include=dev --legacy-peer-deps
 COPY . .
-EXPOSE 3000
-CMD["npm""start"]
+RUN npm run build
+EXPOSE 8080
+CMD ["npm", "start"]

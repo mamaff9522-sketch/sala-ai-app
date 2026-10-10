@@ -2,8 +2,10 @@
 	"appId": "com.salaai.app",
 	"appName": "Sala AI",
 	"webDir": "dist",
+	"android": {
+		"allowMixedContent": false
+	},
 	"server": {
-		"url": "https://ais-dev-h55mv4dnhb3wfi5gazr272-913251346174.asia-southeast1.run.app",
 		"androidScheme": "https",
 		"allowNavigation": [
 			"ais-dev-h55mv4dnhb3wfi5gazr272-913251346174.asia-southeast1.run.app",

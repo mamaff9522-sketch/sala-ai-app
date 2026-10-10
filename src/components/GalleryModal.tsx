@@ -140,10 +140,10 @@ export const GalleryModal: React.FC<GalleryModalProps> = ({
 
                   {/* Badges on Media */}
                   <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-md text-white border border-white/10 font-mono">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-black/70 backdrop-blur-md text-white border border-white/10 font-mono">
                       {job.aspectRatio}
                     </span>
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md backdrop-blur-md text-white border ${
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded-md backdrop-blur-md text-white border ${
                       isVideo
                         ? 'bg-emerald-600/80 border-emerald-400/30'
                         : 'bg-indigo-600/80 border-indigo-400/30'
@@ -161,7 +161,7 @@ export const GalleryModal: React.FC<GalleryModalProps> = ({
                   )}
 
                   {/* Provider label */}
-                  <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between text-[11px] text-slate-300">
+                  <div className="absolute bottom-2.5 left-3 right-3 flex items-center justify-between text-xs text-slate-300">
                     <span className="truncate">{job.providerName}{job.isMock ? ' · ตัวอย่างจำลอง (Mock)' : ''}</span>
                     <span className="font-mono text-amber-300 shrink-0">{job.costCredits} เครดิต</span>
                   </div>
@@ -174,7 +174,7 @@ export const GalleryModal: React.FC<GalleryModalProps> = ({
                   </p>
 
                   {job.characterName && (
-                    <div className="flex items-center gap-1.5 text-[11px] text-indigo-400 bg-indigo-950/40 px-2.5 py-1 rounded-lg border border-indigo-900/50">
+                    <div className="flex items-center gap-1.5 text-xs text-indigo-400 bg-indigo-950/40 px-2.5 py-1 rounded-lg border border-indigo-900/50">
                       <Sparkles className="w-3 h-3" />
                       <span>ตัวละคร: {job.characterName}</span>
                     </div>
@@ -189,12 +189,12 @@ export const GalleryModal: React.FC<GalleryModalProps> = ({
                       {copiedId === job.id ? (
                         <>
                           <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          <span className="text-emerald-400 text-[11px]">คัดลอกแล้ว</span>
+                          <span className="text-emerald-400 text-xs">คัดลอกแล้ว</span>
                         </>
                       ) : (
                         <>
                           <Copy className="w-3.5 h-3.5" />
-                          <span className="text-[11px]">ก็อปปี้ Prompt</span>
+                          <span className="text-xs">ก็อปปี้ Prompt</span>
                         </>
                       )}
                     </button>
@@ -211,7 +211,7 @@ export const GalleryModal: React.FC<GalleryModalProps> = ({
                         );
                         setDownloadingJobId(null);
                       }}
-                      className="bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-xl font-medium flex items-center gap-1.5 transition-all active:scale-95 text-[11px] cursor-pointer"
+                      className="bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-xl font-medium flex items-center gap-1.5 transition-all active:scale-95 text-xs cursor-pointer"
                     >
                       {downloadingJobId === job.id ? (
                         <>
@@ -233,7 +233,7 @@ export const GalleryModal: React.FC<GalleryModalProps> = ({
         </div>
       ) : (
         <div className="text-center py-16 bg-[#0d1322] border border-slate-800 rounded-3xl p-8 space-y-3">
-          <Images className="w-12 h-12 text-slate-600 mx-auto" />
+          <Images className="w-12 h-12 text-slate-400 mx-auto" />
           <h3 className="text-base font-bold text-white">ยังไม่มีประวัติการสร้างผลงานในหมวดนี้</h3>
           <p className="text-xs text-slate-400 max-w-sm mx-auto">
             สร้างภาพหรือวิดีโอแรกของคุณในห้องสตูดิโอ แล้วผลงานจะถูกเก็บถาวรไว้ที่นี่
@@ -318,22 +318,22 @@ export const GalleryModal: React.FC<GalleryModalProps> = ({
               {/* Spec Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                 <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-                  <span className="text-slate-400 block text-[10px]">ผู้ให้บริการ</span>
+                  <span className="text-slate-400 block text-xs">ผู้ให้บริการ</span>
                   <span className="font-semibold text-white">{selectedJob.providerName}</span>
                   {selectedJob.isMock && (
-                    <span className="block text-[10px] text-amber-300 mt-0.5">ผลลัพธ์จำลอง/ตัวอย่าง ไม่ใช่งานที่ AI สร้างจริง (Mock / sample output)</span>
+                    <span className="block text-xs text-amber-300 mt-0.5">ผลลัพธ์จำลอง/ตัวอย่าง ไม่ใช่งานที่ AI สร้างจริง (Mock / sample output)</span>
                   )}
                 </div>
                 <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-                  <span className="text-slate-400 block text-[10px]">อัตราส่วน</span>
+                  <span className="text-slate-400 block text-xs">อัตราส่วน</span>
                   <span className="font-semibold text-indigo-400 font-mono">{selectedJob.aspectRatio}</span>
                 </div>
                 <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-                  <span className="text-slate-400 block text-[10px]">เครดิตที่ใช้</span>
+                  <span className="text-slate-400 block text-xs">เครดิตที่ใช้</span>
                   <span className="font-semibold text-amber-400 font-mono">{selectedJob.costCredits} เครดิต</span>
                 </div>
                 <div className="bg-slate-900/80 p-2.5 rounded-xl border border-slate-800">
-                  <span className="text-slate-400 block text-[10px]">Seed</span>
+                  <span className="text-slate-400 block text-xs">Seed</span>
                   <span className="font-semibold text-slate-300 font-mono">{selectedJob.seed}</span>
                 </div>
               </div>

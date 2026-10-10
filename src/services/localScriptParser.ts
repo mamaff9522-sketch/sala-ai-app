@@ -72,23 +72,25 @@ export function parseScriptLocally(scriptText: string, requestedClipCount?: numb
   const detectedProps = parsed.metadata.props || lockMeta['props'] || '';
   const detectedTitle = parsed.metadata.title || rawClips[0]?.title || 'บทละคร';
 
-  // Per-scene place/time from the story engine (title/mood headings inherit the previous place)
+  // Per-scene place/time from the story engine. A heading that names neither stays blank.
   const storyParsed = parseStoryStructure(scriptText);
   const storyScenes = storyParsed.hasSceneHeaders && storyParsed.scenes.length === rawClips.length ? storyParsed.scenes : [];
   const firstLoc = storyScenes.find(sc => sc.location)?.location || '';
   const firstTime = storyScenes.find(sc => sc.timeOfDay)?.timeOfDay || '';
   const mainLocation = detectedLocation || firstLoc;
   const mainTime = detectedTime || firstTime;
-  // One Location Lock lighting description reused by every scene
+  // First named place/time only, for the master lock summary. Not copied onto later scenes.
   const mainLighting = detectedLighting || (mainTime ? lightingForTime(mainTime) : '');
 
   const introducedSoFar = new Set<string>();
 
   const scenes = rawClips.map((c, idx) => {
     const ss = storyScenes[idx];
-    const sceneLocation = ss?.location || mainLocation;
-    const sceneTime = ss?.timeOfDay || mainTime;
-    const sceneLighting = sceneLocation === mainLocation && sceneTime === mainTime ? mainLighting : (detectedLighting || lightingForTime(sceneTime));
+    // Only the place and time this scene named. A blank heading stays blank.
+    // Never fill them from the first scene, the story header, or the master lock.
+    const sceneLocation = ss ? (ss.location || '') : (c.location || '');
+    const sceneTime = ss ? (ss.timeOfDay || '') : (c.timeOfDay || '');
+    const sceneLighting = sceneTime ? lightingForTime(sceneTime) : '';
     const cleanTitle = (c.title || `ฉากที่ ${c.clipNumber}`).replace(/^(ฉากที่\s*\d+)\s*[:：]?\s*[—–\-:]\s*/, '$1: ');
     const sceneBody = c.actions.join(' ');
     const sceneDialogues = dialogues.filter((d) => d.sceneNumber === c.clipNumber);
@@ -197,20 +199,13 @@ export function applySplitLocks(data: any, continuityLock: any, opts: { characte
   const locationOverrides = new Map<number, string>();
   const lightingOverrides = new Map<number, string>();
   if (Array.isArray(data.scenes)) {
-    let prevLoc = '';
-    let prevTime = '';
     data.scenes = data.scenes.map((s: any, sIdx: number) => {
       const next = { ...s };
-      // "ฉากที่ 3: อารมณ์เริ่มตึงเครียด" / "หน้าบ้านต่อเนื่อง" are not new places
+      // "คืนดีกัน" is a title, not a place. "หน้าบ้านต่อเนื่อง" keeps หน้าบ้าน only.
+      // A scene that did not name a place or a time keeps them blank. Never copy the previous scene.
       const norm = normalizeSceneLocation(next.location || '');
-      next.location = norm.location;
-      if ((norm.isTitle || isEmpty(next.location)) && prevLoc) {
-        next.location = prevLoc;
-        if (isEmpty(next.timeOfDay)) next.timeOfDay = prevTime;
-      }
-      if (norm.continued && isEmpty(next.timeOfDay)) next.timeOfDay = prevTime;
-      if (!isEmpty(next.location)) prevLoc = next.location;
-      if (!isEmpty(next.timeOfDay)) prevTime = next.timeOfDay;
+      if (norm.isTitle) next.location = '';
+      else next.location = norm.location;
       if (lock.location && !isEmpty(next.location) && !norm.isTitle && next.location !== lock.location && !next.location.includes(lock.location) && !lock.location.includes(next.location)) {
         locationOverrides.set(sIdx, next.location);
       }
@@ -220,7 +215,6 @@ export function applySplitLocks(data: any, continuityLock: any, opts: { characte
       if (lock.lighting) next.lighting = lock.lighting;
       // Location Lock: a locked time without a locked lighting gets that time's lighting (not the script's)
       else if (timeChanged) { next.lighting = lightingForTime(lock.timeOfDay); lightingOverrides.set(sIdx, next.lighting); }
-      else if (isEmpty(next.lighting) && data.lighting) next.lighting = data.lighting;
       const lockedNames = [lock.characterName, ...(lock.characterNames || [])].filter(Boolean);
       if (lockedNames.length > 0 && Array.isArray(next.characters)) {
         // Keep scene characters, but make sure locked names are spelled exactly as locked

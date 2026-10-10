@@ -56,6 +56,24 @@ export function normalizeLocationNameKey(name: string): string {
 const namesOf = (l: any): string[] => [l?.name, l?.storyProfile?.storyLocationName, l?.identity?.name]
   .map(n => String(n || '').trim()).filter(Boolean);
 
+const NOT_PLACE_ALONE = /^(?:ริม|ที่|ในห้อง|ใน|ณ|บริเวณ|ภายใน|ด้านหน้า)$/;
+function primaryLocationLabel(name: string): string {
+  const p = String(name || '').split(/\s*[\/(（]/)[0].replace(/\s+/g, ' ').trim();
+  return NOT_PLACE_ALONE.test(p) ? '' : p;
+}
+
+/** Longest library name that appears inside text. Short ordinary words are never a place. */
+function longestLibraryLabelIn(library: LocationLockInput[], text: string): string {
+  let best = '';
+  for (const l of library || []) {
+    for (const n of namesOf(l)) {
+      const label = primaryLocationLabel(n);
+      if (label.length >= 4 && text.includes(label) && label.length > best.length) best = label;
+    }
+  }
+  return best;
+}
+
 /** Exact name / alias first, then a UNIQUE normalized match. Never substring / prefix matching. */
 export function findLocationByName<T extends { name?: string }>(list: T[] | undefined | null, name: string): T | undefined {
   const target = String(name || '').trim();
@@ -164,34 +182,34 @@ export function enforceLibraryLocationLocks(
   if (!Array.isArray(library)) return clips;
   const selected = opts.selectedLocationId ? library.find(l => l.id === opts.selectedLocationId) : undefined;
   const knownDescriptions = library.map(l => locationDescriptionOf(l)).filter(d => d.length > 20);
-  let previousMatched = '';
   return clips.map(c => {
-    // Location of the clip:
-    // กฎ: ล็อกสถานที่และแสงอัตโนมัติตามเนื้อเรื่อง
-    // ดึงค่า Location และ Lighting/Time จากเนื้อเรื่องของฉากนั้นโดยตรง
-    // เมื่อขึ้นฉากใหม่ ให้รีเซ็ตค่าสภาพแวดล้อมเดิมทิ้งทันที ห้ามนำค่าเดิม (เช่น ป่าทึบ/แสงแดด) ข้ามมาใช้ในฉากใหม่ (เช่น ถ้ำโบราณ/กลางคืน)
+    // Only this clip's own place. A blank scene stays blank. Never the previous scene or a global lock.
     const clipOwnLocation = (c as any).locationName;
-    const isExplicitContinuation = /(?:ต่อเนื่อง|\(ต่อ\)|continued|cont'?d?)/i.test(String((c as any).title || ''));
 
     let name = clipOwnLocation || '';
     if (!name) {
       const h = headingLocation(String((c as any).title || ''));
       const isMoodTitle = /(อารมณ์|ความรู้สึก|ตึงเครียด|เครียด|คืนดี|ดีกัน|ง้อ|หึง|ทะเลาะ|เริ่ม|บทสรุป|ตอนจบ|สรุป|ความจริง|เปิดใจ|สารภาพ|ขอโทษ|ให้อภัย|เข้าใจกัน|โกรธ|เสียใจ|ดีใจ|ตกใจ|ประทับใจ|ซึ้ง|อบอุ่น|หัวเราะ|ร้องไห้|ไคลแม็กซ์|จุดเปลี่ยน|บทนำ|เปิดเรื่อง|ความลับ|เผชิญหน้า|climax|ending|intro|mood|tension|reconcil)/i.test(String((c as any).title || ''));
-      if (h.name && (findLocationByName(library, h.name) || h.structured)) {
-        name = h.name;
-      } else if (isExplicitContinuation || isMoodTitle) {
-        name = previousMatched;
-      } else {
-        name = selected?.name || opts.lockedLocation || '';
-      }
+      if (h.name && !isMoodTitle && (findLocationByName(library, h.name) || h.structured)) name = h.name;
     }
 
-    const r = resolveLocationLock(name, library, selected?.id);
-    if (r.found) {
-      previousMatched = r.name;
-    } else if (!isExplicitContinuation) {
-      previousMatched = '';
+    const clipText = [name, String((c as any).title || ''), String((c as any).sceneSummary || '')].join('\n');
+    // A chopped sentence that contains the library card's real name loses to that name.
+    if (name && !findLocationByName(library, name)) {
+      const snapped = longestLibraryLabelIn(library, name);
+      if (snapped) name = snapped;
     }
+    // "ยืนที่ชานเรือน..." has no separate place field: the card name may still be inside the scene text.
+    if (!name) {
+      const snapped = longestLibraryLabelIn(library, clipText);
+      if (snapped) name = snapped;
+    }
+    if (!String(name || '').trim()) {
+      return { ...c, locationWarnings: ['ไม่พบสถานที่ในเนื้อเรื่อง — ไม่มีชื่อสถานที่ให้ล็อก / Location name is blank — not locked'] } as DirectedClipItem;
+    }
+
+    const selectedMatches = !!(selected && (selected.name === name || findLocationByName([selected], name)));
+    const r = resolveLocationLock(name, library, selectedMatches ? selected!.id : undefined);
 
     const out: any = { ...c, locationWarnings: r.warnings };
     if (!r.found) {

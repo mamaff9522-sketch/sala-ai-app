@@ -1,19 +1,15 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Coins,
   TrendingDown,
   Calendar,
   ShieldCheck,
-  PlusCircle,
   Clock,
-  CheckCircle2,
   X,
   CreditCard,
-  Zap,
   Info
 } from 'lucide-react';
 import { CreditAccount } from '../types';
-import { api } from '../services/api';
 
 interface CreditsModalProps {
   credits: CreditAccount | null;
@@ -25,31 +21,11 @@ interface CreditsModalProps {
 
 export const CreditsModal: React.FC<CreditsModalProps> = ({
   credits,
-  onRefreshCredits,
   isOpen,
   onClose,
   onNavigateToPricing,
 }) => {
-  const [topupAmount, setTopupAmount] = useState<number>(100);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
-
   if (!isOpen) return null;
-
-  const handleTopup = async (amt: number) => {
-    setIsProcessing(true);
-    setSuccessMsg(null);
-    try {
-      await api.topupCredits(amt);
-      onRefreshCredits();
-      setSuccessMsg(`เติมเครดิต +${amt} เครดิต (โหมด Sandbox) สำเร็จแล้ว!`);
-      setTimeout(() => setSuccessMsg(null), 3500);
-    } catch (err: any) {
-      console.error('Topup error:', err);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
 
   const dailyPercent = credits
     ? Math.min(100, Math.round((credits.dailyUsedCredits / credits.dailyLimit) * 100))
@@ -77,7 +53,7 @@ export const CreditsModal: React.FC<CreditsModalProps> = ({
               </p>
             </div>
           </div>
-          <button
+          <button aria-label="ปิด" title="ปิด"
             onClick={onClose}
             className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
           >
@@ -92,21 +68,21 @@ export const CreditsModal: React.FC<CreditsModalProps> = ({
               เครดิตคงเหลือของคุณ (Balance)
             </span>
             <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-extrabold text-white font-mono tracking-tight">
+              <span className="text-2xl font-extrabold text-white font-mono tracking-tight">
                 {credits?.remainingCredits ?? 0}
               </span>
               <span className="text-sm font-semibold text-amber-400">Credits</span>
             </div>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-xs text-slate-400">
               ใช้สร้างภาพได้อีกประมาณ {Math.floor((credits?.remainingCredits || 0) / 8)} ภาพ หรือวิดีโอ {Math.floor((credits?.remainingCredits || 0) / 35)} คลิป
             </p>
           </div>
 
-          {/* Stripe Topup Button */}
+          {/* PromptPay topup button (goes to slip transfer page) */}
           <div className="flex flex-col gap-2 shrink-0">
             {onNavigateToPricing && (
               <button
-                id="modal-topup-stripe-btn"
+                id="modal-topup-transfer-btn"
                 onClick={() => {
                   onClose();
                   onNavigateToPricing();
@@ -114,18 +90,11 @@ export const CreditsModal: React.FC<CreditsModalProps> = ({
                 className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 text-xs font-bold shadow-md shadow-amber-500/20 transition-all active:scale-95 cursor-pointer"
               >
                 <CreditCard className="w-4 h-4" />
-                <span>เติมเครดิตผ่าน Stripe (100 - 2,500 เครดิต)</span>
+                <span>เติมเครดิตผ่านพร้อมเพย์ (โอนแล้วส่งสลิป)</span>
               </button>
             )}
           </div>
         </div>
-
-        {successMsg && (
-          <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs rounded-xl flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>{successMsg}</span>
-          </div>
-        )}
 
         {/* Limit Meters: Daily & Monthly Limits */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -145,7 +114,7 @@ export const CreditsModal: React.FC<CreditsModalProps> = ({
                 style={{ width: `${dailyPercent}%` }}
               />
             </div>
-            <p className="text-[10px] text-slate-400">
+            <p className="text-xs text-slate-400">
               คงเหลือสิทธิ์วันนี้: <span className="font-mono text-white">{(credits?.dailyLimit || 150) - (credits?.dailyUsedCredits || 0)}</span> เครดิต (รีเซ็ตทุกเที่ยงคืน)
             </p>
           </div>
@@ -164,7 +133,7 @@ export const CreditsModal: React.FC<CreditsModalProps> = ({
                 style={{ width: `${monthlyPercent}%` }}
               />
             </div>
-            <p className="text-[10px] text-slate-400">
+            <p className="text-xs text-slate-400">
               ยอดใช้สะสมรวมทั้งเดือน: <span className="font-mono text-white">{credits?.monthlyUsedCredits || 0}</span> เครดิต
             </p>
           </div>
@@ -179,24 +148,24 @@ export const CreditsModal: React.FC<CreditsModalProps> = ({
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-xs">
             <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-slate-400 text-[10px] block">Google Gemini</span>
+              <span className="text-slate-400 text-xs block">Google Gemini</span>
               <span className="font-bold text-white">8 เครดิต / ภาพ</span>
-              <span className="text-[10px] text-slate-500 block">30-40 เครดิต/วิดีโอ</span>
+              <span className="text-xs text-slate-400 block">30-40 เครดิต/วิดีโอ</span>
             </div>
             <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-slate-400 text-[10px] block">Meta Emu / Llama</span>
+              <span className="text-slate-400 text-xs block">Meta Emu / Llama</span>
               <span className="font-bold text-white">10 เครดิต / ภาพ</span>
-              <span className="text-[10px] text-slate-500 block">35-45 เครดิต/วิดีโอ</span>
+              <span className="text-xs text-slate-400 block">35-45 เครดิต/วิดีโอ</span>
             </div>
             <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-slate-400 text-[10px] block">xAI / Grok Vision</span>
+              <span className="text-slate-400 text-xs block">xAI / Grok Vision</span>
               <span className="font-bold text-white">9 เครดิต / ภาพ</span>
-              <span className="text-[10px] text-slate-500 block">32-42 เครดิต/วิดีโอ</span>
+              <span className="text-xs text-slate-400 block">32-42 เครดิต/วิดีโอ</span>
             </div>
             <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800">
-              <span className="text-slate-400 text-[10px] block">ศาลา Simulator</span>
+              <span className="text-slate-400 text-xs block">ศาลา Simulator</span>
               <span className="font-bold text-emerald-400">2 เครดิต / ภาพ</span>
-              <span className="text-[10px] text-slate-500 block">15 เครดิต/วิดีโอ</span>
+              <span className="text-xs text-slate-400 block">15 เครดิต/วิดีโอ</span>
             </div>
           </div>
         </div>
@@ -217,7 +186,7 @@ export const CreditsModal: React.FC<CreditsModalProps> = ({
                 >
                   <div className="space-y-0.5">
                     <p className="font-medium text-slate-200 line-clamp-1">{tx.description}</p>
-                    <span className="text-[10px] text-slate-500 font-mono">
+                    <span className="text-xs text-slate-400 font-mono">
                       {new Date(tx.timestamp).toLocaleString('th-TH')}
                     </span>
                   </div>
@@ -230,14 +199,14 @@ export const CreditsModal: React.FC<CreditsModalProps> = ({
                     >
                       {tx.amount > 0 ? `+${tx.amount}` : tx.amount}
                     </span>
-                    <span className="text-[10px] text-slate-500 block font-mono">
+                    <span className="text-xs text-slate-400 block font-mono">
                       คงเหลือ {tx.balanceAfter}
                     </span>
                   </div>
                 </div>
               ))
             ) : (
-              <p className="text-xs text-slate-500 text-center py-4">ไม่มีประวัติธุรกรรม</p>
+              <p className="text-xs text-slate-400 text-center py-4">ไม่มีประวัติธุรกรรม</p>
             )}
           </div>
         </div>

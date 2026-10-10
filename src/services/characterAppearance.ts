@@ -83,7 +83,7 @@ const join = (...parts: any[]) => parts.map(clean).filter(Boolean).join(', ');
 
 // ---- Keyword classifiers (Thai + English) -----------------------------------
 // Deliberately conservative: "ผม" alone is also the pronoun "I", "ใส่ใจ" means "to care".
-const FACE_RE = /(ใบหน้า|หน้าตา|หน้า(?:กลม|เรียว|รูปไข่|เหลี่ยม|คม|หวาน|ใส|ตี๋|มน)|ดวงตา|ตา(?:โต|คม|ตี่|สี|ชั้นเดียว|สองชั้น|กลม)|คิ้ว|ริมฝีปาก|ผิว(?:ขาว|คล้ำ|แทน|สองสี|เนียน|สี)|หนวด|เครา|ไฝ|แว่น|ลักยิ้ม|\bface\b|\beyes?\b|\bskin\b|\bbeard\b|\bmustache\b|\bglasses\b|\bfreckles?\b|\bdimples?\b)/i;
+const FACE_RE = /(ใบหน้า|หน้าตา|หน้า(?:กลม|เรียว|รูปไข่|เหลี่ยม|คม|หวาน|ใส|ตี๋|มน)|ดวงตา|ตา(?:โต|คม|ตี่|สี|ชั้นเดียว|สองชั้น|กลม)|คิ้ว|ริมฝีปาก|รอยยิ้ม|สายตา|แววตา|ผิว(?:ขาว|คล้ำ|แทน|สองสี|เนียน|สี)|หนวด|เครา|ไฝ|แว่น|ลักยิ้ม|\bface\b|\beyes?\b|\bskin\b|\bbeard\b|\bmustache\b|\bglasses\b|\bfreckles?\b|\bdimples?\b)/i;
 const HAIR_RE = /(ทรงผม|ผม(?:สั้น|ยาว|หยิก|ตรง|ดำ|สี|ม้า|รวบ|มัด|ทอง|น้ำตาล|เปีย|บ็อบ|บ๊อบ|ประบ่า|หางม้า|ฟู|ลอน|ดัด|เทา|ขาว|แดง|รองทรง|เกรียน|ซอย|หน้าม้า)|หัวเกรียน|หัวล้าน|\bhair\b|\bhaired\b|\bponytail\b|\bbob\b|\bbangs\b|\bbraids?\b|\bbald\b)/i;
 const OUTFIT_RE = /(ใส่(?!ใจ)|สวม|ชุด|เสื้อ|กางเกง|กระโปรง|รองเท้า|หมวก|เดรส|แจ็คเก็ต|แจ็กเก็ต|ยูนิฟอร์ม|เครื่องแบบ|ผ้าพันคอ|\bwearing\b|\bwears\b|\boutfit\b|\bshirt\b|\bdress\b|\bjacket\b|\bjeans\b|\bskirt\b|\buniform\b|\bhoodie\b|\bt-shirt\b|\bpolo\b|\bsuit\b|\bsneakers\b)/i;
 const BODY_RE = /(รูปร่าง|หุ่น|ร่าง(?:ผอม|ท้วม|สูง|เล็ก|ใหญ่)|ตัว(?:สูง|เล็ก|ใหญ่|เตี้ย)|ผอมสูง|สูงโปร่ง|ล่ำ|สูง\s*\d+|\btall\b|\bslim\b|\bslender\b|\bchubby\b|\bmuscular\b|\bpetite\b|\bstocky\b)/i;
@@ -177,20 +177,26 @@ function fromSupplied(c: CharacterAppearanceInput | undefined | null) {
   const vp = c.visualProfile || {};
   const sf = c.structuredFeatures || {};
   const sp = c.storyProfile || {};
-  const face = clean(c.face) || clean(c.faceDescription) || clean(vp.face) || join(sf.faceShape, sf.eyeDescription, sf.skinTone);
-  const hair = clean(c.hairstyle) || clean(c.hair) || clean(vp.hair) || join(c.hairStyle || vp.hairStyle || sf.hairStyle, vp.hairColor || sf.hairColor);
+  let face = clean(c.face) || clean(c.faceDescription) || clean(vp.face)
+    || join(vp.faceShape, vp.eyeDescription, vp.skinTone) || join(sf.faceShape, sf.eyeDescription, sf.skinTone);
+  let hair = clean(c.hairstyle) || clean(c.hair) || clean(vp.hair) || join(c.hairStyle || vp.hairStyle || sf.hairStyle, vp.hairColor || sf.hairColor);
   const shoes = clean(c.shoes) || clean(vp.shoes) || clean(sf.footwear);
-  const outfit = clean(c.outfit) || clean(c.outfitDescription) || clean(c.costume) || clean(vp.visibleOutfit) ||
-    join(vp.top, vp.bottom) || join(sf.topClothing, sf.bottomClothing);
+  let outfit = clean(c.outfit) || clean(c.outfitDescription) || clean(vp.outfit) || clean(vp.outfitDescription) || clean(sf.outfit) || clean(sf.outfitDescription)
+    || clean(c.costume) || clean(vp.visibleOutfit) || join(vp.top, vp.bottom) || join(sf.topClothing, sf.bottomClothing);
   let appearance = clean(c.appearance) || clean(vp.visiblePhysicalAppearance) || join(sf.bodyType, sf.distinctFeatures);
   let personality = clean(c.personality) || clean(sp.personality);
-  // A library "description" is used as appearance only when it actually describes looks
+  // Split an obvious face / hair / outfit phrase out of the description.
+  // Never store the whole personality blob as appearance and call the lock complete.
   const desc = clean(c.description);
   if (desc) {
     const ex = extractAppearanceFromDescription(desc);
+    if (!face && ex.face) face = ex.face;
+    if (!hair && ex.hair) hair = ex.hair;
+    if (!outfit && ex.outfit) outfit = ex.outfit;
+    if (!appearance && ex.appearance) appearance = ex.appearance;
+    if (!personality && ex.personality) personality = ex.personality;
     const visual = ex.face || ex.hair || ex.outfit || ex.appearance;
-    if (visual && !appearance) appearance = desc;
-    else if (!visual && !personality) personality = desc;
+    if (!visual && !personality) personality = desc;
   }
   return {
     face, hair, outfit, appearance,
@@ -238,11 +244,23 @@ export function normalizeCharacterNameKey(name: string, stripPrefix = false): st
   return s;
 }
 
+/** Tokens of a card name: text before/inside a slash, middle dot, or parenthetical. */
+function characterNameTokens(name: string): string[] {
+  const raw = String(name || '').normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '');
+  const inners = [...raw.matchAll(/[（(]([^）)]+)[）)]/g)].map(m => m[1]);
+  const without = raw.replace(/[（(][^）)]*[）)]/g, ' ');
+  const parts = [without, ...inners].flatMap(s => s.split(/\s*[\/／|·•・‧⋅]\s*/));
+  const keys = parts.map(p => normalizeCharacterNameKey(p)).filter(k => k.length >= 2);
+  return Array.from(new Set(keys));
+}
+
 /**
  * Library / declared character for a script name. Exact match first, then exact after
  * normalizing spacing / parentheticals, then exact after dropping one honorific prefix
  * (พี่ / น้อง / คุณ ...) on both sides - the last two only when exactly one card matches.
- * No substring / prefix fuzzy matching ("น้อง" never matches "น้องน้ำ").
+ * A slash, middle dot, or parenthetical alias also matches ("แพร" = "แพร / Prae",
+ * "กานต์" = "กานต์ (Karn)") when that alias is a whole token, not a substring
+ * ("น้องน้ำ" never matches "น้องน้ำหวาน", "น้อง" never matches "น้องน้ำ").
  */
 export function findCharacterByName<T extends { name?: string }>(list: T[] | undefined | null, name: string): T | undefined {
   const target = String(name || '').trim();
@@ -256,7 +274,10 @@ export function findCharacterByName<T extends { name?: string }>(list: T[] | und
     if (hits.length === 1) return hits[0];
     if (hits.length > 1) return undefined; // ambiguous: never guess
   }
-  return undefined;
+  const targetTokens = new Set(characterNameTokens(target));
+  if (targetTokens.size === 0) return undefined;
+  const tokenHits = list.filter(c => characterNameTokens(String(c?.name || '')).some(t => targetTokens.has(t)));
+  return tokenHits.length === 1 ? tokenHits[0] : undefined;
 }
 
 export function missingReferenceWarning(name: string): string {
@@ -314,7 +335,9 @@ export function resolveCharacterProfiles(
       source, hasAppearance, missing: [...missing]
     };
     if (sup.referenceMissing) warnings.push(missingReferenceWarning(name));
+    const faceHairMissing = missing.filter(m => m === 'face' || m === 'hair');
     if (!hasAppearance) warnings.push(missingAppearanceWarning(name));
+    else if (faceHairMissing.length > 0) warnings.push(partialAppearanceWarning(name, faceHairMissing));
     else if (missing.length > 0 && !appearance) warnings.push(partialAppearanceWarning(name, [...missing]));
     profiles.push(profile);
   }

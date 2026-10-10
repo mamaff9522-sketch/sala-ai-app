@@ -36,6 +36,7 @@ import { enforceLibraryLocationLocks, type LocationLockInput } from './locationA
 import { findSections, removeSections, insertBlock, stripExact, countOccurrences } from './promptSections';
 import {
   buildCharacterAppearanceLock,
+  findCharacterByName,
   formatReferenceImageLine,
   mergeDeclaredCharacters,
   type CharacterAppearanceInput
@@ -287,8 +288,8 @@ export function mergeDialogueCameraControls(
  * Builds a camera bracket tag attached directly adjacent to a dialogue segment.
  * Rule: Never bundle camera commands at the top of the clip.
  * Format:
- * [CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location, BG SOFT]
- * [CAM-2: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location, BG CLEAR]
+ * [CAM-1: OTS — ... preserve same location (ชานเรือนไม้ไทยริมน้ำ), BG SOFT]
+ * [CAM-2: MID — ... preserve locked faces, locked positions and same location (ชานเรือนไม้ไทยริมน้ำ), BG CLEAR]
  */
 export function buildDialogueCameraTag({
   camIndex,
@@ -330,39 +331,43 @@ export function buildDialogueCameraTag({
     }
   }
 
+  const locName = String(locationName || '').trim();
+  const locMissing = !locName || /^(?:เดิม|same|unknown|n\/a|none|ไม่ระบุ)$/i.test(locName);
+  const sameLocation = locMissing ? 'same location — ไม่พบสถานที่' : `same location (${locName})`;
+
   let angleDesc = '';
   switch (angle) {
     case 'OTS':
       angleDesc = otherTag
-        ? `OTS — camera positioned behind ${otherTag}'s shoulder, only a small part of ${otherTag} visible in foreground, focus clearly on ${speakerTag}'s locked face, preserve same location`
-        : `OTS — camera positioned behind foreground shoulder, only a small part visible in foreground, focus clearly on ${speakerTag}'s locked face, preserve same location`;
+        ? `OTS — camera positioned behind ${otherTag}'s shoulder, only a small part of ${otherTag} visible in foreground, focus clearly on ${speakerTag}'s locked face, preserve ${sameLocation}`
+        : `OTS — camera positioned behind foreground shoulder, only a small part visible in foreground, focus clearly on ${speakerTag}'s locked face, preserve ${sameLocation}`;
       break;
 
     case 'MID':
       angleDesc = (allCharacters.length >= 2 || otherTag)
-        ? `MID — medium framing showing ${charsTogether} together, preserve locked faces, locked positions and same location`
-        : `MID — medium framing showing ${speakerTag} from waist up, preserve locked face, locked position and same location`;
+        ? `MID — medium framing showing ${charsTogether} together, preserve locked faces, locked positions and ${sameLocation}`
+        : `MID — medium framing showing ${speakerTag} from waist up, preserve locked face, locked position and ${sameLocation}`;
       break;
 
     case 'CU':
-      angleDesc = `CU — tight close-up framing focused clearly on ${speakerTag}'s locked face, preserve same location`;
+      angleDesc = `CU — tight close-up framing focused clearly on ${speakerTag}'s locked face, preserve ${sameLocation}`;
       break;
 
     case '2S':
       angleDesc = otherTag
-        ? `2S — two-shot framing showing ${speakerTag} and ${otherTag} together in frame, preserve locked faces, locked positions and same location`
-        : `2S — two-shot framing showing characters together in frame, preserve locked faces, locked positions and same location`;
+        ? `2S — two-shot framing showing ${speakerTag} and ${otherTag} together in frame, preserve locked faces, locked positions and ${sameLocation}`
+        : `2S — two-shot framing showing characters together in frame, preserve locked faces, locked positions and ${sameLocation}`;
       break;
 
     case 'W':
       angleDesc = (allCharacters.length >= 2 || otherTag)
-        ? `W — wide framing showing ${charsTogether} together in environment, preserve locked faces, locked positions and same location`
-        : `W — wide framing showing ${speakerTag} in environment, preserve locked face, locked position and same location`;
+        ? `W — wide framing showing ${charsTogether} together in environment, preserve locked faces, locked positions and ${sameLocation}`
+        : `W — wide framing showing ${speakerTag} in environment, preserve locked face, locked position and ${sameLocation}`;
       break;
 
     case 'AUTO':
     default:
-      angleDesc = `AUTO — dynamic auto framing responding naturally to narrative movement and emotion, preserve locked faces and same location`;
+      angleDesc = `AUTO — dynamic auto framing responding naturally to narrative movement and emotion, preserve locked faces and ${sameLocation}`;
       break;
   }
 
@@ -389,8 +394,6 @@ export function formatDialogueWithCameraControl(
 ): string {
   if (!dialogues || dialogues.length === 0) return '';
 
-  let globalCamIndex = 1;
-
   const blocks = dialogues.map((d) => {
     const speaker = d.speaker || 'ตัวละคร';
     const cleanLine = (d.line || '').replace(/^["“'‘«「]+|["”'’»」]+$/g, '').trim();
@@ -411,10 +414,10 @@ export function formatDialogueWithCameraControl(
     // If 2 angles on this single dialogue line:
     // CAM-1 must occur first, CAM-2 must occur after.
     // The dialogue line is NOT repeated. No new dialogue is created. Original dialogue is not changed.
-    const camTags = angles.map((ang) => {
-      const currentCamIndex = globalCamIndex++;
+    // Camera numbers restart on every line: first angle CAM-1, second CAM-2. A third angle is dropped above.
+    const camTags = angles.map((ang, angIdx) => {
       return buildDialogueCameraTag({
-        camIndex: currentCamIndex,
+        camIndex: angIdx + 1,
         angle: ang,
         speaker,
         otherCharacters: otherChars,
@@ -787,13 +790,113 @@ export function detectLightingFromText(text: string): string {
 /**
  * ตรวจจับช่วงเวลาจากข้อความ (เช้าตรู่ / กลางวัน / ยามเย็น / กลางคืน)
  */
+const THAI_NUM: Record<string, string> = {
+  '1': 'หนึ่ง', '2': 'สอง', '3': 'สาม', '4': 'สี่', '5': 'ห้า', '6': 'หก',
+  'หนึ่ง': 'หนึ่ง', 'สอง': 'สอง', 'สาม': 'สาม', 'สี่': 'สี่', 'ห้า': 'ห้า', 'หก': 'หก'
+};
+
+/** A clock phrase the script actually says, such as ตีสอง, kept as written. */
+export function specificTimePhrase(text: string): string {
+  if (!text) return '';
+  const tee = text.match(/ตี\s*(หนึ่ง|สอง|สาม|สี่|ห้า|[1-5])/);
+  if (tee) return 'ตี' + THAI_NUM[tee[1]];
+  const thum = text.match(/(หนึ่ง|สอง|สาม|สี่|ห้า|หก|[1-6])\s*ทุ่ม/);
+  if (thum) return THAI_NUM[thum[1]] + 'ทุ่ม';
+  const clock = text.match(/([01]?\d|2[0-3])[:.](\d{2})\s*น\.?/);
+  if (clock) return `${clock[1]}:${clock[2]} น.`;
+  return '';
+}
+
+/** Thai lighting that follows the time when the script does not name a light. */
+export function thaiLightingForTime(timeOfDay: string): string {
+  const t = timeOfDay || '';
+  if (!t.trim()) return '';
+  if (/(ตี|ทุ่ม|ดึก|เที่ยงคืน|กลางคืน|ค่ำ|night|midnight)/i.test(t)) return 'แสงกลางคืน';
+  if (/(เย็น|พลบ|สายัณห์|dusk|evening|sunset)/i.test(t)) return 'แสงเย็น';
+  if (/(เช้า|รุ่ง|dawn|morning)/i.test(t)) return 'แสงเช้า';
+  if (/(กลางวัน|เที่ยง|บ่าย|day|noon)/i.test(t)) return 'แสงกลางวัน';
+  return '';
+}
+
 export function detectSceneTimeOfDay(text: string): string {
   if (!text) return '';
-  if (/(ตอนกลางคืน|ยามค่ำคืน|ค่ำคืน|กลางคืน|ดึก|เที่ยงคืน|night|midnight)/i.test(text)) return 'กลางคืน';
-  if (/(เช้าตรู่|รุ่งเช้า|รุ่งสาง|ยามเช้า|แสงแรก|ตอนเช้า|ช่วงเช้า|dawn|morning)/i.test(text)) return 'เช้าตรู่';
-  if (/(กลางวัน|ตอนกลางวัน|เที่ยงวัน|บ่าย|noon|\bday\b)/i.test(text)) return 'กลางวัน';
-  if (/(ยามเย็น|ตอนเย็น|ช่วงเย็น|เวลาเย็น|พระอาทิตย์ตก|สายัณห์|หัวค่ำ|พลบค่ำ|dusk|evening)/i.test(text)) return 'ยามเย็น';
-  return '';
+  const exact = specificTimePhrase(text);
+  if (exact) return exact;
+  // Keep the words the script wrote. Do not rename ช่วงเย็น to ยามเย็น or รุ่งเช้า to เช้าตรู่.
+  const phrases = [
+    'ตอนกลางคืน', 'ยามค่ำคืน', 'เที่ยงคืน', 'กลางคืน', 'ค่ำคืน', 'ดึก',
+    'เช้าตรู่', 'รุ่งเช้า', 'รุ่งสาง', 'ยามเช้า', 'ตอนเช้า', 'ช่วงเช้า', 'แสงแรก',
+    'ตอนกลางวัน', 'เที่ยงวัน', 'กลางวัน', 'บ่าย',
+    'พระอาทิตย์ตก', 'ช่วงเย็น', 'เวลาเย็น', 'ยามเย็น', 'ตอนเย็น', 'สายัณห์', 'หัวค่ำ', 'พลบค่ำ',
+    'midnight', 'night', 'morning', 'dawn', 'evening', 'dusk', 'noon'
+  ];
+  const lower = text.toLowerCase();
+  let best = '';
+  let bestAt = -1;
+  for (const phrase of phrases) {
+    const idx = lower.indexOf(phrase.toLowerCase());
+    if (idx >= 0 && (bestAt < 0 || idx < bestAt || (idx === bestAt && phrase.length > best.length))) {
+      bestAt = idx;
+      best = text.slice(idx, idx + phrase.length);
+    }
+  }
+  if (!best) {
+    const day = text.match(/\bday\b/i);
+    if (day && day.index !== undefined) best = day[0];
+  }
+  return best;
+}
+
+const BLANK_SCENE_LOCK = new Set(['', 'ไม่ระบุ', 'ไม่ระบุจากต้นฉบับ']);
+
+/** First line of a prompt: this prompt belongs to one scene, one time, and one place. */
+export function sceneLockBinding(sceneNumber: number, timeOfDay: string, location: string): string {
+  const time = BLANK_SCENE_LOCK.has(String(timeOfDay || '').trim()) ? 'ไม่ระบุ' : String(timeOfDay).trim();
+  const place = BLANK_SCENE_LOCK.has(String(location || '').trim()) ? 'ไม่ระบุ' : String(location).trim();
+  return `ผูกพรอมต์นี้กับฉากที่ ${sceneNumber} เวลา ${time} สถานที่ ${place}`;
+}
+
+function lockedSceneValue(value: string): string {
+  const t = String(value || '').trim();
+  return BLANK_SCENE_LOCK.has(t) ? '' : t;
+}
+
+/**
+ * A prompt may contain only its own scene's locked time and place.
+ * Another scene's locked time anywhere in the prompt, or another scene's place
+ * on a Location line, is a conflict. Generation must stop.
+ */
+export function findSceneLockConflicts(scenes: { sceneNumber: number; timeOfDay: string; location: string; prompt: string }[]): string[] {
+  const conflicts: string[] = [];
+  const rows = scenes.map(sc => ({
+    sceneNumber: sc.sceneNumber,
+    time: lockedSceneValue(sc.timeOfDay),
+    place: lockedSceneValue(sc.location),
+    prompt: String(sc.prompt || '')
+  }));
+  for (const scene of rows) {
+    const binding = sceneLockBinding(scene.sceneNumber, scene.time, scene.place);
+    if (!scene.prompt.includes(binding)) {
+      conflicts.push(`พรอมต์ฉากที่ ${scene.sceneNumber} ไม่ได้ระบุว่าผูกกับฉากนี้ เวลา ${scene.time || 'ไม่ระบุ'} สถานที่ ${scene.place || 'ไม่ระบุ'}`);
+    }
+    let text = scene.prompt;
+    if (scene.time) text = text.split(scene.time).join(' ');
+    const ownLight = thaiLightingForTime(scene.time);
+    if (ownLight) text = text.split(ownLight).join(' ');
+    if (scene.place) text = text.split(scene.place).join(' ');
+    for (const other of rows) {
+      if (other.sceneNumber === scene.sceneNumber) continue;
+      if (scene.time && other.time && other.time !== scene.time && !scene.time.includes(other.time) && !other.time.includes(scene.time) && text.includes(other.time)) {
+        conflicts.push(`ฉากที่ ${scene.sceneNumber} ล็อกเวลา ${scene.time} แต่พรอมต์มีเวลาของฉากที่ ${other.sceneNumber} คือ ${other.time}`);
+      }
+      if (scene.place && other.place && other.place !== scene.place && !scene.place.includes(other.place) && !other.place.includes(scene.place)) {
+        if (text.includes(`Location: ${other.place}`) || text.includes(`Location Lock: ${other.place}`) || text.includes(`at ${other.place}`)) {
+          conflicts.push(`ฉากที่ ${scene.sceneNumber} ล็อกสถานที่ ${scene.place} แต่พรอมต์มีสถานที่ของฉากที่ ${other.sceneNumber} คือ ${other.place}`);
+        }
+      }
+    }
+  }
+  return Array.from(new Set(conflicts));
 }
 
 /**
@@ -831,7 +934,45 @@ export function extractSceneLocationFromHeading(heading: string): string {
 /**
  * ดึงค่า "สถานที่" (Location) และ "ช่วงเวลา/สภาพแสง" (Lighting/Time) จากเนื้อเรื่องของฉากนั้นโดยตรง
  */
-export function extractSceneEnvironment(title: string, actions: string[] = []): { location: string; timeOfDay: string; lighting: string } {
+const SCENE_PLACE_NOUN = /(บ้าน|ห้อง|ร้าน|ตลาด|โรงเรียน|โรงพยาบาล|โรงแรม|โรงงาน|ป่า|ถนน|ซอย|สวน|วัด|ทะเล|ชายหาด|หาด|แม่น้ำ|ริมน้ำ|คลอง|ภูเขา|ทุ่ง|ไร่|แคมป์|เต็นท์|ออฟฟิศ|สำนักงาน|บริษัท|คาเฟ่|สถานี|ป้ายรถ|สนาม|ลาน|ระเบียง|ดาดฟ้า|ครัว|ประตู|หน้าต่าง|บันได|ทางเดิน|โถง|ศาลา|หมู่บ้าน|เมือง|วิหาร|ถ้ำ|สะพาน|ท่าเรือ|สนามบิน|มหาวิทยาลัย|ห้าง|หอพัก|คอนโด|ลิฟต์|เรือ|ชายป่า|โต๊ะ|เวที|เรือน|ชาน|โกดัง|\broom\b|house|home|street|road|cafe|office|school|forest|park|beach|kitchen|bedroom|hall|station|market|temple|village|city|cave)/i;
+const NOT_A_PLACE_NAME = /^(?:ริม|ที่|ในห้อง|ใน|ณ|บริเวณ|ภายใน|ด้านหน้า)$/;
+const PLACE_CUT = 'กลางคืน|ตอนกลางคืน|ยามค่ำคืน|ค่ำคืน|กลางวัน|ตอนกลางวัน|เช้าตรู่|ตอนเช้า|ยามเช้า|ยามเย็น|ตอนเย็น|ดึก';
+
+function primaryPlaceName(name: string): string {
+  return String(name || '').split(/\s*[\/(（]/)[0].replace(/\s+/g, ' ').trim();
+}
+
+/** Longest library/place name that actually appears in the text. Ordinary words ริม/ที่/ในห้อง never qualify. */
+export function matchKnownPlaceInText(text: string, knownLocationNames: string[] = []): string {
+  const names = (knownLocationNames || [])
+    .map(primaryPlaceName)
+    .filter(n => n.length >= 4 && !NOT_A_PLACE_NAME.test(n))
+    .sort((a, b) => b.length - a.length);
+  for (const n of names) if (text.includes(n)) return n;
+  return '';
+}
+
+/**
+ * Place after ที่/ใน/ณ. A space after the particle is optional ("ยืนที่ชานเรือน..."),
+ * but a glued match must contain a real place noun so "ที่โปรย" / "ริม" alone are not places.
+ */
+export function extractPlaceAfterParticle(text: string): string {
+  if (!text) return '';
+  const boundary = new RegExp(`(?:^|[\\s(,"“])(?:ใน|ที่|ณ)\\s*([ก-๙a-zA-Z][ก-๙a-zA-Z0-9_\\-]*?)(?=${PLACE_CUT}|\\s|$|[.,)"”])`, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = boundary.exec(text))) {
+    const c = (m[1] || '').trim();
+    if (c.length >= 2 && !NOT_A_PLACE_NAME.test(c)) return c;
+  }
+  const glued = new RegExp(`(?:ใน|ที่|ณ)([ก-๙a-zA-Z][ก-๙a-zA-Z0-9_\\-]{1,80}?)(?=${PLACE_CUT}|\\s|$|[.,)"”])`, 'g');
+  while ((m = glued.exec(text))) {
+    const c = (m[1] || '').trim();
+    if (c.length >= 2 && !NOT_A_PLACE_NAME.test(c) && SCENE_PLACE_NOUN.test(c)) return c;
+  }
+  return '';
+}
+
+export function extractSceneEnvironment(title: string, actions: string[] = [], knownLocationNames: string[] = []): { location: string; timeOfDay: string; lighting: string } {
   let location = extractSceneLocationFromHeading(title);
   let timeOfDay = detectSceneTimeOfDay(title);
   let lighting = detectLightingFromText(title);
@@ -852,12 +993,13 @@ export function extractSceneEnvironment(title: string, actions: string[] = []): 
     }
   }
 
-  const combinedActions = actions.join(' ');
-  if (!location) {
-    const locMatch = combinedActions.match(/(?:^|[\s(,"“])(?:ใน|ที่|ณ)\s*([ก-๙a-zA-Z][ก-๙a-zA-Z0-9_\-]*?)(?=กลางคืน|ตอนกลางคืน|ยามค่ำคืน|ค่ำคืน|กลางวัน|ตอนกลางวัน|เช้าตรู่|ตอนเช้า|ยามเช้า|ยามเย็น|ตอนเย็น|ดึก|\s|$|[.,)"”])/);
-    if (locMatch && locMatch[1].trim().length >= 2) {
-      location = locMatch[1].trim();
-    }
+  const combinedActions = [title, ...actions].filter(Boolean).join(' ');
+  const blob = [title, ...actions].filter(Boolean).join('\n');
+  if (!location) location = matchKnownPlaceInText(blob, knownLocationNames);
+  if (!location) location = extractPlaceAfterParticle([title, ...actions].join(' '));
+  if (location) {
+    const better = matchKnownPlaceInText(location, knownLocationNames);
+    if (better) location = better;
   }
   if (!timeOfDay) {
     timeOfDay = detectSceneTimeOfDay(combinedActions);
@@ -865,8 +1007,19 @@ export function extractSceneEnvironment(title: string, actions: string[] = []): 
   if (!lighting) {
     lighting = detectLightingFromText(combinedActions);
   }
+  if (!lighting && timeOfDay) lighting = thaiLightingForTime(timeOfDay);
 
   return { location, timeOfDay, lighting };
+}
+
+/** First scene's place, time, and light, read from the script. Later scenes do not overwrite it. */
+export function autoEnvironmentFromScript(scriptText: string, knownLocationNames: string[] = []): { location: string; timeOfDay: string; lighting: string } {
+  const text = String(scriptText || '').trim();
+  if (!text) return { location: '', timeOfDay: '', lighting: '' };
+  const parts = text.split(/\n(?=\s*(?:\[?(?:CLIP|ฉากที่|ฉาก|SCENE)\s*\d+))/i).map(s => s.trim()).filter(Boolean);
+  const first = parts[0] || text;
+  const lines = first.split('\n');
+  return extractSceneEnvironment(lines[0] || '', lines.slice(1), knownLocationNames);
 }
 
 /**
@@ -1656,11 +1809,10 @@ export function deriveScenePhysicalStates({
   // END_STATE: this scene's own last beat (ห้ามสร้าง Action เพิ่มเอง, บอกสิ่งที่เกิดขึ้นในช็อตเท่านั้น)
   let endState = "";
   if (endOnDialogue && lastDiag) {
-    const others = sceneActiveChars.filter(c => c && c !== lastDiag.speaker);
     const who = lastDiag.offScreen ? `${lastDiag.speaker} (เสียงนอกจอ)` : lastDiag.speaker;
     const delivery = lastDiag.emotionOrAction ? ` ${lastDiag.emotionOrAction}` : "";
-    endState = `${who}${delivery} เพิ่งพูดจบว่า "${lastDiag.dialogue}"` +
-      (others.length > 0 ? ` ขณะที่${others.join(" และ ")}หันมาตอบสนองต่อคำพูดนั้น` : "");
+    // Only the line that was actually spoken. Do not invent a reaction the script never wrote.
+    endState = `${who}${delivery} เพิ่งพูดจบว่า "${lastDiag.dialogue}"`;
   } else if (lastSentence) {
     endState = formatActionAsHappeningEvent(lastSentence);
   } else if (lastDiag) {
@@ -1885,7 +2037,6 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
   });
 
   const rawClips = parsed.clips;
-
   // กฎการแบ่งคลิปอัตโนมัติ:
   // - ห้ามใช้ 1 Action = 1 Clip
   // - Action/Narration ที่ต่อเนื่องกันในฉากและสถานที่เดียวกัน ให้รวมอยู่ในคลิปเดียวเท่าที่เวลา 10 วินาทีรองรับ
@@ -1924,7 +2075,12 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
     description: charAppearance
   }] : [];
   const scriptDeclared = mergeDeclaredCharacters(parsed.metadata.declaredCharacters, scriptText);
-  const suppliedChars: CharacterAppearanceInput[] = [...(params.characters || []).filter(c => c && c.name), ...lockSupplied];
+  // An empty continuity-lock row named exactly "แพร" would hide the library card "แพร / Prae"
+  // (exact match wins). Keep the library card when it already matches that name.
+  const libraryChars = (params.characters || []).filter(c => c && c.name);
+  const suppliedChars: CharacterAppearanceInput[] = (charName && findCharacterByName(libraryChars, charName))
+    ? libraryChars
+    : [...libraryChars, ...lockSupplied];
   const lockCache = new Map<string, { text: string; warnings: string[] }>();
   const lockTextFor = (name: string) => {
     if (!lockCache.has(name)) {
@@ -2055,48 +2211,12 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
     // Start / End with seamless handoff (also across auto-split parts)
     const prevEndState = i > 0 && outputClips[i - 1] ? outputClips[i - 1].endAction : '';
 
-    // Auto Scene Environment:
-    // ดึงค่า "สถานที่" (Location) และ "ช่วงเวลา/สภาพแสง" (Lighting/Time) จากเนื้อเรื่องของฉากนั้นโดยตรง
-    // เมื่อขึ้นฉากใหม่ ให้รีเซ็ตค่าสภาพแวดล้อมเดิมทิ้งทันที ห้ามนำค่าเดิม (เช่น ป่าทึบ/แสงแดด) ข้ามมาใช้ในฉากใหม่ (เช่น ถ้ำโบราณ/กลางคืน)
-    const rawEnv = extractSceneEnvironment(raw.title || `ฉากที่ ${clipNum}`, raw.actions);
-    const sceneLoc = raw.location || rawEnv.location || '';
-    const sceneTime = raw.timeOfDay || rawEnv.timeOfDay || '';
-    const sceneLight = raw.lighting || rawEnv.lighting || '';
-
-    const isExplicitContinuation = /(?:ต่อเนื่อง|\(ต่อ\)|continued|cont'?d?)/i.test(raw.title || '');
-    const isMoodOrTitleOnly = !sceneLoc && (
-      /(อารมณ์|ความรู้สึก|ตึงเครียด|เครียด|คืนดี|ดีกัน|ง้อ|หึง|ทะเลาะ|เริ่ม|บทสรุป|ตอนจบ|สรุป|ความจริง|เปิดใจ|สารภาพ|ขอโทษ|ให้อภัย|เข้าใจกัน|โกรธ|เสียใจ|ดีใจ|ตกใจ|ประทับใจ|ซึ้ง|อบอุ่น|หัวเราะ|ร้องไห้|ไคลแม็กซ์|จุดเปลี่ยน|บทนำ|เปิดเรื่อง|ความลับ|เผชิญหน้า|climax|ending|intro|mood|tension|reconcil)/i.test(raw.title || '') ||
-      !/(บ้าน|ห้อง|ร้าน|ตลาด|โรงเรียน|โรงพยาบาล|โรงแรม|โรงงาน|ป่า|ถนน|ซอย|สวน|วัด|ทะเล|ชายหาด|หาด|แม่น้ำ|ริมน้ำ|คลอง|ภูเขา|ทุ่ง|ไร่|แคมป์|เต็นท์|ออฟฟิศ|สำนักงาน|บริษัท|คาเฟ่|สถานี|ป้ายรถ|สนาม|ลาน|ระเบียง|ดาดฟ้า|ครัว|ประตู|หน้าต่าง|บันได|ทางเดิน|โถง|ศาลา|หมู่บ้าน|เมือง|วิหาร|ถ้ำ|สะพาน|ท่าเรือ|สนามบิน|มหาวิทยาลัย|ห้าง|หอพัก|คอนโด|ลิฟต์|รถ|เรือ|ชายป่า|โต๊ะ|เวที|\broom\b|house|home|street|road|cafe|office|school|forest|park|beach|kitchen|bedroom|hall|station|market|temple|village|city|cave)/i.test(raw.title || '')
-    );
-    const isContinuationFromPrev = isExplicitContinuation || isMoodOrTitleOnly;
-
-    let clipLocation = sceneLoc;
-    let clipTimeOfDay = sceneTime;
-    let clipLighting = sceneLight;
-
-    if (!clipLocation) {
-      if (isContinuationFromPrev && i > 0 && outputClips[i - 1]?.locationName) {
-        clipLocation = outputClips[i - 1].locationName || '';
-      } else if (i === 0 && continuityLock.location) {
-        clipLocation = cleanFieldValue(continuityLock.location) || '';
-      }
-    }
-
-    if (!clipTimeOfDay) {
-      if (isContinuationFromPrev && i > 0) {
-        clipTimeOfDay = (outputClips[i - 1] as any).timeOfDay || '';
-      } else if (i === 0 && continuityLock.timeOfDay) {
-        clipTimeOfDay = cleanFieldValue(continuityLock.timeOfDay) || '';
-      }
-    }
-
-    if (!clipLighting) {
-      if (isContinuationFromPrev && i > 0) {
-        clipLighting = (outputClips[i - 1] as any).lighting || '';
-      } else if (i === 0 && continuityLock.lighting) {
-        clipLighting = cleanFieldValue(continuityLock.lighting) || '';
-      }
-    }
+    // Each scene keeps only the place, time, and light named in that scene. Never copy another scene or the master lock.
+    const knownLocNames = (params.locations || []).flatMap(l => [l?.name, l?.storyProfile?.storyLocationName, l?.identity?.name].map(x => String(x || '').trim()).filter(Boolean));
+    const rawEnv = extractSceneEnvironment(raw.title || `ฉากที่ ${clipNum}`, raw.actions, knownLocNames);
+    const clipLocation = raw.location || rawEnv.location || '';
+    const clipTimeOfDay = raw.timeOfDay || rawEnv.timeOfDay || '';
+    const clipLighting = raw.lighting || rawEnv.lighting || thaiLightingForTime(clipTimeOfDay);
 
     // Architectural Environment:
     // ห้ามนำรายละเอียดสภาพแวดล้อมสถาปัตยกรรมของสถานที่เดิมข้ามมาฉากใหม่ที่เปลี่ยนสถานที่แล้ว
@@ -2120,6 +2240,8 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
 
     // Construct Clean Final Provider Prompt (1 Clip = 1 Prompt)
     const promptSegments: string[] = [];
+    const sourceScene = splitPart?.sourceSceneNumber || clipNum;
+    promptSegments.push(sceneLockBinding(sourceScene, clipTimeOfDay, clipLocation));
     promptSegments.push(visualStyle);
     if (clipLocation) promptSegments.push(`Location: ${clipLocation}`);
     if (clipArchEnv) {
@@ -2167,7 +2289,7 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
       const dialogueText = formatDialogueWithCameraControl(
         uniqueDialogues,
         activeInClip,
-        clipLocation || location || 'เดิม'
+        clipLocation || 'เดิม'
       );
       promptSegments.push(`Dialogue:\n${dialogueText}`);
     }
@@ -2206,10 +2328,10 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
       dialogue: hasDialogue
         ? uniqueDialogues.map(d => `${d.speaker}: "${d.line}"`).join(' ')
         : 'NONE',
-      locationName: clipLocation || location || undefined,
-      timeOfDay: clipTimeOfDay || timeOfDay || undefined,
-      lighting: clipLighting || lighting || undefined,
-      continuityLockSummary: [charName ? `Character: ${charName}` : '', clipLocation || location ? `Location: ${clipLocation || location}` : '', clipTimeOfDay || timeOfDay, clipLighting || lighting].filter(Boolean).join(' | ') || 'Continuity Locked',
+      locationName: clipLocation || undefined,
+      timeOfDay: clipTimeOfDay || undefined,
+      lighting: clipLighting || undefined,
+      continuityLockSummary: [charName ? `Character: ${charName}` : '', clipLocation ? `Location: ${clipLocation}` : '', clipTimeOfDay, clipLighting].filter(Boolean).join(' | ') || 'Continuity Locked',
       audioDirectiveSummary: effectiveAudioSummary,
       generatedPrompt: cleanFinalPrompt,
       negativePrompt: effectiveNegativePrompt,
@@ -2237,8 +2359,7 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
   ].filter(Boolean) as string[]));
   const withContinuity = attachClipContinuity(outputClips, lockedForContinuity, {
     appendToPrompt: true,
-    initialPoses: normalizePoseList((continuityLock as any).characterPositionLocks),
-    location
+    initialPoses: normalizePoseList((continuityLock as any).characterPositionLocks)
   }).clips;
   // Every clip: Character Lock for every character present (library card wins) + reference line
   const withCharacters = enforceLibraryCharacterLocks(withContinuity, suppliedChars, scriptDeclared);
@@ -2256,6 +2377,17 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
   // DIALOGUE 20-WORD SPLIT SYSTEM:
   // ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ
   const splitResult = applyDialogue20WordSplitToClips(cameraClips, clipDurationSeconds);
+  const conflicts = findSceneLockConflicts(splitResult.clips.map(c => ({
+    sceneNumber: (c as any).splitPart?.sourceSceneNumber || c.clipNumber,
+    timeOfDay: String((c as any).timeOfDay || ''),
+    location: String(c.locationName || ''),
+    prompt: String(c.generatedPrompt || '')
+  })));
+  if (conflicts.length > 0) {
+    const err = new Error('พรอมต์ไม่ตรงกับล็อกเวลาหรือสถานที่ของฉาก หยุดสร้าง\n' + conflicts.join('\n'));
+    (err as any).code = 'SCENE_LOCK_CONFLICT';
+    throw err;
+  }
   return splitResult.clips;
 }
 

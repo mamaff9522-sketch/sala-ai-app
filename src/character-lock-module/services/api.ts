@@ -505,7 +505,7 @@ export const api = {
       userId: 'user_sala_001',
       userName: 'ผู้ใช้ศาลาเอไอ (Demo Member)',
       userRole: 'user',
-      remainingCredits: 100,
+      remainingCredits: 0,
       totalUsedCredits: 0,
       dailyUsedCredits: 0,
       dailyLimit: 150,

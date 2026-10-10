@@ -52,7 +52,7 @@ export const ActiveJobBanner: React.FC<ActiveJobBannerProps> = ({
                     <span className="text-xs font-bold text-white uppercase tracking-wider">
                       {job.type === 'video' ? '🎬 กำลังสร้างวิดีโอ' : '🎨 กำลังสร้างภาพ'}
                     </span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
                       {job.aspectRatio}
                     </span>
                   </div>
@@ -73,7 +73,7 @@ export const ActiveJobBanner: React.FC<ActiveJobBannerProps> = ({
 
             {/* Stage text & progress bar */}
             <div className="mt-3">
-              <div className="flex items-center justify-between text-[11px] mb-1.5">
+              <div className="flex items-center justify-between text-xs mb-1.5">
                 <span className="text-slate-400 line-clamp-1">{job.stage}</span>
                 <span className="font-mono font-bold text-indigo-400 shrink-0">
                   {job.progress}%
@@ -96,10 +96,10 @@ export const ActiveJobBanner: React.FC<ActiveJobBannerProps> = ({
             {/* Completed Action */}
             {isCompleted && (
               <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between">
-                <span className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
+                <span className="text-xs text-emerald-400 font-medium flex items-center gap-1">
                   <Sparkles className="w-3.5 h-3.5" /> เสร็จสมบูรณ์
                   {job.isMock && (
-                    <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                    <span className="ml-1 text-xs px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
                       Mock (จำลอง)
                     </span>
                   )}
@@ -122,7 +122,7 @@ export const ActiveJobBanner: React.FC<ActiveJobBannerProps> = ({
                     <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                     <span>สร้างไม่สำเร็จ (Generation failed) — คืนเครดิตแล้ว</span>
                   </div>
-                  <p className="text-[11px] text-rose-300/90 leading-relaxed break-words">
+                  <p className="text-xs text-rose-300/90 leading-relaxed break-words">
                     {job.error || job.stage}
                   </p>
                 </div>

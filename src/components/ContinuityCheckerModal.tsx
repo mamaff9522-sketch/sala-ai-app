@@ -79,7 +79,7 @@ export const ContinuityCheckerModal: React.FC<ContinuityCheckerModalProps> = ({
               </p>
             </div>
           </div>
-          <button
+          <button aria-label="ปิด" title="ปิด"
             onClick={onClose}
             className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800/60 transition-all"
           >
@@ -140,7 +140,7 @@ export const ContinuityCheckerModal: React.FC<ContinuityCheckerModalProps> = ({
                       ? `พบข้อควรระวัง/ขัดแย้ง ${report.totalIssues} รายการ`
                       : 'ผ่านการตรวจสอบความต่อเนื่อง 100% ทุกคลิป'}
                   </div>
-                  <div className="text-[11px] opacity-80">
+                  <div className="text-xs opacity-80">
                     {report.hasConflicts
                       ? 'คุณสามารถกดแก้ไขตามคำแนะนำเพื่อคุณภาพการเจนระดับสตูดิโอ'
                       : 'ตัวละคร เครื่องแต่งกาย แสง มุมกล้อง และบทพูดมีความสอดคล้องกันสมบูรณ์'}
@@ -186,17 +186,17 @@ export const ContinuityCheckerModal: React.FC<ContinuityCheckerModalProps> = ({
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300 font-mono text-[10px] font-bold">
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300 font-mono text-xs font-bold">
                           คลิปที่ {issue.clipNumber}
                         </span>
                         <span className="font-bold text-white">{issue.title}</span>
                       </div>
-                      <span className="text-[10px] text-slate-400 uppercase font-mono">{issue.type}</span>
+                      <span className="text-xs text-slate-400 uppercase font-mono">{issue.type}</span>
                     </div>
 
                     <p className="text-slate-300 leading-relaxed">{issue.description}</p>
 
-                    <div className="p-2.5 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-indigo-300 text-[11px] flex items-start gap-2">
+                    <div className="p-2.5 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-indigo-300 text-xs flex items-start gap-2">
                       <Sparkles className="w-3.5 h-3.5 shrink-0 mt-0.5 text-indigo-400" />
                       <div>
                         <strong>คำแนะนำในการแก้ไข:</strong> {issue.suggestion}

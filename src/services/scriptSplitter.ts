@@ -1,5 +1,4 @@
 import { Character, LocationItem, MasterContinuityLock } from '../types';
-import { getApiKey } from './auth';
 import { toCharacterLockPayload } from './characterAppearance';
 import { parseScriptLocally, applySplitLocks } from './localScriptParser';
 
@@ -106,7 +105,7 @@ export interface ScriptSplitResult {
 export interface ScriptSplitOptions {
   clipCount?: number;
   token?: string;
-  /** User's Gemini key (defaults to the saved key: Firestore when signed in, else localStorage) */
+  /** Ignored. The server uses its own Gemini key. */
   apiKey?: string;
   /** User's locks: forwarded as LOCKED CONTINUITY CONTEXT and forced into every scene */
   continuityLock?: Partial<MasterContinuityLock>;
@@ -144,18 +143,6 @@ export async function splitScript(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  let apiKey = '';
-  if (!options?.offlineMode) {
-    apiKey = (options?.apiKey || '').trim();
-    if (!apiKey) {
-      try {
-        apiKey = (await getApiKey('gemini')) || '';
-      } catch {
-        apiKey = hasStorage ? localStorage.getItem('sala_gemini_api_key') || '' : '';
-      }
-    }
-  }
-
   let res: Response;
   try {
     res = await fetch('/api/script/split', {
@@ -164,7 +151,6 @@ export async function splitScript(
       body: JSON.stringify({
         scriptText: scriptText.trim(),
         clipCount: options?.clipCount,
-        apiKey: apiKey || undefined,
         continuityLock: options?.continuityLock,
         characters: (options?.characters || []).map(c => toCharacterLockPayload(c)),
         locations: (options?.locations || []).map(l => ({ id: l.id, name: l.name, description: (l as any).description || '' })),
@@ -289,8 +275,6 @@ export async function analyzeCharacterImage(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const apiKey = options?.apiKey || localStorage.getItem('sala_gemini_api_key') || '';
-
   try {
     const res = await fetch('/api/character/analyze-image', {
       method: 'POST',
@@ -298,7 +282,6 @@ export async function analyzeCharacterImage(
       body: JSON.stringify({
         image: primaryImage,
         images: imagesList,
-        apiKey: apiKey || undefined,
         forceReanalyze: options?.forceReanalyze ?? false,
       }),
     });

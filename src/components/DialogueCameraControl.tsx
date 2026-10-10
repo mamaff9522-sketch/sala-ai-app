@@ -18,6 +18,7 @@ import {
   BACKGROUND_CONTROL_DEFINITIONS,
   CameraAngleDefinition
 } from '../constants/cameraAngles';
+import { DIALOGUE_CAMERA_ANGLES } from '../services/dialogueLockFromScript';
 
 interface DialogueCameraControlProps {
   dialogue: DialogueLockEntry;
@@ -78,20 +79,20 @@ export const DialogueCameraControl: React.FC<DialogueCameraControlProps> = ({
     });
   };
 
-  const cameraAngleList: DialogueCameraAngle[] = ['AUTO', 'OTS', 'CU', '2S', 'MID', 'W'];
+  const cameraAngleList: DialogueCameraAngle[] = DIALOGUE_CAMERA_ANGLES;
   const bgList: DialogueBackgroundControl[] = ['AUTO', 'SOFT', 'CLEAR'];
 
   return (
     <div className="mt-2 pt-2 border-t border-slate-800/80 space-y-2 text-xs">
       {/* Header: Camera Control */}
       <div className="flex flex-wrap items-center justify-between gap-1.5">
-        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-300">
           <Camera className="w-3.5 h-3.5 text-indigo-400" />
           <span>Camera Control (เลือกได้สูงสุด 2 มุม: CAM-1, CAM-2):</span>
         </div>
 
         {activeAngles.length > 0 && (
-          <div className="flex items-center gap-1 text-[10px]">
+          <div className="flex items-center gap-1 text-xs">
             {activeAngles.map((ang, i) => (
               <span
                 key={ang}
@@ -173,7 +174,7 @@ export const DialogueCameraControl: React.FC<DialogueCameraControlProps> = ({
 
       {/* Background Control Row */}
       <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-900">
-        <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
           <Layers className="w-3 h-3 text-slate-400" />
           <span>Background Control:</span>
         </div>
@@ -188,7 +189,7 @@ export const DialogueCameraControl: React.FC<DialogueCameraControlProps> = ({
                 key={bgKey}
                 type="button"
                 onClick={() => handleBgChange(bgKey)}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-medium border transition-all ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
                   isSelected
                     ? def.badgeColor + ' font-bold ring-1 ring-offset-0 ring-indigo-400/40'
                     : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
@@ -216,7 +217,7 @@ export const DialogueCameraControl: React.FC<DialogueCameraControlProps> = ({
                   <h4 className="font-bold text-white text-sm leading-tight">
                     มุมกล้อง {selectedAngleInfo.label}: {selectedAngleInfo.shortName}
                   </h4>
-                  <p className="text-[11px] text-slate-400">{selectedAngleInfo.fullName}</p>
+                  <p className="text-xs text-slate-400">{selectedAngleInfo.fullName}</p>
                 </div>
               </div>
 
@@ -235,7 +236,7 @@ export const DialogueCameraControl: React.FC<DialogueCameraControlProps> = ({
                 className="w-full h-32 flex items-center justify-center"
                 dangerouslySetInnerHTML={{ __html: selectedAngleInfo.svgDiagram }}
               />
-              <span className="text-[10px] text-slate-500 mt-1">
+              <span className="text-xs text-slate-400 mt-1">
                 *ภาพสาธิตมุมกล้องถาวร (ไม่ใช่รูปตัวละครจริงของผู้ใช้)
               </span>
             </div>
@@ -243,19 +244,19 @@ export const DialogueCameraControl: React.FC<DialogueCameraControlProps> = ({
             {/* Short Explanation: Camera position & What is seen */}
             <div className="space-y-2 text-xs bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3">
               <div>
-                <span className="text-indigo-400 font-semibold block text-[11px] mb-0.5">
+                <span className="text-indigo-400 font-semibold block text-xs mb-0.5">
                   📍 ตำแหน่งกล้อง (Where the camera is):
                 </span>
-                <p className="text-slate-200 text-[11px] leading-relaxed">
+                <p className="text-slate-200 text-xs leading-relaxed">
                   {selectedAngleInfo.cameraPosition}
                 </p>
               </div>
 
               <div className="pt-2 border-t border-slate-800/60">
-                <span className="text-emerald-400 font-semibold block text-[11px] mb-0.5">
+                <span className="text-emerald-400 font-semibold block text-xs mb-0.5">
                   👁️ สิ่งที่เห็นในเฟรม (What is seen):
                 </span>
-                <p className="text-slate-200 text-[11px] leading-relaxed">
+                <p className="text-slate-200 text-xs leading-relaxed">
                   {selectedAngleInfo.whatIsSeen}
                 </p>
               </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   Share2,
@@ -10,7 +10,7 @@ import {
   Hash
 } from 'lucide-react';
 import { SocialPostRecommendation } from '../types';
-import { api } from '../services/api';
+import { buildSocialPostsFromStory } from '../services/socialPostFromStory';
 
 interface SocialPostAssistantModalProps {
   isOpen: boolean;
@@ -32,20 +32,15 @@ export const SocialPostAssistantModal: React.FC<SocialPostAssistantModalProps> =
 
   if (!isOpen) return null;
 
-  const handleGenerate = async () => {
+  useEffect(() => {
+    if (!isOpen) return;
+    setPosts(buildSocialPostsFromStory(scriptText, characterName, tone));
+  }, [isOpen, scriptText, characterName, tone]);
+
+  const handleGenerate = () => {
     setIsLoading(true);
-    try {
-      const results = await api.generateSocialPosts({
-        scriptText,
-        characterName,
-        tone
-      });
-      setPosts(results);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsLoading(false);
-    }
+    setPosts(buildSocialPostsFromStory(scriptText, characterName, tone));
+    setIsLoading(false);
   };
 
   const copyText = (key: string, text: string) => {
@@ -70,7 +65,7 @@ export const SocialPostAssistantModal: React.FC<SocialPostAssistantModalProps> =
               </p>
             </div>
           </div>
-          <button
+          <button aria-label="ปิด" title="ปิด"
             onClick={onClose}
             className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800/60 transition-all"
           >
@@ -117,6 +112,10 @@ export const SocialPostAssistantModal: React.FC<SocialPostAssistantModalProps> =
           </div>
         </div>
 
+        {!scriptText.trim() && (
+          <p className="text-sm text-amber-200">ยังไม่มีเนื้อเรื่องปัจจุบัน จึงยังไม่มีข้อความโพสต์</p>
+        )}
+
         {/* Generated Posts */}
         {posts.length > 0 && (
           <div className="space-y-4 animate-in fade-in">
@@ -136,12 +135,12 @@ export const SocialPostAssistantModal: React.FC<SocialPostAssistantModalProps> =
                       ? 'YouTube Shorts'
                       : 'Facebook'}
                   </span>
-                  <span className="text-[11px] text-indigo-400 font-mono">Tone: {p.tone}</span>
+                  <span className="text-xs text-indigo-400 font-mono">Tone: {p.tone}</span>
                 </div>
 
                 {/* Title */}
                 <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <div className="flex items-center justify-between text-xs text-slate-400">
                     <span>พาดหัวปกคลิป / Hook:</span>
                     <button
                       onClick={() => copyText(`${p.platform}_title`, p.titles[0])}
@@ -158,7 +157,7 @@ export const SocialPostAssistantModal: React.FC<SocialPostAssistantModalProps> =
 
                 {/* Caption */}
                 <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <div className="flex items-center justify-between text-xs text-slate-400">
                     <span>ข้อความแคปชั่น:</span>
                     <button
                       onClick={() => copyText(`${p.platform}_caption`, p.captions[0])}
@@ -175,7 +174,7 @@ export const SocialPostAssistantModal: React.FC<SocialPostAssistantModalProps> =
 
                 {/* Hashtags */}
                 <div className="space-y-1">
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <div className="flex items-center justify-between text-xs text-slate-400">
                     <span>แฮชแท็ก:</span>
                     <button
                       onClick={() => copyText(`${p.platform}_hash`, p.hashtags.join(' '))}
@@ -189,7 +188,7 @@ export const SocialPostAssistantModal: React.FC<SocialPostAssistantModalProps> =
                     {p.hashtags.map((tag, idx) => (
                       <span
                         key={idx}
-                        className="px-2 py-0.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-[11px] font-mono"
+                        className="px-2 py-0.5 rounded-lg bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs font-mono"
                       >
                         {tag}
                       </span>

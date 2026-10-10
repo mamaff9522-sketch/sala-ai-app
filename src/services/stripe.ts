@@ -58,7 +58,7 @@ export const CREDIT_PACKAGES: CreditPackage[] = [
     name: 'Starter Pack',
     nameTh: 'ชุดเริ่มต้น',
     credits: 100,
-    priceThb: 99,
+    priceThb: 100,
     priceUsd: 2.99,
     description: 'เหมาะสำหรับผู้เริ่มต้นทดลองสร้างภาพและคลิปสั้น',
     approxImages: 50,
@@ -76,18 +76,17 @@ export const CREDIT_PACKAGES: CreditPackage[] = [
     name: 'Pro Creator',
     nameTh: 'ชุดยอดนิยม ครีเอเตอร์',
     credits: 500,
-    priceThb: 399,
+    priceThb: 500,
     priceUsd: 11.99,
     popular: true,
-    badge: 'สุดคุ้ม ยอดนิยม ⭐',
-    description: 'ประหยัดกว่า 20% เหมาะสำหรับทำคอนเทนต์ซีรีส์และสตอรี่บอร์ด',
+    badge: 'ยอดนิยม ⭐',
+    description: 'เหมาะสำหรับทำคอนเทนต์ซีรีส์และสตอรี่บอร์ด',
     approxImages: 250,
     approxVideos: 50,
     features: [
       '500 เครดิตพร้อมใช้งานทันที',
       'สร้างภาพ AI ได้ประมาณ 250 ภาพ',
       'สร้างวิดีโอต่อเนื่อง Multi-Clip ได้ประมาณ 50 คลิป',
-      'ประหยัดกว่าแพ็กเกจเริ่มต้น 20%',
       'สิทธิ์คิวประมวลผลความเร็วสูง (High Priority)',
       'ไม่มีวันหมดอายุ'
     ]
@@ -97,9 +96,8 @@ export const CREDIT_PACKAGES: CreditPackage[] = [
     name: 'Master Director',
     nameTh: 'ชุดผู้กำกับมือโปร',
     credits: 1000,
-    priceThb: 699,
+    priceThb: 1000,
     priceUsd: 19.99,
-    badge: 'ลดพิเศษ 30%',
     description: 'สำหรับโปรดิวเซอร์ที่ต้องการผลิตหนังสั้นและคลิปยาวต่อเนื่อง',
     approxImages: 500,
     approxVideos: 100,
@@ -107,7 +105,6 @@ export const CREDIT_PACKAGES: CreditPackage[] = [
       '1,000 เครดิตพร้อมใช้งานทันที',
       'สร้างภาพ AI ได้ประมาณ 500 ภาพ',
       'สร้างคลิปหนังสั้นเต็มเรื่องได้กว่า 100 คลิป',
-      'ประหยัดสูงสุด 30%',
       'สิทธิ์การเข้าถึงโมเดลใหม่ก่อนใคร',
       'การสนับสนุนพิเศษทางเทคนิค'
     ]
@@ -117,7 +114,7 @@ export const CREDIT_PACKAGES: CreditPackage[] = [
     name: 'Studio Enterprise',
     nameTh: 'ชุดสตูดิโอโปรดักชัน',
     credits: 2500,
-    priceThb: 1499,
+    priceThb: 2500,
     priceUsd: 42.99,
     badge: 'ความจุสูงสุด',
     description: 'ความจุสูงสุดสำหรับทีมงาน บริษัทโฆษณา และสตูดิโอขนาดใหญ่',
@@ -167,11 +164,7 @@ export async function createCheckoutSession(
       Authorization: `Bearer ${localStorage.getItem('sala_auth_id_token') || ''}`
     },
     body: JSON.stringify({
-      credits: params.credits,
       packageId: params.packageId,
-      uid: params.uid,
-      userEmail: params.userEmail,
-      customAmountThb: params.customAmountThb,
       returnUrl
     })
   });
@@ -227,7 +220,8 @@ export async function redirectToCheckout(checkoutUrl: string, sessionId?: string
 export async function verifyPaymentSession(sessionId: string): Promise<{
   success: boolean;
   creditsAdded: number;
-  remainingCredits: number;
+  creditsGranted?: boolean;
+  remainingCredits?: number | null;
   message: string;
 }> {
   const response = await fetch(`/api/stripe/verify-session?sessionId=${encodeURIComponent(sessionId)}`, {
@@ -264,9 +258,9 @@ export async function fetchStripeConfig(): Promise<StripeConfig> {
     console.warn('Failed to fetch stripe config:', err);
   }
   return {
-    success: true,
-    publishableKey: STRIPE_PUBLISHABLE_KEY,
+    success: false,
+    publishableKey: '',
     hasSecretKey: false,
-    isMock: true
+    isMock: false
   };
 }

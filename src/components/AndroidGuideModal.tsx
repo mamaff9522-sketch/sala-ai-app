@@ -43,7 +43,7 @@ export const AndroidGuideModal: React.FC<AndroidGuideModalProps> = ({ isOpen, on
               </p>
             </div>
           </div>
-          <button
+          <button aria-label="ปิด" title="ปิด"
             onClick={onClose}
             className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800/60 transition-all"
           >
@@ -68,13 +68,13 @@ export const AndroidGuideModal: React.FC<AndroidGuideModalProps> = ({ isOpen, on
           {/* Option 1: PWA Direct Install */}
           <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-2.5">
             <div className="flex items-center gap-2 text-white font-bold">
-              <span className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-[10px]">1</span>
+              <span className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center text-xs">1</span>
               <span>ติดตั้งทันทีผ่านเบราว์เซอร์ Chrome บนมือถือ (PWA Install)</span>
             </div>
             <p className="text-slate-400 leading-relaxed">
               เปิดเว็บไซต์นี้ด้วย Google Chrome บนอุปกรณ์ Android &rarr; กดปุ่มจุดสามจุด (⋮) มุมขวาบน &rarr; เลือก <strong>"ติดตั้งแอป" (Install app)</strong> หรือ <strong>"เพิ่มลงในหน้าจอหลัก" (Add to Home screen)</strong>
             </p>
-            <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-300 font-mono text-[11px]">
+            <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-slate-300 font-mono text-xs">
               ตรวจพบ Web Manifest: <span className="text-indigo-400">/manifest.json</span> พร้อมไอคอน 192px และ 512px
             </div>
           </div>
@@ -83,10 +83,10 @@ export const AndroidGuideModal: React.FC<AndroidGuideModalProps> = ({ isOpen, on
           <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-white font-bold">
-                <span className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center text-[10px]">2</span>
+                <span className="w-5 h-5 rounded-full bg-emerald-600 flex items-center justify-center text-xs">2</span>
                 <span>สร้างไฟล์ APK ด้วย Google Bubblewrap (TWA สำหรับ Play Store)</span>
               </div>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 font-mono">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 font-mono">
                 Official Google Tool
               </span>
             </div>
@@ -101,7 +101,7 @@ export const AndroidGuideModal: React.FC<AndroidGuideModalProps> = ({ isOpen, on
                 { title: 'คอมไพล์เป็นไฟล์ APK/AAB:', cmd: 'bubblewrap build' }
               ].map((step, idx) => (
                 <div key={idx} className="space-y-1">
-                  <div className="flex items-center justify-between text-[11px] text-slate-400">
+                  <div className="flex items-center justify-between text-xs text-slate-400">
                     <span>{step.title}</span>
                     <button
                       onClick={() => copyCode(idx, step.cmd)}
@@ -111,8 +111,8 @@ export const AndroidGuideModal: React.FC<AndroidGuideModalProps> = ({ isOpen, on
                       <span>คัดลอกคำสั่ง</span>
                     </button>
                   </div>
-                  <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl font-mono text-[11px] text-slate-300 flex items-center gap-2">
-                    <Terminal className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl font-mono text-xs text-slate-300 flex items-center gap-2">
+                    <Terminal className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                     <span className="truncate">{step.cmd}</span>
                   </div>
                 </div>

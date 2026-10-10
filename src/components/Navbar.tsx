@@ -1,5 +1,5 @@
 import React from 'react';
-import { Coins, ShieldAlert, Cpu, Layers, User as UserIcon, Image as ImageIcon, LogIn, LogOut, Key, Loader2, PlusCircle, Users } from 'lucide-react';
+import { Coins, ShieldAlert, Cpu, Layers, User as UserIcon, Image as ImageIcon, LogIn, LogOut, Loader2, Users } from 'lucide-react';
 import { CreditAccount, ProviderInfo, ProviderId } from '../types';
 
 interface NavbarProps {
@@ -13,7 +13,6 @@ interface NavbarProps {
   onLogin?: () => void;
   onLogout?: () => void;
   onSwitchAccount?: () => void;
-  onOpenApiKeyModal?: () => void;
   isLoggingIn?: boolean;
   isAdmin?: boolean;
 }
@@ -29,7 +28,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogin,
   onLogout,
   onSwitchAccount,
-  onOpenApiKeyModal,
   isLoggingIn,
   isAdmin,
 }) => {
@@ -57,14 +55,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               SALA
             </span>
             <span
-              className="font-bold text-xl tracking-wide bg-gradient-to-r from-[#00D8FF] via-[#7B2CFF] to-[#FF35D4] bg-clip-text text-transparent"
+              className="font-bold text-xl tracking-wide bg-gradient-to-r from-[#00D8FF] via-[#7B2CFF] to-[#FF35D4] bg-clip-text [-webkit-background-clip:text] text-transparent [-webkit-text-fill-color:transparent]"
               style={{
                 filter: 'drop-shadow(0 0 8px rgba(0, 216, 255, 0.7))'
               }}
             >
               AI
             </span>
-            <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-gradient-to-r from-[#FF35D4] via-[#FF4ECF] to-[#7B2CFF] text-white shadow-[0_0_10px_rgba(255,53,212,0.7)] border border-pink-400/40">
+            <span className="text-xs font-extrabold uppercase px-2 py-0.5 rounded-full bg-gradient-to-r from-[#FF35D4] via-[#FF4ECF] to-[#7B2CFF] text-white shadow-[0_0_10px_rgba(255,53,212,0.7)] border border-pink-400/40">
               Pro
             </span>
           </div>
@@ -75,7 +73,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             onClick={() => setActiveTab('home')}
             id="nav-desktop-home"
-            className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
+            className={`px-3.5 py-2 rounded-xl text-[16px] font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'home'
                 ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg shadow-purple-600/30 ring-1 ring-purple-400/40'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800/70'
@@ -86,7 +84,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             onClick={() => setActiveTab('director')}
             id="nav-desktop-director"
-            className={`px-4 py-2 rounded-xl text-xs font-semibold transition-all flex items-center gap-2 cursor-pointer ${
+            className={`px-4 py-2 rounded-xl text-[16px] font-semibold transition-all flex items-center gap-2 cursor-pointer ${
               activeTab === 'director'
                 ? 'bg-gradient-to-r from-indigo-600 via-indigo-500 to-emerald-600 text-white shadow-lg shadow-indigo-600/25 ring-1 ring-white/20'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800/70'
@@ -100,7 +98,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             onClick={() => setActiveTab('characters')}
             id="nav-desktop-characters"
-            className={`px-3.5 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+            className={`px-3.5 py-2 rounded-xl text-[16px] font-medium transition-all cursor-pointer ${
               activeTab === 'characters'
                 ? 'bg-indigo-600 text-white shadow-sm'
                 : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
@@ -111,7 +109,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             onClick={() => setActiveTab('locations')}
             id="nav-desktop-locations"
-            className={`px-3.5 py-2 rounded-xl text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
+            className={`px-3.5 py-2 rounded-xl text-[16px] font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'locations'
                 ? 'bg-emerald-600 text-white shadow-sm'
                 : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
@@ -125,7 +123,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             onClick={() => setActiveTab('gallery')}
             id="nav-desktop-gallery"
-            className={`px-3.5 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer ${
+            className={`px-3.5 py-2 rounded-xl text-[16px] font-medium transition-all cursor-pointer ${
               activeTab === 'gallery'
                 ? 'bg-indigo-600 text-white shadow-sm'
                 : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
@@ -137,7 +135,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               onClick={() => setActiveTab('admin')}
               id="nav-desktop-admin"
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              className={`px-3.5 py-1.5 rounded-lg text-[16px] font-medium transition-all ${
                 activeTab === 'admin'
                   ? 'bg-amber-600/90 text-white shadow-sm'
                   : 'text-slate-400 hover:text-amber-400 hover:bg-slate-800/60'
@@ -149,7 +147,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <button
             onClick={() => setActiveTab('pricing')}
             id="nav-desktop-pricing"
-            className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+            className={`px-3.5 py-1.5 rounded-lg text-[16px] font-medium transition-all ${
               activeTab === 'pricing'
                 ? 'bg-amber-500 text-slate-950 font-bold shadow-sm'
                 : 'text-amber-400/90 hover:text-amber-300 hover:bg-amber-500/10'
@@ -165,12 +163,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           {currentProvider && (
             <div 
               title={currentProvider.isMock ? 'โหมดจำลอง (Mock Simulator)' : 'เชื่อมต่อ API สำเร็จ'}
-              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border bg-slate-900 border-slate-800 text-slate-300"
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] font-medium border bg-slate-900 border-slate-800 text-slate-300"
             >
               <Cpu className="w-3.5 h-3.5 text-indigo-400" />
               <span className="truncate max-w-[120px]">{currentProvider.name}</span>
               {currentProvider.isMock ? (
-                <span className="text-[10px] text-amber-400 font-mono bg-amber-400/10 px-1 rounded">Mock</span>
+                <span className="text-xs text-amber-400 font-mono bg-amber-400/10 px-1 rounded">Mock</span>
               ) : (
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               )}
@@ -185,39 +183,19 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Coins className="w-4 h-4 text-amber-400" />
             <div className="text-left">
-              <span className="text-[11px] block leading-none text-amber-300/80">เครดิต</span>
-              <span className="text-sm font-bold leading-none font-mono">
+              <span className="text-xs block leading-none text-amber-300/80">เครดิต</span>
+              <span className="text-[14px] font-bold leading-none font-mono">
                 {credits !== null && credits !== undefined && typeof credits.remainingCredits === 'number'
                   ? credits.remainingCredits
-                  : 100}
+                  : 0}
               </span>
             </div>
           </button>
 
-          {/* เติมเครดิต (Stripe Checkout) Button */}
-          <button
-            onClick={() => setActiveTab('pricing')}
-            id="nav-topup-credits-btn"
-            title="เติมเครดิตผ่าน Stripe"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 shadow-md shadow-amber-500/20 transition-all active:scale-95 cursor-pointer"
-          >
-            <PlusCircle className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">เติมเครดิต</span>
-          </button>
 
           {/* Firebase Authentication & User Profile */}
           {isRealUser ? (
             <div className="flex items-center gap-2">
-              <button
-                onClick={onOpenApiKeyModal}
-                id="nav-user-apikey-btn"
-                title="จัดการ API Key ใน Firestore"
-                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium border bg-slate-900/90 border-slate-700 hover:border-indigo-500 text-slate-200 transition-all active:scale-95"
-              >
-                <Key className="w-3.5 h-3.5 text-amber-400" />
-                <span className="hidden md:inline">API Key</span>
-              </button>
-
               <div className="flex items-center gap-2 pl-1 bg-slate-900/80 border border-slate-800 rounded-xl px-2.5 py-1 shadow-sm">
                 {authUser.photoURL ? (
                   <img
@@ -227,15 +205,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                     className="w-7 h-7 rounded-full border border-indigo-500/60 object-cover shadow-sm ring-1 ring-indigo-500/30"
                   />
                 ) : (
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 border border-indigo-400/50 flex items-center justify-center text-xs font-bold text-white shadow-sm">
+                  <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 border border-indigo-400/50 flex items-center justify-center text-[12px] font-bold text-white shadow-sm">
                     {(authUser.displayName || authUser.email || 'U').charAt(0).toUpperCase()}
                   </div>
                 )}
                 <div className="block text-left">
-                  <span className="text-xs font-semibold text-white block truncate max-w-[90px] sm:max-w-[130px] leading-tight">
+                  <span className="text-[16px] font-semibold text-white block truncate max-w-[140px] sm:max-w-[180px] leading-tight">
                     {authUser.displayName || 'ผู้ใช้ Google'}
                   </span>
-                  <span className="text-[10px] text-slate-400 hidden sm:block truncate max-w-[130px] leading-tight">
+                  <span className="text-xs text-slate-400 hidden sm:block truncate max-w-[130px] leading-tight">
                     {authUser.email || ''}
                   </span>
                 </div>
@@ -246,7 +224,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   id="nav-switch-account-btn"
                   title="สลับบัญชี Google (Switch Account)"
                   disabled={isLoggingIn}
-                  className="px-2 py-1 rounded-lg text-indigo-300 hover:text-white bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 transition-all text-[11px] font-medium flex items-center gap-1 cursor-pointer active:scale-95 ml-1"
+                  className="px-2 py-1 rounded-lg text-indigo-300 hover:text-white bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 transition-all text-[16px] font-medium flex items-center gap-1 cursor-pointer active:scale-95 ml-1"
                 >
                   <Users className="w-3.5 h-3.5 text-indigo-400" />
                   <span className="hidden sm:inline">สลับบัญชี</span>
@@ -266,7 +244,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           ) : (
             <div className="flex items-center gap-2">
               {authUser?.uid === 'demo_creator' && (
-                <span className="hidden md:inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-800 text-amber-300 border border-amber-500/30">
+                <span className="hidden md:inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-amber-300 border border-amber-500/30">
                   โหมดทดลอง
                 </span>
               )}
@@ -274,7 +252,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onClick={onLogin}
                 id="nav-login-google-btn"
                 disabled={isLoggingIn}
-                className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-semibold px-3.5 py-2 rounded-xl shadow-md shadow-indigo-600/20 transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-[16px] font-semibold px-3.5 py-2 rounded-xl shadow-md shadow-indigo-600/20 transition-all active:scale-95 cursor-pointer disabled:opacity-50"
               >
                 {isLoggingIn ? (
                   <Loader2 className="w-4 h-4 animate-spin" />

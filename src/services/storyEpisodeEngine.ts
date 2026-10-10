@@ -17,7 +17,11 @@ import {
   isMetadataKeyword,
   deriveScenePhysicalStates,
   SPEECH_VERBS,
-  estimateSpeechSeconds
+  estimateSpeechSeconds,
+  extractPlaceAfterParticle,
+  detectSceneTimeOfDay,
+  findSceneLockConflicts,
+  sceneLockBinding
 } from './salaDirectorEngine';
 
 import {
@@ -240,6 +244,9 @@ export function extractLocationFromText(text: string): string {
     const cand = (m[1] || '').trim();
     if (isValidLocationCandidate(cand)) return cand;
   }
+  // "ยืนที่ชานเรือน..." has no space before ที่. Only a real place noun is accepted here.
+  const glued = extractPlaceAfterParticle(cleaned);
+  if (glued && isValidLocationCandidate(glued)) return glued;
   return '';
 }
 
@@ -258,12 +265,7 @@ export function isValidLocationCandidate(cand: string): boolean {
 }
 
 export function detectTimeOfDay(text: string): string {
-  if (!text) return '';
-  if (/(ตอนกลางคืน|ยามค่ำคืน|ค่ำคืน|กลางคืน|ดึก|เที่ยงคืน|night|midnight)/i.test(text)) return 'กลางคืน';
-  if (/(เช้าตรู่|รุ่งเช้า|รุ่งสาง|ยามเช้า|แสงแรก|ตอนเช้า|ช่วงเช้า|dawn|morning)/i.test(text)) return 'เช้าตรู่';
-  if (/(กลางวัน|ตอนกลางวัน|เที่ยงวัน|บ่าย|noon|\bday\b)/i.test(text)) return 'กลางวัน';
-  if (/(ยามเย็น|ตอนเย็น|ช่วงเย็น|เวลาเย็น|พระอาทิตย์ตก|สายัณห์|หัวค่ำ|พลบค่ำ|dusk|evening)/i.test(text)) return 'ยามเย็น';
-  return '';
+  return detectSceneTimeOfDay(text);
 }
 
 /** Words that make a heading part a real place ("หน้าบ้าน", "ห้องนอน", "แคมป์ในป่า" …). */
@@ -588,13 +590,10 @@ export function parseStoryStructure(rawStory: string): ParsedStoryStructure {
         while (body.length > 0 && isChatLine(body[body.length - 1])) body.pop();
       }
       body = body.filter(l => !SEPARATOR_REGEX.test(l));
-      const prev = scenes.length > 0 ? scenes[scenes.length - 1] : null;
-      const info = parseSceneHeading(headerMatch[2] || '', !!prev?.location);
-      let { location, timeOfDay } = info;
-      let inheritedLocation = false;
-      // Title / mood / "…ต่อเนื่อง" headings keep the previous scene's place and time.
-      if (!location && prev?.location) { location = prev.location; inheritedLocation = true; }
-      if (!timeOfDay && prev?.timeOfDay && (inheritedLocation || info.continued || location === prev.location)) timeOfDay = prev.timeOfDay;
+      const info = parseSceneHeading(headerMatch[2] || '', false);
+      const { location, timeOfDay } = info;
+      // A heading that does not name a place or a time leaves them blank. Never copy the previous scene.
+      const inheritedLocation = false;
       const scene: ParsedStoryScene = {
         sceneNumber: Number(headerMatch[1]) || h + 1,
         heading: lines[start].replace(/[*_#]/g, '').trim(),
@@ -800,7 +799,7 @@ export function buildStoryLocks(params: {
       const ll: LocationLock = {
         location,
         timeOfDay,
-        lighting: lightingForTime(timeOfDay, lockedHere ? continuityLock?.lighting || '' : (locationLocks.size === 0 ? continuityLock?.lighting || '' : ''))
+        lighting: lightingForTime(timeOfDay, lockedHere ? continuityLock?.lighting || '' : '')
       };
       // Location Lock from the library / Master Lock: set details + props at the locked place
       if (lockedHere && String(continuityLock?.locationVisualDetails || '').trim()) ll.setDetails = String(continuityLock.locationVisualDetails).trim();
@@ -860,13 +859,6 @@ export function generateEpisodeLocally({
 
   const pos = continuityLock?.characterPositions || continuityLock?.characterPosition || lastSceneState?.characterPositions || '';
 
-  // ---- Story-wide location / time defaults
-  const metaLocation = parsedStory.metadata['สถานที่'] || parsedStory.metadata['สถานที่หลัก'] || parsedStory.metadata['LOCATION'] || '';
-  const metaTime = parsedStory.metadata['เวลา'] || parsedStory.metadata['ช่วงเวลา'] || parsedStory.metadata['TIME'] || '';
-  const storyText = parsedStory.narrativeBeats.map(b => b.text).join('\n');
-  const storyLocation = metaLocation || continuityLock?.location || extractLocationFromText(storyText) || '';
-  const storyTime = metaTime || continuityLock?.timeOfDay || detectTimeOfDay(storyText) || '';
-
   // ---- Slice this episode's scenes out of the full ordered scene list
   // กฎ: ไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป (ถ้าเรื่องมีน้อยกว่า 5 ฉาก ให้ใช้จำนวนฉากจริง)
   const allUnits = splitStoryIntoSceneUnits(parsedStory, targetSceneCount || 5);
@@ -896,7 +888,7 @@ export function generateEpisodeLocally({
     clips: episodeUnits.map(u => ({
       text: [...u.actionBeats].join(' ') || u.actionText,
       speakers: u.dialogues.filter(d => !d.offScreen).map(d => d.speaker),
-      location: u.location || storyLocation || ''
+      location: u.location || ''
     }))
   });
 
@@ -907,10 +899,9 @@ export function generateEpisodeLocally({
     // เมื่อขึ้นฉากใหม่ ให้รีเซ็ตค่าสภาพแวดล้อมเดิมทิ้งทันที ห้ามนำค่าเดิม (เช่น ป่าทึบ/แสงแดด) ข้ามมาใช้ในฉากใหม่ (เช่น ถ้ำโบราณ/กลางคืน)
     const sceneDetectedLoc = extractLocationFromText(unit.actionText);
     const sceneDetectedTime = detectTimeOfDay(unit.actionText);
-    const isContinuation = /(?:ต่อเนื่อง|\(ต่อ\)|continued|cont'?d?)/i.test(unit.heading || unit.title || '');
-
-    const location = unit.location || sceneDetectedLoc || (isContinuation && s > 0 ? (scenes[s - 1]?.location) : (s === 0 ? storyLocation : '')) || storyLocation || UNSPECIFIED;
-    const timeOfDay = unit.timeOfDay || sceneDetectedTime || (isContinuation && s > 0 ? (scenes[s - 1]?.timeOfDay) : (s === 0 ? storyTime : '')) || storyTime || UNSPECIFIED;
+    // This scene only. A blank field stays blank. Never reuse another scene, the story header, or the master lock.
+    const location = unit.location || sceneDetectedLoc || UNSPECIFIED;
+    const timeOfDay = unit.timeOfDay || sceneDetectedTime || UNSPECIFIED;
     const sceneHeading = `ฉากที่ ${scNum}: ${location} - ${timeOfDay}${unit.title ? ` (${unit.title})` : ''}`;
     const cont = continuity.clips[s];
     const locationLock = locks.locationLockFor(location, timeOfDay);
@@ -957,7 +948,7 @@ export function generateEpisodeLocally({
     const diagPart = dialogues.length > 0
       ? ' Dialogue: ' + dialogues.map(d => `${d.speaker}${d.offScreen ? ' (off-screen voice)' : ''} speaks: "${d.dialogue}"`).join('; ') + '.'
       : '';
-    const visualPrompt = 'Cinematic 8K masterpiece' +
+    const visualPrompt = sceneLockBinding(scNum, timeOfDay, location) + '. Cinematic 8K masterpiece' +
       (sceneActiveChars.length ? ', ' + sceneActiveChars.join(' and ') : '') +
       (location !== UNSPECIFIED ? ' at ' + location : '') +
       (timeOfDay !== UNSPECIFIED ? ', ' + timeOfDay : '') +
@@ -1000,6 +991,18 @@ export function generateEpisodeLocally({
       continuityWarnings: sceneWarnings
     });
   });
+
+  const conflicts = findSceneLockConflicts(scenes.map(sc => ({
+    sceneNumber: sc.sceneNumber,
+    timeOfDay: sc.timeOfDay,
+    location: sc.location,
+    prompt: sc.visualPrompt
+  })));
+  if (conflicts.length > 0) {
+    const err = new Error('พรอมต์ไม่ตรงกับล็อกเวลาหรือสถานที่ของฉาก หยุดสร้าง\n' + conflicts.join('\n'));
+    (err as any).code = 'SCENE_LOCK_CONFLICT';
+    throw err;
+  }
 
   const episodeTitle = scenes.length > 0
     ? `ตอนที่ ${episodeNumber}: ฉากที่ ${scenes[0].sceneNumber}-${scenes[scenes.length - 1].sceneNumber} (โหมดออฟไลน์)`
@@ -1099,24 +1102,19 @@ export function applyEpisodeLocks(scenes: any[], params: {
 }): { scenes: any[]; warnings: ContinuityWarning[]; characterWarnings: string[] } {
   const parsedStory = parseStoryStructure(params.originalStory || '');
   const locks = buildStoryLocks({ parsedStory, libraryCharacters: params.characters, continuityLock: params.continuityLock, storyText: params.originalStory });
-  let prevLoc = String(params.lastSceneState?.location || '').trim();
-  let prevTime = String(params.lastSceneState?.timeOfDay || '').trim();
   const fixed = (scenes || []).map((sc: any) => {
     let location = String(sc.location || '').trim();
     let timeOfDay = String(sc.timeOfDay || '').trim();
     const cont = CONTINUATION_SUFFIX_REGEX.test(location);
     if (cont) location = location.replace(CONTINUATION_SUFFIX_REGEX, '').trim();
-    const unspecified = !location || location === UNSPECIFIED;
     let sceneTitle = sc.sceneTitle || '';
-    if ((unspecified || (isMoodLike(location) && !isLocationLike(location))) && prevLoc) {
-      if (!unspecified) sceneTitle = sceneTitle || location;
-      location = prevLoc;
-      if (!timeOfDay || timeOfDay === UNSPECIFIED) timeOfDay = prevTime;
+    if (location && location !== UNSPECIFIED && isMoodLike(location) && !isLocationLike(location)) {
+      sceneTitle = sceneTitle || location;
+      location = UNSPECIFIED;
     }
-    if ((!timeOfDay || timeOfDay === UNSPECIFIED) && location === prevLoc && prevTime) timeOfDay = prevTime;
-    if (location && location !== UNSPECIFIED) prevLoc = location;
-    if (timeOfDay && timeOfDay !== UNSPECIFIED) prevTime = timeOfDay;
-    return { ...sc, location: location || UNSPECIFIED, timeOfDay: timeOfDay || UNSPECIFIED, sceneTitle };
+    if (!location) location = UNSPECIFIED;
+    if (!timeOfDay) timeOfDay = UNSPECIFIED;
+    return { ...sc, location, timeOfDay, sceneTitle };
   });
   // Story Lock: the first new scene starts from the previous episode's end state
   const prevEndAction = String(params.lastSceneState?.endAction || params.lastSceneState?.endState || '').trim();

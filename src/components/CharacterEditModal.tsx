@@ -29,13 +29,14 @@ export const CharacterEditModal: React.FC<{
   const [newImage, setNewImage] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [imageBroken, setImageBroken] = useState(false);
   const currentImage = character.referenceImageUrl || vp.referenceImageUrl || character.avatarUrl || '';
 
   const pickImage = (file?: File | null) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) { setError('กรุณาเลือกไฟล์รูปภาพ / Please choose an image file'); return; }
     const reader = new FileReader();
-    reader.onload = () => { setNewImage(String(reader.result || '')); setError(''); };
+    reader.onload = () => { setNewImage(String(reader.result || '')); setError(''); setImageBroken(false); };
     reader.onerror = () => setError('อ่านไฟล์รูปไม่สำเร็จ / Could not read the image');
     reader.readAsDataURL(file);
   };
@@ -88,9 +89,9 @@ export const CharacterEditModal: React.FC<{
 
   const field = (label: string, value: string, set: (v: string) => void, rows = 2, id = '') => (
     <label className="block space-y-1">
-      <span className="text-xs font-semibold text-slate-300">{label}</span>
+      <span className="text-[16px] font-semibold text-slate-300">{label}</span>
       <textarea id={id} value={value} onChange={e => set(e.target.value)} rows={rows}
-        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500" />
+        className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-[16px] text-slate-100 focus:outline-none focus:border-indigo-500" />
     </label>
   );
 
@@ -98,17 +99,27 @@ export const CharacterEditModal: React.FC<{
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
       <div className="bg-[#0e1424] border border-slate-700 w-full max-w-xl rounded-3xl p-5 shadow-2xl space-y-3 my-8" id="character-edit-modal">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-bold text-white">แก้ไขตัวละคร (Edit): {character.name}</h3>
+          <h3 className="text-[20px] sm:text-[22px] font-bold text-white">แก้ไขตัวละคร (Edit): {character.name}</h3>
           <button type="button" onClick={onClose} className="p-1.5 text-slate-400 hover:text-white" title="ปิด"><X className="w-4 h-4" /></button>
         </div>
         {character.lockStatus === 'LOCKED' && (
-          <div className="text-[11px] text-emerald-300 flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> ตัวละครนี้ LOCKED — สถานะล็อคจะคงเดิมหลังบันทึก</div>
+          <div className="text-[16px] text-emerald-300 flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> ตัวละครนี้ LOCKED — สถานะล็อคจะคงเดิมหลังบันทึก</div>
         )}
         <div className="flex items-center gap-3">
-          <img src={newImage || character.referenceImageBackup || currentImage} alt={character.name}
-            onError={e => { const b = character.referenceImageBackup; if (b && e.currentTarget.src !== b) e.currentTarget.src = b; }}
-            className="w-20 h-20 rounded-xl object-cover border border-slate-700 bg-slate-900" />
-          <label className="flex-1 cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 flex items-center gap-2">
+          <div className="w-[140px] h-[140px] shrink-0 rounded-xl border-2 border-cyan-300 bg-white overflow-hidden flex items-center justify-center">
+            {(newImage || character.referenceImageBackup || currentImage) && !imageBroken ? (
+              <img src={newImage || character.referenceImageBackup || currentImage} alt={character.name || 'รูปตัวละคร'}
+                onError={e => {
+                  const b = character.referenceImageBackup;
+                  if (b && e.currentTarget.src !== b) { e.currentTarget.src = b; return; }
+                  setImageBroken(true);
+                }}
+                className="w-full h-[140px] object-contain bg-white" />
+            ) : (
+              <span className="text-[16px] font-semibold text-slate-900 text-center px-2">ยังไม่มีรูป</span>
+            )}
+          </div>
+          <label className="flex-1 cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-[16px] text-slate-200 flex items-center gap-2">
             <Upload className="w-4 h-4 text-indigo-400" />
             <span>{newImage ? 'เลือกรูปใหม่แล้ว (จะบันทึกเมื่อกดบันทึก)' : 'อัปโหลดรูปอ้างอิงใหม่ / Re-upload reference image'}</span>
             <input id="input-edit-char-reference" type="file" accept="image/*" className="hidden" onChange={e => pickImage(e.target.files?.[0])} />
@@ -120,11 +131,11 @@ export const CharacterEditModal: React.FC<{
         {field('ชุด (Outfit)', outfit, setOutfit, 2, 'input-edit-char-outfit')}
         {field('รองเท้า (Shoes)', shoes, setShoes, 1, 'input-edit-char-shoes')}
         {field('Consistency Tag', triggerTag, setTriggerTag, 1, 'input-edit-char-tag')}
-        {error && <div className="text-xs text-rose-300 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />{error}</div>}
+        {error && <div className="text-[16px] text-rose-300 flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />{error}</div>}
         <div className="flex justify-end gap-2 pt-1">
-          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-xs text-slate-300 border border-slate-700 hover:bg-slate-800">ยกเลิก</button>
+          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-[16px] text-slate-300 border border-slate-700 hover:bg-slate-800">ยกเลิก</button>
           <button type="button" onClick={handleSave} disabled={saving} id="btn-save-edit-char"
-            className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 flex items-center gap-1.5">
+            className="px-4 py-2 rounded-xl text-[16px] font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 flex items-center gap-1.5">
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
             <span>บันทึก (Save)</span>
           </button>

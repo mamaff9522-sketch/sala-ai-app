@@ -16,10 +16,21 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 128;
     }
 
-    // Helper function to verify Admin role from email or Firestore doc
+    // Admin = the seed email, an email an existing admin added on config/admins,
+    // or a user doc whose role an existing admin already set. A normal user cannot write role or this list.
+    function isListedAdmin() {
+      return isSignedIn()
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/config/admins)
+        && get(/databases/$(database)/documents/config/admins).data.emails is list
+        && request.auth.token.email.lower() in get(/databases/$(database)/documents/config/admins).data.emails;
+    }
+
     function isAdmin() {
       return isSignedIn() && (
         request.auth.token.email == 'mama.ff9522@gmail.com' ||
+        isListedAdmin() ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       );
@@ -28,7 +39,7 @@ service cloud.firestore {
     match /users/{userId} {
       // Only the user themselves or an admin can read user profile data
       allow read: if isOwner(userId) || isAdmin();
-      // User can create their own profile during initial signup with default welcome bonus (credits <= 500)
+      // User can create their own profile at signup only with a zero balance. Admins grant credits later.
       // or Admin can create
       allow create: if isValidId(userId) && (
         isAdmin() || (
@@ -36,8 +47,8 @@ service cloud.firestore {
           (!('role' in request.resource.data) || request.resource.data.role == 'user') &&
           (!('isLocked' in request.resource.data) || request.resource.data.isLocked == false) &&
           (!('status' in request.resource.data) || request.resource.data.status == 'active') &&
-          (!('credits' in request.resource.data) || request.resource.data.credits <= 500) &&
-          (!('remainingCredits' in request.resource.data) || request.resource.data.remainingCredits <= 500) &&
+          (!('credits' in request.resource.data) || request.resource.data.credits == 0) &&
+          (!('remainingCredits' in request.resource.data) || request.resource.data.remainingCredits == 0) &&
           !('lastTopupAmount' in request.resource.data)
         )
       );
@@ -93,6 +104,63 @@ service cloud.firestore {
       allow delete: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
     }
 
+    // Chat rooms: only members can read and write.
+    // sala-everyone is the one shared room. Any signed-in user may get that
+    // room and create text messages in it without being in memberIds.
+    // List queries stay member-only, so this does not open every room.
+    match /chatRooms/{roomId} {
+      function signedMember(data) {
+        return isSignedIn() && data.memberIds is list && request.auth.uid in data.memberIds;
+      }
+
+      function isEveryoneRoom() {
+        return roomId == 'sala-everyone';
+      }
+
+      allow get: if (isEveryoneRoom() && isSignedIn()) || signedMember(resource.data);
+      allow list: if signedMember(resource.data);
+      allow create: if isValidId(roomId)
+        && signedMember(request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.memberIds.size() > 0
+        && request.resource.data.memberIds.size() <= 50
+        && request.resource.data.keys().hasAll(['memberIds', 'createdBy', 'name']);
+      allow update: if !isEveryoneRoom()
+        && signedMember(resource.data)
+        && signedMember(request.resource.data);
+      allow delete: if !isEveryoneRoom()
+        && isSignedIn()
+        && resource.data.createdBy == request.auth.uid;
+
+      match /messages/{messageId} {
+        function inRoom() {
+          return isSignedIn() && (
+            roomId == 'sala-everyone' ||
+            request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.memberIds
+          );
+        }
+        allow read: if inRoom();
+        allow create: if inRoom()
+          && request.resource.data.keys().hasOnly(['senderId', 'text', 'createdAt'])
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 4000
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    // Emails an existing admin added. The seed admin is hardcoded above and does not depend on this doc.
+    match /config/admins {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin()
+        && request.resource.data.emails is list
+        && request.resource.data.emails.size() <= 50;
+      allow delete: if false;
+    }
+
     // Everything else is denied by default (Firestore rules are deny-by-default).
   }
 }
+

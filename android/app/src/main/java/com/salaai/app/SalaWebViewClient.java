@@ -24,6 +24,10 @@ public class SalaWebViewClient extends BridgeWebViewClient {
     @Override
     public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
         Uri uri = request != null ? request.getUrl() : null;
+        if (uri != null && "salaai".equalsIgnoreCase(uri.getScheme()) && "download-apk".equalsIgnoreCase(uri.getHost())) {
+            ApkShare.offerBundledApk(this.bridge.getContext());
+            return true;
+        }
         String url = uri != null ? uri.toString() : null;
         if (SalaNavigation.decide(url) == SalaNavigation.Decision.IN_APP) {
             return false;

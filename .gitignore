@@ -64,3 +64,6 @@ Thumbs.db
 !.vscode/extensions.json
 !.vscode/settings.json
 .idea/
+
+# Server data: receiving-account settings, PromptPay QR upload, transfer slips. Never commit.
+data/

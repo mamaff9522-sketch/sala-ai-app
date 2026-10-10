@@ -1,0 +1,15 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /chatMedia/{roomId}/{fileName} {
+      function roomMember() {
+        return request.auth != null
+          && request.auth.uid in firestore.get(/databases/ai-studio-salaai-9b887c43-3c22-49d2-9920-da0d6563b609/documents/chatRooms/$(roomId)).data.memberIds;
+      }
+      allow read: if roomMember();
+      allow write: if roomMember()
+        && request.resource.size < 50 * 1024 * 1024
+        && (request.resource.contentType.matches('image/.*') || request.resource.contentType.matches('video/.*'));
+    }
+  }
+}

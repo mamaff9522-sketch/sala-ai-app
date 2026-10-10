@@ -325,7 +325,8 @@ export async function loginWithGoogle(): Promise<User> {
                 displayName: user.displayName || '',
                 photoURL: user.photoURL || '',
                 role: determinedRole,
-                credits: determinedRole === 'admin' ? 9999 : 500,
+                credits: 0,
+                remainingCredits: 0,
                 status: 'active',
                 isLocked: false,
                 updatedAt: new Date().toISOString()

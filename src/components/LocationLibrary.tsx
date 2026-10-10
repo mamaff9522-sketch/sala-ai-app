@@ -235,11 +235,11 @@ export const LocationLibrary: React.FC<LocationLibraryProps> = ({
 
                   {/* Badges Overlay */}
                   <div className="absolute top-3 left-3 flex items-center gap-1.5 flex-wrap">
-                    <span className="bg-emerald-900/80 backdrop-blur-md border border-emerald-400/50 text-emerald-200 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+                    <span className="bg-emerald-900/80 backdrop-blur-md border border-emerald-400/50 text-emerald-200 text-xs font-bold px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
                       <ShieldCheck className="w-3 h-3 text-emerald-400" />
                       <span>{loc.lockStatus || 'LOCKED'}</span>
                     </span>
-                    <span className="bg-slate-900/80 backdrop-blur-md border border-slate-700 text-slate-300 text-[10px] font-medium px-2 py-0.5 rounded-full">
+                    <span className="bg-slate-900/80 backdrop-blur-md border border-slate-700 text-slate-300 text-xs font-medium px-2 py-0.5 rounded-full">
                       LOCATION
                     </span>
                   </div>
@@ -256,7 +256,7 @@ export const LocationLibrary: React.FC<LocationLibraryProps> = ({
                     <h3 className="text-base font-bold text-white truncate drop-shadow-md">
                       {loc.name}
                     </h3>
-                    <p className="text-[11px] text-emerald-300/90 font-medium truncate">
+                    <p className="text-xs text-emerald-300/90 font-medium truncate">
                       {visual?.architecturalStyle || visual?.environmentType || 'สถาปัตยกรรมต่อเนื่อง'}
                     </p>
                   </div>
@@ -268,26 +268,26 @@ export const LocationLibrary: React.FC<LocationLibraryProps> = ({
                   <div className="space-y-2 text-xs">
                     <div className="grid grid-cols-2 gap-2 bg-slate-950/60 border border-slate-800/80 rounded-2xl p-2.5">
                       <div>
-                        <span className="text-[10px] text-slate-500 block">ประเภทพื้นที่</span>
+                        <span className="text-xs text-slate-400 block">ประเภทพื้นที่</span>
                         <span className="text-slate-200 font-medium truncate block">
                           {visual?.environmentType || 'Indoor'}
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 block">สไตล์สถาปัตยกรรม</span>
+                        <span className="text-xs text-slate-400 block">สไตล์สถาปัตยกรรม</span>
                         <span className="text-slate-200 font-medium truncate block">
                           {visual?.architecturalStyle || 'Modern'}
                         </span>
                       </div>
                       <div className="col-span-2 pt-1 border-t border-slate-800/60">
-                        <span className="text-[10px] text-slate-500 block">ผนัง & พื้น</span>
-                        <p className="text-slate-300 text-[11px] line-clamp-1">
+                        <span className="text-xs text-slate-400 block">ผนัง & พื้น</span>
+                        <p className="text-slate-300 text-xs line-clamp-1">
                           {visual?.wallColor || visual?.floor || 'ตามภาพอ้างอิง'}
                         </p>
                       </div>
                       <div className="col-span-2">
-                        <span className="text-[10px] text-slate-500 block">ประตู & หน้าต่าง</span>
-                        <p className="text-slate-300 text-[11px] line-clamp-1">
+                        <span className="text-xs text-slate-400 block">ประตู & หน้าต่าง</span>
+                        <p className="text-slate-300 text-xs line-clamp-1">
                           {visual?.doors || visual?.windows || 'ตามภาพอ้างอิง'}
                         </p>
                       </div>
@@ -295,7 +295,7 @@ export const LocationLibrary: React.FC<LocationLibraryProps> = ({
 
                     {/* Trigger Tag */}
                     <div className="flex items-center justify-between bg-slate-900/60 border border-slate-800 rounded-xl px-2.5 py-1.5">
-                      <span className="text-[10px] text-slate-400 font-mono truncate max-w-[200px]">
+                      <span className="text-xs text-slate-400 font-mono truncate max-w-[200px]">
                         {loc.triggerTag}
                       </span>
                       <button
@@ -339,7 +339,7 @@ export const LocationLibrary: React.FC<LocationLibraryProps> = ({
                     <button
                       type="button"
                       onClick={() => setDeleteTarget({ id: loc.id, name: loc.name })}
-                      className="text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 p-2 rounded-xl border border-transparent hover:border-rose-500/20 transition-all cursor-pointer shrink-0"
+                      className="text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 p-2 rounded-xl border border-transparent hover:border-rose-500/20 transition-all cursor-pointer shrink-0"
                       title="ลบสถานที่"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -601,16 +601,16 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
             <div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <span>สร้างและล็อคสถานที่ใหม่ (Location Lock)</span>
-                <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                <span className="text-xs bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
                   4-Layer Architecture
                 </span>
               </h2>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-xs text-slate-400">
                 สแกนและล็อคความต่อเนื่องของห้อง สถาปัตยกรรม ผนัง พื้น ประตู หน้าต่าง
               </p>
             </div>
           </div>
-          <button
+          <button aria-label="ปิด" title="ปิด"
             type="button"
             onClick={onClose}
             className="p-1 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all"
@@ -653,7 +653,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
                 <ShieldCheck className="w-4 h-4" />
                 <span>Cost Guard & Privacy</span>
               </div>
-              <p className="text-slate-400 leading-relaxed text-[11px]">
+              <p className="text-slate-400 leading-relaxed text-xs">
                 ระบบจะตรวจสอบ Cache ผ่าน SHA-256 Hash ก่อนเสมอ หากเคยวิเคราะห์ภาพนี้แล้วจะไม่เรียก Gemini Vision ซ้ำ
                 เพื่อป้องกันค่าใช้จ่ายส่วนเกินโดยไม่จำเป็น
               </p>
@@ -668,7 +668,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
             {analysisError && (
               <div role="alert" className="bg-rose-950/50 border border-rose-500/50 rounded-2xl p-3 text-xs text-rose-200 whitespace-pre-line">
                 <strong className="text-rose-100">วิเคราะห์ด้วย AI ไม่สำเร็จ / AI analysis failed:</strong> {analysisError}
-                <div className="text-rose-300/80 mt-1">กรุณากรอกรายละเอียดสถานที่เอง หรือตรวจสอบ Gemini API Key แล้วลองใหม่</div>
+                <div className="text-rose-300/80 mt-1">กรุณากรอกรายละเอียดสถานที่เอง หรือลองใหม่อีกครั้ง</div>
               </div>
             )}
             <div className={`${analysisSource === 'gemini-flash' || cachedHit ? 'bg-emerald-950/40 border-emerald-500/40' : 'bg-amber-950/40 border-amber-500/40'} border rounded-2xl p-3 flex items-center justify-between gap-3 text-xs`}>
@@ -683,7 +683,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
                 </span>
               </div>
               {imageHash && (
-                <span className="font-mono text-[10px] text-emerald-300/80">
+                <span className="font-mono text-xs text-emerald-300/80">
                   #{imageHash.slice(0, 8)}
                 </span>
               )}
@@ -697,7 +697,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
                 className="w-24 h-16 rounded-xl object-cover border border-slate-700 shrink-0"
               />
               <div className="flex-1 min-w-0">
-                <label className="block text-[10px] text-slate-400 mb-1 font-medium">ชื่อสถานที่ (Location Name)</label>
+                <label className="block text-xs text-slate-400 mb-1 font-medium">ชื่อสถานที่ (Location Name)</label>
                 <input
                   type="text"
                   value={name}
@@ -715,12 +715,12 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
                   <Layers className="w-3.5 h-3.5 text-emerald-400" />
                   <span>สถาปัตยกรรม & องค์ประกอบความต่อเนื่อง (Architectural Continuity Blueprint)</span>
                 </h3>
-                <span className="text-[10px] text-slate-500">แก้ไขได้ตามต้องการ</span>
+                <span className="text-xs text-slate-400">แก้ไขได้ตามต้องการ</span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">ประเภทพื้นที่ (Environment Type)</label>
+                  <label className="block text-xs text-slate-400 mb-1">ประเภทพื้นที่ (Environment Type)</label>
                   <input
                     type="text"
                     value={environmentType}
@@ -729,7 +729,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">สไตล์สถาปัตยกรรม (Architectural Style)</label>
+                  <label className="block text-xs text-slate-400 mb-1">สไตล์สถาปัตยกรรม (Architectural Style)</label>
                   <input
                     type="text"
                     value={architecturalStyle}
@@ -738,7 +738,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">ผนัง & สีผิว (Wall Color / Material)</label>
+                  <label className="block text-xs text-slate-400 mb-1">ผนัง & สีผิว (Wall Color / Material)</label>
                   <input
                     type="text"
                     value={wallColor}
@@ -747,7 +747,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">พื้น & ผิวสัมผัส (Floor)</label>
+                  <label className="block text-xs text-slate-400 mb-1">พื้น & ผิวสัมผัส (Floor)</label>
                   <input
                     type="text"
                     value={floor}
@@ -756,7 +756,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">ประตู (Doors)</label>
+                  <label className="block text-xs text-slate-400 mb-1">ประตู (Doors)</label>
                   <input
                     type="text"
                     value={doors}
@@ -765,7 +765,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">หน้าต่าง & แสงธรรมชาติ (Windows)</label>
+                  <label className="block text-xs text-slate-400 mb-1">หน้าต่าง & แสงธรรมชาติ (Windows)</label>
                   <input
                     type="text"
                     value={windows}
@@ -774,7 +774,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-[11px] text-slate-400 mb-1">เฟอร์นิเจอร์ชิ้นหลัก (Major Furniture)</label>
+                  <label className="block text-xs text-slate-400 mb-1">เฟอร์นิเจอร์ชิ้นหลัก (Major Furniture)</label>
                   <input
                     type="text"
                     value={majorFurniture}
@@ -783,7 +783,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
                   />
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-[11px] text-slate-400 mb-1">ผังพื้นที่ & จุดเด่นเฉพาะตัว (Spatial Layout & Distinctive)</label>
+                  <label className="block text-xs text-slate-400 mb-1">ผังพื้นที่ & จุดเด่นเฉพาะตัว (Spatial Layout & Distinctive)</label>
                   <input
                     type="text"
                     value={distinctiveFeatures}
@@ -796,10 +796,10 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
 
             {/* Factual set description = Location Lock (used verbatim in every clip) */}
             <div className="bg-slate-950/70 border border-emerald-800/40 rounded-2xl p-3.5 space-y-1.5">
-              <label className="block text-[11px] font-semibold text-emerald-300">
+              <label className="block text-xs font-semibold text-emerald-300">
                 คำอธิบายฉากแบบข้อเท็จจริง (Location Lock — ใช้ตามตัวอักษรทุกคลิป)
               </label>
-              <p className="text-[10px] text-slate-500">วัสดุ สี จำนวนต้นไม้/วัตถุ และเฟอร์นิเจอร์พร้อมตำแหน่ง — เขียนเฉพาะสิ่งที่เห็นในรูป</p>
+              <p className="text-xs text-slate-400">วัสดุ สี จำนวนต้นไม้/วัตถุ และเฟอร์นิเจอร์พร้อมตำแหน่ง — เขียนเฉพาะสิ่งที่เห็นในรูป</p>
               <textarea
                 id="input-create-loc-description"
                 rows={6}
@@ -812,7 +812,7 @@ const CreateLocationModal: React.FC<CreateLocationModalProps> = ({ onClose, onSa
             {/* Generated Visual Prompt for Video Engine */}
             {generatedVisualPrompt && (
               <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-3.5 space-y-1.5">
-                <label className="block text-[11px] font-semibold text-slate-300">
+                <label className="block text-xs font-semibold text-slate-300">
                   AI Video Prompt สำหรับล็อคสถานที่ (Location Consistency Prompt):
                 </label>
                 <textarea

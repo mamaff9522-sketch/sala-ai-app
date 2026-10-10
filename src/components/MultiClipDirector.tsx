@@ -28,12 +28,11 @@ import {
   Eye,
   Info,
   CheckCircle2,
-  Flame,
   ShieldCheck,
   Shuffle,
   Square,
   Share2,
-  FileVideo,
+  Save,
   RefreshCw,
   Users,
   Building,
@@ -61,6 +60,8 @@ import {
 } from '../types';
 import { api, GenerateRequestPayload } from '../services/api';
 import { splitScript, ScriptSplitResult } from '../services/scriptSplitter';
+import { dialogueLockEntriesFromScript, dialogueLockEntriesFromUnknown, dialogueLockSignature, mergeDialogueLock } from '../services/dialogueLockFromScript';
+import { autoEnvironmentFromScript } from '../services/salaDirectorEngine';
 import { toCharacterLockPayload } from '../services/characterAppearance';
 import { expandCombinedCharacterNames } from '../services/continuityEngine';
 import { libraryLockPayloads, checkReferenceImages, loadLibraryLockCache, locationLockPayloads, loadLocationLockCache } from '../services/characterLibraryLock';
@@ -92,6 +93,7 @@ import {
   refreshClipPromptWithCameraControls,
   summarizeAutoSplit
 } from '../services/salaDirectorEngine';
+import { saveCurrentProject } from '../services/savedProjects';
 
 interface MultiClipDirectorProps {
   characters: Character[];
@@ -110,58 +112,6 @@ interface MultiClipDirectorProps {
   onLogin?: () => void;
   isLoggingIn?: boolean;
 }
-
-const SAMPLE_SCRIPTS = [
-  {
-    title: 'ตัวอย่าง: Sala Protocol V1 (Multi-Clip & Continuity)',
-    script: `@SALA1#S001|P1/1|C01-03|H:01>02|K:KEEP|CT:KEEP
-SALA_MULTI_CLIP
-CHARACTERS: วีระ (นักบินอวกาศ)
-LOCK: Character: วีระ | Location: ฐานสำรวจอวกาศ | Lighting: แสงไฟนีออนสีขาวนวล | Style: Sci-Fi Cinematic 8K
-FRAME: 16:9
-AUTO: TRUE
-RULE: รักษารายละเอียดชุดอวกาศและหมวกนิรภัยต่อเนื่องทุกคลิป
-STORY: {
-  CLIP 1: วีระยืนหน้าจอควบคุมกลางห้องปฏิบัติการ ตรวจสอบสถานะออกซิเจนและระดับพลังงาน
-  วีระ: "ระบบยังคงเสถียร ทุกอย่างพร้อมสำหรับการเดินทาง"
-  END: วีระหันหลังและเดินไปยังประตูผนึกอากาศ
-
-  CLIP 2: ต่อเนื่องจากการเดิน วีระก้าวผ่านประตูผนึกอากาศเข้ามาในห้องเตรียมชุด
-  วีระ: "เริ่มกระบวนการปรับความดัน"
-  END: วีระเอื้อมมือกดปุ่มยืนยันบนคอนโซลข้างประตู
-
-  CLIP 3: ประตูด้านนอกเปิดออก เผยให้เห็นผืนทรายกว้างใหญ่ วีระก้าวออกสู่ภายนอก
-  END: วีระหยุดยืนมองขอบฟ้าไกล กล้องค่อยๆ ดอลลี่ถอยหลังเผยทัศนียภาพกว้างใหญ่
-}`,
-    charName: 'วีระ (นักบินอวกาศ)',
-    charAppearance: 'ชายวัย 32 ปี สวมชุดปฏิบัติการอวกาศสีขาวขลิบน้ำเงิน แผ่นป้ายชื่อติดหน้าอก',
-    location: 'ฐานสำรวจอวกาศ ห้องควบคุมหลัก',
-    timeOfDay: 'กลางวัน (Internal Station Lights)',
-    lighting: 'แสงไฟนีออนสีขาวนวล คอนทราสต์นุ่มนวลสมจริง',
-    style: 'Sci-Fi Cinematic 8K Photorealistic 35mm film',
-    props: 'คอนโซลควบคุม, จอสัมผัสโฮโลแกรม',
-    dialogues: [
-      { id: 'd1', speaker: 'วีระ', line: 'ระบบยังคงเสถียร ทุกอย่างพร้อมสำหรับการเดินทาง', emotionTone: 'มั่นใจ', clipNumber: 1 },
-      { id: 'd2', speaker: 'วีระ', line: 'เริ่มกระบวนการปรับความดัน', emotionTone: 'สุขุม', clipNumber: 2 }
-    ]
-  },
-  {
-    title: 'ตัวอย่าง: ไซเบอร์พังก์เยาวราช (2 คลิป 8 วิ)',
-    script: `ฉากที่ 1: เมษา สาวไซบอร์กในชุดแจ็คเก็ตนีออนยืนอยู่ใต้ป้ายไฟภาษาจีนกลางสายฝนพรำบนถนนเยาวราช แสงไฟนีออนสีแดงและเขียวสะท้อนบนแอ่งน้ำ เมษาก้มมองอุปกรณ์นำทางโฮโลแกรมบนข้อมือ
-ฉากที่ 2: เมษาเงยหน้าขึ้นเมื่อตรวจพบเป้าหมาย เธอออกตัววิ่งทะลุฝูงชนในตรอกแคบอย่างรวดเร็วและคล่องแคล่ว ส่งต่อการไล่ล่าสู่อนาคต`,
-    charName: 'เมษา (นักสืบไซบอร์ก)',
-    charAppearance: 'หญิงไทยวัย 24 ปี ผมบ็อบสั้นย้อมปลายสีฟ้าสะท้อนแสง สวมแจ็คเก็ตหนังสีดำแต่งแถบไฟนีออน แขนกลข้างขวาทำจากไททาเนียม',
-    location: 'ถนนเยาวราชในโลกอนาคต ฝนตกพรำ ตรอกป้ายไฟนีออน',
-    timeOfDay: 'กลางคืนใต้สายฝน (Midnight Rain)',
-    lighting: 'แสงนีออน Cyberpunk สีแดงสด ตัดกับแสงเขียวมรกตและเงาสะท้อนแอ่งน้ำ',
-    style: 'Neo-noir Cyberpunk, 8K Ultra-detailed, Anamorphic lens flare',
-    props: 'อุปกรณ์โฮโลแกรมข้อมือ, ร่มใสส่องแสง',
-    dialogues: [
-      { id: 'd1', speaker: 'เมษา', line: 'สัญญาณพิกัดอยู่ห่างออกไปไม่เกินสามร้อยเมตร', emotionTone: 'เคร่งขรึม', clipNumber: 1 },
-      { id: 'd2', speaker: 'เมษา', line: 'ล็อคเป้าหมายได้แล้ว อย่าคิดว่าจะหนีพ้น!', emotionTone: 'ดุดัน รวดเร็ว', clipNumber: 2 }
-    ]
-  }
-];
 
 export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
   characters,
@@ -185,6 +135,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
 
   // Mode selection
   const [directorMode, setDirectorMode] = useState<DirectorMode>('prompt_only');
+  const [projectSaveNote, setProjectSaveNote] = useState<string | null>(null);
 
   // Script & Timing configuration
   const [originalStory, setOriginalStory] = useState<string>(() => {
@@ -303,6 +254,25 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
   // Dialogue Lock State
   const [showDialoguePanel, setShowDialoguePanel] = useState<boolean>(true);
   const [dialogues, setDialogues] = useState<DialogueLockEntry[]>([]);
+
+  // Fill Dialogue Lock from the script itself. Story generation and typing both
+  // land here. Camera choices already picked for the same line are kept.
+  useEffect(() => {
+    const fromScript = scriptText.trim() ? dialogueLockEntriesFromScript(scriptText) : [];
+    // The story box is the source when the script box is empty or has no spoken lines.
+    const parsed = fromScript.length > 0 ? fromScript : dialogueLockEntriesFromScript(originalStory);
+    if (parsed.length === 0) {
+      if (!scriptText.trim() && !originalStory.trim()) {
+        setDialogues(prev => (prev.length === 0 ? prev : []));
+      }
+      return;
+    }
+    setDialogues(prev => {
+      const next = mergeDialogueLock(parsed, prev);
+      return dialogueLockSignature(next) === dialogueLockSignature(prev) ? prev : next;
+    });
+    setShowDialoguePanel(true);
+  }, [scriptText, originalStory]);
   const [newSpeaker, setNewSpeaker] = useState('');
   const [newLine, setNewLine] = useState('');
   const [newEmotion, setNewEmotion] = useState('เป็นธรรมชาติ');
@@ -375,9 +345,17 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
 
   // New Modals State
   const [showVideoToScriptModal, setShowVideoToScriptModal] = useState<boolean>(false);
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return;
+    if (localStorage.getItem('sala_open_video_to_script') === '1') {
+      localStorage.removeItem('sala_open_video_to_script');
+      setShowVideoToScriptModal(true);
+    }
+  }, []);
   const [showScriptEditorModal, setShowScriptEditorModal] = useState<boolean>(false);
   const [showContinuityCheckerModal, setShowContinuityCheckerModal] = useState<boolean>(false);
   const [showSocialPostModal, setShowSocialPostModal] = useState<boolean>(false);
+  const [socialStoryText, setSocialStoryText] = useState<string>('');
 
   // Auto Generate, Cost Breakdown & Emergency Stop
   const [showAutoConfirmModal, setShowAutoConfirmModal] = useState<boolean>(false);
@@ -441,7 +419,6 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
     const userLock = continuityLock;
     setClips([]);
     setSplitSuccessData(null);
-    setDialogues([]);
     setCopiedClipIndex(null);
     setAllCopied(false);
     setPromptGenerationError(null);
@@ -507,16 +484,16 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
 
       setContinuityLock(freshContinuityLock);
 
-      // Auto-fill Dialogue Lock strictly from current analysis
+      // Spoken lines in the script win. The API list is only a fallback when
+      // the local read finds nothing (and it accepts line or dialogue).
       const resolvedScenesCount = result.scenes && result.scenes.length > 0 ? result.scenes.length : clipCount;
-      const freshDialogues: DialogueLockEntry[] = (result.dialogues || []).map((d, i) => ({
-        id: d.id || `diag_auto_${Date.now()}_${i}`,
-        speaker: d.speaker,
-        line: d.line,
-        emotionTone: d.emotionTone || 'ตามบทต้นฉบับ',
-        clipNumber: d.sceneNumber || (i % resolvedScenesCount) + 1
+      const fromScript = dialogueLockEntriesFromScript(scriptText);
+      const fromApi = dialogueLockEntriesFromUnknown(result.dialogues).map((d, i) => ({
+        ...d,
+        clipNumber: d.clipNumber || (i % resolvedScenesCount) + 1
       }));
-      setDialogues(freshDialogues);
+      const freshDialogues = fromScript.length > 0 ? fromScript : fromApi;
+      setDialogues(prev => (freshDialogues.length > 0 ? mergeDialogueLock(freshDialogues, prev) : []));
 
       // Update clip count to match detected scenes
       setClipCount(resolvedScenesCount);
@@ -556,7 +533,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
     } catch (err: any) {
       console.error('Failed to auto-split script:', err?.message || err);
       const msg = err?.message || 'ไม่สามารถประมวลผลได้';
-      setPromptGenerationError(`แยกบทไม่สำเร็จ / Split failed: ${msg}${useOfflineMode ? '' : '\nลองใหม่ ตรวจสอบ Gemini API Key หรือเลือก "โหมดออฟไลน์"'}`);
+      setPromptGenerationError(`แยกบทไม่สำเร็จ / Split failed: ${msg}${useOfflineMode ? '' : '\nลองใหม่ หรือเลือก "โหมดออฟไลน์"'}`);
       alert('เกิดข้อผิดพลาดในการแยกบท: ' + msg);
     } finally {
       setIsSplittingScript(false);
@@ -694,6 +671,30 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
   }, [initialCharacterId, characters]);
 
   useEffect(() => {
+    const names = (locations || []).map(l => l.name).filter(Boolean);
+    const auto = autoEnvironmentFromScript(scriptText, names);
+    if (!auto.location && !auto.timeOfDay && !auto.lighting) return;
+    const matched = auto.location
+      ? (locations || []).find(l => l.name === auto.location || l.name.includes(auto.location) || auto.location.includes(l.name))
+      : undefined;
+    setContinuityLock(prev => ({
+      ...prev,
+      ...(auto.timeOfDay ? { timeOfDay: auto.timeOfDay } : {}),
+      ...(auto.lighting ? { lighting: auto.lighting } : {}),
+      ...(auto.location ? {
+        location: matched?.name || auto.location,
+        ...(matched ? {
+          locationId: matched.id,
+          locationLocked: true,
+          locationVisualDetails: locationDescriptionOf(matched),
+          locationImageHash: matched.imageHash || matched.visualProfile?.imageHash || '',
+          locationReferenceUrl: matched.referenceImageUrl || matched.visualProfile?.referenceImageUrl || matched.thumbnailUrl || ''
+        } : {})
+      } : {})
+    }));
+  }, [scriptText, locations]);
+
+  useEffect(() => {
     if (initialLocationId && locations && locations.length > 0) {
       const match = locations.find(l => l.id === initialLocationId);
       if (match) {
@@ -701,24 +702,6 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
       }
     }
   }, [initialLocationId, locations]);
-
-  // Load Preset
-  const handleLoadSample = (sample: typeof SAMPLE_SCRIPTS[0]) => {
-    setScriptText(sample.script);
-    setClipCount(sample.dialogues.length || 3);
-    setContinuityLock(prev => ({
-      ...prev,
-      characterName: sample.charName,
-      characterAppearance: sample.charAppearance,
-      location: sample.location,
-      timeOfDay: sample.timeOfDay,
-      lighting: sample.lighting,
-      visualStyle: sample.style,
-      props: sample.props
-    }));
-    setDialogues(sample.dialogues);
-    setClips([]);
-  };
 
   // Add Dialogue Entry
   const handleAddDialogue = () => {
@@ -1093,6 +1076,27 @@ ${c.negativePrompt}
     }
   };
 
+  const handleSaveProject = () => {
+    const selected = (characters || [])
+      .filter((character) => selectedCharacterIds.includes(character.id))
+      .map((character) => ({ id: character.id, name: character.name }));
+    const locationSnaps = (locations || []).map((location) => ({ id: location.id, name: location.name }));
+    const saved = saveCurrentProject({
+      scriptText,
+      originalStory,
+      continuityLock,
+      selectedCharacterIds,
+      clips,
+      characters: selected,
+      locations: locationSnaps
+    });
+    if (!saved) {
+      setProjectSaveNote('ยังไม่มีอะไรให้บันทึก');
+      return;
+    }
+    setProjectSaveNote(`บันทึกโปรเจกต์แล้ว: ${saved.name}`);
+  };
+
   return (
     <div className="w-full max-w-7xl mx-auto px-3 sm:px-6 py-6 pb-32">
       {/* Header Banner */}
@@ -1120,14 +1124,6 @@ ${c.negativePrompt}
             {/* Presets & Director Tool Buttons */}
             <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={() => setShowVideoToScriptModal(true)}
-                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/30 transition-all flex items-center gap-1.5 active:scale-95"
-                title="ถอดวิดีโอเป็นบทภาพยนตร์และมุมกล้อง"
-              >
-                <FileVideo className="w-3.5 h-3.5" />
-                <span>ถอดวิดีโอเป็นบท</span>
-              </button>
-              <button
                 onClick={() => setShowScriptEditorModal(true)}
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all flex items-center gap-1.5 active:scale-95"
                 title="สลับตัวละครในบทและบทพูด"
@@ -1144,30 +1140,29 @@ ${c.negativePrompt}
                 <span>ตรวจความต่อเนื่อง</span>
               </button>
               <button
-                onClick={() => setShowSocialPostModal(true)}
+                onClick={() => {
+                  const current = scriptText.trim() || originalStory.trim();
+                  setSocialStoryText(current);
+                  setShowSocialPostModal(true);
+                }}
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-pink-600/20 hover:bg-pink-600/30 text-pink-300 border border-pink-500/30 transition-all flex items-center gap-1.5 active:scale-95"
                 title="สร้างแคปชั่นและพาดหัวไวรัล"
               >
                 <Share2 className="w-3.5 h-3.5 text-pink-400" />
                 <span>AI ผู้ช่วยโซเชียล</span>
               </button>
-
-              <div className="h-4 w-px bg-slate-700 hidden sm:block mx-1" />
-
               <button
-                onClick={() => handleLoadSample(SAMPLE_SCRIPTS[0])}
-                className="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700/80 transition-all flex items-center gap-1.5 active:scale-95"
+                type="button"
+                onClick={handleSaveProject}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-200 border border-cyan-500/30 transition-all flex items-center gap-1.5 active:scale-95"
+                title="บันทึกโปรเจกต์"
               >
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>ตัวอย่าง 1 (โบราณคดี)</span>
+                <Save className="w-3.5 h-3.5 text-cyan-300" />
+                <span>บันทึกโปรเจกต์</span>
               </button>
-              <button
-                onClick={() => handleLoadSample(SAMPLE_SCRIPTS[1])}
-                className="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700/80 transition-all flex items-center gap-1.5 active:scale-95"
-              >
-                <Flame className="w-3.5 h-3.5 text-rose-400" />
-                <span>ตัวอย่าง 2 (ไซเบอร์พังก์)</span>
-              </button>
+              {projectSaveNote && (
+                <span className="text-xs text-slate-200">{projectSaveNote}</span>
+              )}
             </div>
           </div>
 
@@ -1188,7 +1183,7 @@ ${c.negativePrompt}
                     <FileText className="w-4 h-4 text-indigo-400" />
                     1. Prompt Mode (โหมดสร้าง Prompt ฟรี)
                   </span>
-                  <span className="text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                  <span className="text-xs font-semibold bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
                     0 เครดิต (ฟรี)
                   </span>
                 </div>
@@ -1218,12 +1213,12 @@ ${c.negativePrompt}
                     2. Auto Generate Mode (ส่งสร้างอัตโนมัติ)
                   </span>
                   {isRealProvider ? (
-                    <span className="text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1">
+                    <span className="text-xs font-semibold bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                       API พร้อมใช้งาน
                     </span>
                   ) : (
-                    <span className="text-[11px] font-semibold bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/30">
+                    <span className="text-xs font-semibold bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/30">
                       รองรับเฉพาะ API จริง
                     </span>
                   )}
@@ -1296,7 +1291,7 @@ ${c.negativePrompt}
                       <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1 py-0.5 rounded">Mock</span>
                     )}
                   </div>
-                  <span className="text-[10px] text-slate-400 block">
+                  <span className="text-xs text-slate-400 block">
                     {hasRealVideo ? 'รองรับ Video API จริง' : 'จำลอง (ไม่สร้างวิดีโอจริง)'}
                   </span>
                 </button>
@@ -1398,10 +1393,12 @@ ${c.negativePrompt}
 ฉากที่ 1: ตัวละครเดินเข้าสู่วิหาร...
 ฉากที่ 2: พบรหัสลับและเริ่มเปิดกลไก...
 ฉากที่ 3: แสงสีฟ้าส่องสว่างเปิดประตูสู่ห้องใต้ดิน..."
-              className="w-full bg-slate-950/80 border border-slate-700/80 rounded-2xl p-3.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 leading-relaxed resize-none"
+              className="w-full bg-slate-950/80 border border-slate-700/80 rounded-2xl p-3.5 text-sm text-slate-100 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 leading-relaxed resize-none"
             />
 
-            {/* ACTION & NARRATION LOCK and DIALOGUE 20-WORD SPLIT System Info Cards */}
+            {/* ACTION & NARRATION LOCK and DIALOGUE 20-WORD SPLIT System Info Cards.
+                Hidden from the screen only. Rule copy stays in this file; model prompts are unchanged. */}
+            {false && (
             <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2.5">
               {/* ACTION & NARRATION LOCK */}
               <div className="p-3.5 rounded-2xl bg-gradient-to-r from-teal-950/70 via-slate-900 to-indigo-950/70 border border-teal-500/40 text-xs space-y-1.5 shadow-md">
@@ -1410,12 +1407,12 @@ ${c.negativePrompt}
                     <ShieldCheck className="w-4 h-4 text-teal-400" />
                     <span>ACTION & NARRATION LOCK</span>
                   </div>
-                  <span className="px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 text-[10px] font-bold border border-teal-500/40 flex items-center gap-1">
+                  <span className="px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 text-xs font-bold border border-teal-500/40 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
                     ACTIVE
                   </span>
                 </div>
-                <ul className="text-slate-300 text-[11px] space-y-1 leading-relaxed list-disc list-inside">
+                <ul className="text-slate-300 text-xs space-y-1 leading-relaxed list-disc list-inside">
                   <li>อ่านบทตามลำดับเดิมจากบนลงล่าง รักษา Action/Narration ไว้ตำแหน่งเดิมก่อนหรือหลังบทพูด ห้ามข้าม ห้ามย้าย ห้ามตัด ห้ามแปลงเป็นบทพูด</li>
                   <li>ใช้แท็ก <code className="text-amber-300 bg-black/50 px-1 py-0.5 rounded font-mono font-bold">[ACT_TRIGGER]</code> ... <code className="text-amber-300 bg-black/50 px-1 py-0.5 rounded font-mono font-bold">[ACTION_END]</code> ดึง Action, Movement, Emotion/Expression, Narration</li>
                   <li><strong className="text-amber-300">กฎสำคัญ:</strong> ถ้าช่วงใดไม่มี Dialogue ให้ตัวละครเงียบ 100% ห้ามสร้างบทพูดใหม่เองเด็ดขาด</li>
@@ -1429,12 +1426,12 @@ ${c.negativePrompt}
                     <Scissors className="w-4 h-4 text-purple-400" />
                     <span>DIALOGUE 20-WORD SPLIT</span>
                   </div>
-                  <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-bold border border-purple-500/40 flex items-center gap-1">
+                  <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-xs font-bold border border-purple-500/40 flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
                     MAX 20 WORDS
                   </span>
                 </div>
-                <ul className="text-slate-300 text-[11px] space-y-1 leading-relaxed list-disc list-inside">
+                <ul className="text-slate-300 text-xs space-y-1 leading-relaxed list-disc list-inside">
                   <li>ถ้าบทพูดยาวเกิน 20 คำ ให้ตัดเฉพาะส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ ห้ามตัดคำกลางประโยคเสียความหมาย</li>
                   <li>ห้ามแก้ ห้ามย่อ ห้ามแต่งบทพูดเพิ่ม และรักษาผู้พูดคนเดิม 100%</li>
                   <li>คลิปถัดไปต่อเนื่องจาก END คลิปก่อนหน้า (ท่าทาง ตำแหน่ง สีหน้า กล้อง ฉาก เวลา และเสียง)</li>
@@ -1442,6 +1439,7 @@ ${c.negativePrompt}
                 </ul>
               </div>
             </div>
+            )}
 
             {/* AI Auto-Split & Fill Button */}
             <div className="mt-3">
@@ -1464,7 +1462,7 @@ ${c.negativePrompt}
                   </>
                 )}
               </button>
-              <label className="mt-2 flex items-center gap-2 text-[11px] text-slate-400 cursor-pointer select-none">
+              <label className="mt-2 flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   id="chk-director-offline"
@@ -1557,11 +1555,11 @@ ${c.negativePrompt}
                 <div>
                   <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
                     <span>Master Continuity Lock</span>
-                    <span className="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/30">
+                    <span className="text-xs bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full border border-amber-500/30">
                       ล็อค 10 มิติ
                     </span>
                   </h2>
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-xs text-slate-400">
                     ล็อคตัวละคร (เลือกได้หลายตัว), สถานที่, เวลา, แสง, สไตล์, กล้อง, พร็อพ, ตำแหน่ง, และส่งต่อโมเมนตัม
                   </p>
                 </div>
@@ -1580,13 +1578,13 @@ ${c.negativePrompt}
                         <span>1. ล็อคตัวละคร (Character Lock)</span>
                       </label>
                       {selectedCharacterIds.length > 0 && (
-                        <span className="text-[10px] bg-indigo-500/20 text-indigo-300 font-semibold px-2 py-0.5 rounded-full border border-indigo-500/30">
+                        <span className="text-xs bg-indigo-500/20 text-indigo-300 font-semibold px-2 py-0.5 rounded-full border border-indigo-500/30">
                           เลือกแล้ว {selectedCharacterIds.length} ตัว
                         </span>
                       )}
                     </div>
                     {characters.length > 0 && (
-                      <div className="flex items-center gap-2 text-[11px]">
+                      <div className="flex items-center gap-2 text-xs">
                         <button
                           type="button"
                           onClick={handleSelectAllCharacters}
@@ -1594,7 +1592,7 @@ ${c.negativePrompt}
                         >
                           เลือกทั้งหมด
                         </button>
-                        <span className="text-slate-600">|</span>
+                        <span className="text-slate-400">|</span>
                         <button
                           type="button"
                           onClick={handleClearCharacters}
@@ -1609,7 +1607,7 @@ ${c.negativePrompt}
                   {/* รายการตัวละครในคลังที่สามารถเลือกได้หลายตัวพร้อมกัน */}
                   {characters.length > 0 ? (
                     <div className="space-y-2">
-                      <div className="text-[11px] text-slate-400">
+                      <div className="text-xs text-slate-400">
                         เลือกตัวละครที่ต้องการล็อคความต่อเนื่อง (สามารถเลือกได้หลายตัวจากคลัง):
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
@@ -1642,10 +1640,10 @@ ${c.negativePrompt}
                                       </span>
                                     )}
                                   </div>
-                                  <span className="text-[10px] text-slate-400 shrink-0">{char.gender}</span>
+                                  <span className="text-xs text-slate-400 shrink-0">{char.gender}</span>
                                 </div>
                                 <div className="flex items-center gap-1 mt-0.5">
-                                  <p className="text-[10px] text-indigo-400/90 font-mono truncate">
+                                  <p className="text-xs text-indigo-400/90 font-mono truncate">
                                     {char.triggerTag}
                                   </p>
                                   {(char.visualProfileImageHash || char.referenceMetadata?.imageHash) && (
@@ -1672,7 +1670,7 @@ ${c.negativePrompt}
                   ) : (
                     <div className="bg-slate-900/60 border border-dashed border-slate-800 rounded-xl p-3 text-center">
                       <p className="text-xs text-slate-400">ยังไม่มีตัวละครในคลังตัวละคร</p>
-                      <p className="text-[11px] text-slate-500 mt-0.5">
+                      <p className="text-xs text-slate-400 mt-0.5">
                         ท่านสามารถสร้างและบันทึกตัวละครใน Character Library เพื่อนำมาเลือกล็อคความต่อเนื่องที่นี่ได้
                       </p>
                     </div>
@@ -1681,14 +1679,14 @@ ${c.negativePrompt}
                   {/* แถบแสดงตัวละครที่เลือกไว้ */}
                   {selectedCharacterIds.length > 0 && (
                     <div className="pt-2 border-t border-slate-800/80">
-                      <div className="text-[11px] text-slate-400 mb-1.5">ตัวละครที่ถูกเลือกและล็อคไว้:</div>
+                      <div className="text-xs text-slate-400 mb-1.5">ตัวละครที่ถูกเลือกและล็อคไว้:</div>
                       <div className="flex flex-wrap gap-1.5">
                         {characters
                           .filter(c => selectedCharacterIds.includes(c.id))
                           .map(char => (
                             <span
                               key={char.id}
-                              className="inline-flex items-center gap-1.5 bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-[11px] font-medium px-2 py-1 rounded-lg"
+                              className="inline-flex items-center gap-1.5 bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-xs font-medium px-2 py-1 rounded-lg"
                             >
                               <img
                                 src={char.referenceImageUrl || char.visualProfile?.referenceImageUrl || char.visualProfile?.referenceImage || char.avatarUrl || (char.referenceImages && char.referenceImages[0])}
@@ -1717,7 +1715,7 @@ ${c.negativePrompt}
                   {/* ข้อมูลสรุปชื่อตัวละครและลักษณะที่ใช้ล็อค (แก้ไขได้ตามต้องการ) */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-800/60">
                     <div>
-                      <label className="block text-[11px] text-slate-400 mb-1 font-medium">
+                      <label className="block text-xs text-slate-400 mb-1 font-medium">
                         ชื่อตัวละครที่ล็อค (รองรับหลายคน คั่นด้วยจุลภาค)
                       </label>
                       <input
@@ -1729,7 +1727,7 @@ ${c.negativePrompt}
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] text-slate-400 mb-1 font-medium">
+                      <label className="block text-xs text-slate-400 mb-1 font-medium">
                         ลักษณะใบหน้า/ทรงผม/ชุดประจำตัว
                       </label>
                       <input
@@ -1754,7 +1752,7 @@ ${c.negativePrompt}
                           <span>2. ล็อคสถานที่ & ฉาก (Location Lock)</span>
                         </label>
                         {continuityLock.locationLocked && (
-                          <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-semibold px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1">
+                          <span className="text-xs bg-emerald-500/20 text-emerald-300 font-semibold px-2 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1">
                             <ShieldCheck className="w-3 h-3 text-emerald-400" />
                             <span>LOCKED</span>
                           </span>
@@ -1764,7 +1762,7 @@ ${c.negativePrompt}
                         <button
                           type="button"
                           onClick={() => handleSelectLocation(null)}
-                          className="text-[11px] text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                          className="text-xs text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
                         >
                           ปลดล็อค / ล้างค่า
                         </button>
@@ -1774,7 +1772,7 @@ ${c.negativePrompt}
                     {/* รายการสถานที่ในคลัง (Location Library) */}
                     {locations && locations.length > 0 && (
                       <div className="space-y-1.5">
-                        <div className="text-[11px] text-slate-400">เลือกสถานที่จากคลัง (Location Library):</div>
+                        <div className="text-xs text-slate-400">ระบบเลือกสถานที่จากบทให้เอง แก้เองได้:</div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-44 overflow-y-auto pr-1">
                           {locations.map(loc => {
                             const isSelected = continuityLock.locationId === loc.id;
@@ -1804,7 +1802,7 @@ ${c.negativePrompt}
                                       LOCK
                                     </span>
                                   </div>
-                                  <div className="flex items-center gap-1 mt-0.5 text-[10px] text-slate-400 truncate">
+                                  <div className="flex items-center gap-1 mt-0.5 text-xs text-slate-400 truncate">
                                     <span>{visual?.architecturalStyle || visual?.environmentType || 'สถานที่'}</span>
                                     {loc.imageHash && (
                                       <span className="text-[9px] font-mono text-emerald-400/80">
@@ -1831,7 +1829,7 @@ ${c.negativePrompt}
 
                     {/* รายละเอียดสถาปัตยกรรมที่ล็อคไว้ */}
                     {continuityLock.locationLocked && continuityLock.locationVisualDetails && (
-                      <div className="bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-2.5 text-[11px] text-emerald-200/90 leading-relaxed">
+                      <div className="bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-2.5 text-xs text-emerald-200/90 leading-relaxed">
                         <span className="font-semibold text-emerald-300 block mb-0.5">🏛️ สถาปัตยกรรม & องค์ประกอบที่ถูกล็อคข้ามคลิป:</span>
                         <p className="line-clamp-2">{continuityLock.locationVisualDetails}</p>
                       </div>
@@ -1839,7 +1837,7 @@ ${c.negativePrompt}
 
                     {/* ช่องกรอกข้อความสถานที่ */}
                     <div>
-                      <label className="block text-[11px] text-slate-400 mb-1 font-medium">
+                      <label className="block text-xs text-slate-400 mb-1 font-medium">
                         ชื่อสถานที่ในฉาก หรือระบุเพิ่มเติม
                       </label>
                       <input
@@ -1857,6 +1855,7 @@ ${c.negativePrompt}
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
                       3. ล็อคเวลา (Time of Day)
                     </label>
+                    <p className="text-xs text-slate-400 mb-1">เติมจากบทอัตโนมัติ เช่น ตีสอง ฉากที่ไม่ได้ระบุเวลา จะเว้นว่าง ไม่เอาเวลาจากฉากอื่น</p>
                     <input
                       type="text"
                       placeholder="เช่น กลางวัน, ทไวไลท์ยามเย็น, กลางคืน"
@@ -1873,6 +1872,7 @@ ${c.negativePrompt}
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
                       4. ล็อคสภาพแสง (Lighting)
                     </label>
+                    <p className="text-xs text-slate-400 mb-1">เติมจากบทและเวลา เช่น ตอนเย็นเป็นแสงเย็น</p>
                     <input
                       type="text"
                       placeholder="เช่น แสงไฟนีออนสีขาวนวล, แสงธรรมชาติแดดยามบ่าย"
@@ -1984,11 +1984,11 @@ ${c.negativePrompt}
                 <div>
                   <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
                     <span>Dialogue Lock</span>
-                    <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                    <span className="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30">
                       ล็อคตัวละครต่อบทพูด
                     </span>
                   </h2>
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-xs text-slate-400">
                     ระบุตัวละครต่อบทพูดภาษาไทย ห้ามสลับตัวละคร และห้ามแต่งเพิ่มเอง
                   </p>
                 </div>
@@ -2011,11 +2011,11 @@ ${c.negativePrompt}
                             <span className="font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">
                               [{d.speaker}]
                             </span>
-                            <span className="text-[10px] text-emerald-400 font-mono">
+                            <span className="text-xs text-emerald-400 font-mono">
                               คลิปที่ {d.clipNumber || (idx + 1)}
                             </span>
                             {d.emotionTone && (
-                              <span className="text-[10px] text-slate-400">
+                              <span className="text-xs text-slate-400">
                                 (อารมณ์: {d.emotionTone})
                               </span>
                             )}
@@ -2038,7 +2038,7 @@ ${c.negativePrompt}
                         </div>
                         <button
                           onClick={() => handleRemoveDialogue(d.id)}
-                          className="text-slate-500 hover:text-rose-400 p-1 transition-colors"
+                          className="text-slate-400 hover:text-rose-400 p-1 transition-colors"
                           title="ลบบทพูด"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -2047,7 +2047,7 @@ ${c.negativePrompt}
                     ))}
                   </div>
                 ) : (
-                  <div className="text-center py-3 text-xs text-slate-500 bg-slate-950/40 rounded-xl">
+                  <div className="text-center py-3 text-xs text-slate-400 bg-slate-950/40 rounded-xl">
                     ยังไม่มีการเพิ่มบทพูดเจาะจง (ระบบจะใช้การดำเนินเรื่องทางภาพ)
                   </div>
                 )}
@@ -2082,12 +2082,13 @@ ${c.negativePrompt}
                         <option key={i + 1} value={i + 1}>คลิป {i + 1}</option>
                       ))}
                     </select>
-                    <button
+                    <button aria-label="เพิ่มบทพูด" title="เพิ่มบทพูด"
                       onClick={handleAddDialogue}
                       disabled={!newSpeaker.trim() || !newLine.trim()}
                       className="w-1/2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl py-2 flex items-center justify-center transition-all text-xs font-semibold active:scale-95"
                     >
                       <Plus className="w-3.5 h-3.5" />
+                      <span className="ml-1">เพิ่มบทพูด</span>
                     </button>
                   </div>
                 </div>
@@ -2108,11 +2109,11 @@ ${c.negativePrompt}
                 <div>
                   <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
                     <span>Audio Directives Control</span>
-                    <span className="text-[10px] bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded-full border border-purple-500/30">
+                    <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded-full border border-purple-500/30">
                       Voice • Music • SFX
                     </span>
                   </h2>
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-xs text-slate-400">
                     เปิด/ปิด และแนบคำสั่งเสียงพากย์, เพลงประกอบ, และ Foley ใน Prompt อัตโนมัติ
                   </p>
                 </div>
@@ -2139,7 +2140,7 @@ ${c.negativePrompt}
                         })}
                         className="rounded text-purple-600 bg-slate-900 border-slate-700"
                       />
-                      <span className="text-[11px] text-slate-300">เปิดใช้งาน</span>
+                      <span className="text-xs text-slate-300">เปิดใช้งาน</span>
                     </label>
                   </div>
                   {audioDirectives.voice.enabled && (
@@ -2185,7 +2186,7 @@ ${c.negativePrompt}
                         })}
                         className="rounded text-indigo-600 bg-slate-900 border-slate-700"
                       />
-                      <span className="text-[11px] text-slate-300">เปิดใช้งาน</span>
+                      <span className="text-xs text-slate-300">เปิดใช้งาน</span>
                     </label>
                   </div>
                   {audioDirectives.music.enabled && (
@@ -2231,7 +2232,7 @@ ${c.negativePrompt}
                         })}
                         className="rounded text-emerald-600 bg-slate-900 border-slate-700"
                       />
-                      <span className="text-[11px] text-slate-300">เปิดใช้งาน</span>
+                      <span className="text-xs text-slate-300">เปิดใช้งาน</span>
                     </label>
                   </div>
                   {audioDirectives.sfx.enabled && (
@@ -2326,7 +2327,7 @@ ${c.negativePrompt}
               <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
                 <span>ผลลัพธ์ชุด Prompt ต่อเนื่อง ({clips.length} คลิป)</span>
                 {generationSource && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-indigo-300 border border-slate-700">
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-indigo-300 border border-slate-700">
                     {generationSource === 'gemini-ai' ? 'Gemini AI' : 'ออฟไลน์ (ไม่ใช้ AI) / Offline Engine'}
                   </span>
                 )}
@@ -2447,15 +2448,9 @@ ${c.negativePrompt}
               <h2 className="text-lg font-bold text-white mb-2">
                 พร้อมสร้างชุด Prompt สำหรับวิดีโอหลายคลิป
               </h2>
-              <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto leading-relaxed mb-6">
-                กรอกบทละครหรือเลือกตัวอย่างทางด้านซ้าย แล้วกด <strong>"สร้าง Prompt ทุกคลิปพร้อมกัน"</strong> เพื่อให้ระบบล็อคความต่อเนื่อง 10 มิติและจัดสร้าง Prompt พร้อมใช้งานทันที
+              <p className="text-xs sm:text-sm text-slate-400 max-w-md mx-auto leading-relaxed">
+                กรอกบทละคร แล้วกด <strong>"สร้าง Prompt ทุกคลิปพร้อมกัน"</strong> เพื่อให้ระบบล็อคความต่อเนื่อง 10 มิติและจัดสร้าง Prompt พร้อมใช้งานทันที
               </p>
-              <button
-                onClick={() => handleLoadSample(SAMPLE_SCRIPTS[0])}
-                className="px-5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all active:scale-95"
-              >
-                โหลดตัวอย่างบททดสอบ 3 คลิปทันที
-              </button>
             </div>
           )}
 
@@ -2492,11 +2487,11 @@ ${c.negativePrompt}
                     <div>
                       <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
                         <span>{clip.title}</span>
-                        <span className="text-[10px] font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded-md">
+                        <span className="text-xs font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded-md">
                           {clip.durationSeconds} วินาที
                         </span>
                       </h2>
-                      <span className="text-[11px] text-slate-400 line-clamp-1">
+                      <span className="text-xs text-slate-400 line-clamp-1">
                         {clip.sceneSummary}
                       </span>
                     </div>
@@ -2552,25 +2547,25 @@ ${c.negativePrompt}
                 {/* Continuity Momentum Bridge */}
                 <div className="bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3 mb-3 text-xs grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div className="border-b sm:border-b-0 sm:border-r border-slate-800/80 pb-1.5 sm:pb-0 sm:pr-2">
-                    <span className="text-[10px] font-semibold text-indigo-400 block mb-0.5">
+                    <span className="text-xs font-semibold text-indigo-400 block mb-0.5">
                       จุดเริ่มการเคลื่อนไหว (Start Action):
                     </span>
-                    <p className="text-slate-300 text-[11px] line-clamp-2">
+                    <p className="text-slate-300 text-xs line-clamp-2">
                       {clip.startAction}
                     </p>
                   </div>
                   <div className="sm:pl-1">
-                    <span className="text-[10px] font-semibold text-emerald-400 block mb-0.5">
+                    <span className="text-xs font-semibold text-emerald-400 block mb-0.5">
                       จุดจบส่งต่อคลิปถัดไป (End Action Momentum):
                     </span>
-                    <p className="text-slate-300 text-[11px] line-clamp-2">
+                    <p className="text-slate-300 text-xs line-clamp-2">
                       {clip.endAction}
                     </p>
                   </div>
                 </div>
 
                 {/* Master Continuity, Spatial Position & Audio Tags */}
-                <div className="flex flex-wrap gap-1.5 mb-3 text-[10px]">
+                <div className="flex flex-wrap gap-1.5 mb-3 text-xs">
                   <span className="bg-amber-500/10 text-amber-300 border border-amber-500/20 px-2 py-0.5 rounded-md flex items-center gap-1 font-semibold">
                     <Lock className="w-3 h-3 text-amber-400" />
                     <span>Character Lock: {clip.continuityLockSummary}</span>
@@ -2620,12 +2615,12 @@ ${c.negativePrompt}
                 {/* Dialogue Segments with Camera Control & Background Control Directly Underneath */}
                 {clip.dialogues && clip.dialogues.length > 0 && (
                   <div className="bg-slate-950/70 border border-slate-800/90 rounded-2xl p-3 mb-3 space-y-2.5">
-                    <div className="flex items-center justify-between text-[11px] font-semibold text-slate-300 border-b border-slate-800/80 pb-2">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-300 border-b border-slate-800/80 pb-2">
                       <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
                         <MessageSquare className="w-3.5 h-3.5" />
                         <span>บทพูดในคลิปนี้ ({clip.dialogues.length} ช่วงบทพูด) — Camera & Background Control:</span>
                       </span>
-                      <span className="text-[10px] text-slate-500 font-mono">Original Dialogue Only</span>
+                      <span className="text-xs text-slate-400 font-mono">Original Dialogue Only</span>
                     </div>
 
                     <div className="space-y-2.5">
@@ -2640,7 +2635,7 @@ ${c.negativePrompt}
                               {d.speaker}
                             </span>
                             {d.emotionTone && (
-                              <span className="text-[10px] text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded font-medium">
+                              <span className="text-xs text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded font-medium">
                                 ({d.emotionTone})
                               </span>
                             )}
@@ -2667,12 +2662,12 @@ ${c.negativePrompt}
                 )}
 
                 {/* Continuity Prompt & Visual Prompt Header */}
-                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 mb-1.5">
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-400 mb-1.5">
                   <span className="flex items-center gap-1.5 text-indigo-300 font-bold">
                     <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                     <span>Continuity Prompt & Visual Prompt (10 วินาที):</span>
                   </span>
-                  <span className="text-[10px] text-slate-500 font-mono">1 Clip = 1 Prompt</span>
+                  <span className="text-xs text-slate-400 font-mono">1 Clip = 1 Prompt</span>
                 </div>
 
                 {/* Prompt Box or Inline Editor */}
@@ -2715,7 +2710,7 @@ ${c.negativePrompt}
                       <span className="text-slate-300">
                         สถานะ: {clip.status === 'queued' ? 'อยู่ในคิว' : clip.status === 'processing' ? 'กำลังประมวลผล' : clip.status === 'completed' ? 'สร้างเสร็จสมบูรณ์' : 'ล้มเหลว'}
                         {clip.status === 'failed' && clip.error && (
-                          <span className="block text-[11px] text-rose-300 break-words">{clip.error}</span>
+                          <span className="block text-xs text-rose-300 break-words">{clip.error}</span>
                         )}
                       </span>
                     </div>
@@ -2777,7 +2772,7 @@ ${c.negativePrompt}
                     <span className="font-mono text-indigo-300">{costEstimate.serviceFeeCredits} เครดิต</span>
                   </div>
                   {costEstimate.breakdown && (
-                    <div className="p-2 bg-slate-900/90 rounded-xl text-[11px] text-slate-400 font-mono">
+                    <div className="p-2 bg-slate-900/90 rounded-xl text-xs text-slate-400 font-mono">
                       {costEstimate.breakdown}
                     </div>
                   )}
@@ -2794,7 +2789,7 @@ ${c.negativePrompt}
                 <div className="text-right">
                   <span className="font-mono text-emerald-400 block">{totalCost} เครดิต</span>
                   {costEstimate?.approximateThb ? (
-                    <span className="text-[11px] text-slate-400 font-normal">
+                    <span className="text-xs text-slate-400 font-normal">
                       (~{costEstimate.approximateThb} บาท)
                     </span>
                   ) : null}
@@ -2851,9 +2846,11 @@ ${c.negativePrompt}
         onClose={() => setShowVideoToScriptModal(false)}
         onApplyToDirector={(script, charName, newDialogues) => {
           setScriptText(script);
-          setContinuityLock(prev => ({ ...prev, characterName: charName }));
-          setDialogues(newDialogues);
-          setClipCount(newDialogues.length || 3);
+          if (charName) setContinuityLock(prev => ({ ...prev, characterName: charName }));
+          if (newDialogues.length > 0) {
+            setDialogues(newDialogues);
+            setClipCount(newDialogues.length);
+          }
         }}
       />
 
@@ -2890,7 +2887,7 @@ ${c.negativePrompt}
       <SocialPostAssistantModal
         isOpen={showSocialPostModal}
         onClose={() => setShowSocialPostModal(false)}
-        scriptText={scriptText}
+        scriptText={socialStoryText}
         characterName={continuityLock.characterName}
       />
     </div>

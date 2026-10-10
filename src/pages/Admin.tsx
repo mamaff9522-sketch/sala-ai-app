@@ -5,9 +5,10 @@ import {
   doc,
   updateDoc,
   setDoc,
-  getDocs
+  getDocs,
+  arrayUnion
 } from 'firebase/firestore';
-import { db, auth } from '../services/auth';
+import { db, auth, getApiKey, saveApiKey } from '../services/auth';
 import { api } from '../services/api';
 import type { User as FirebaseUser } from 'firebase/auth';
 import {
@@ -34,7 +35,6 @@ import {
   Filter,
   AlertCircle,
   CheckCircle2,
-  Edit3,
   PlusCircle,
   ExternalLink
 } from 'lucide-react';
@@ -87,6 +87,24 @@ export const Admin: React.FC<AdminProps> = ({
   const [creditAmountInput, setCreditAmountInput] = useState<string>('100');
   const [creditAdjustmentType, setCreditAdjustmentType] = useState<'add' | 'set'>('add');
 
+  const [bankName, setBankName] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [accountName, setAccountName] = useState('');
+  const [promptPayId, setPromptPayId] = useState('');
+  const [qrFile, setQrFile] = useState<File | null>(null);
+  const [clearQr, setClearQr] = useState(false);
+  const [receivingLoaded, setReceivingLoaded] = useState(false);
+  const [savingReceiving, setSavingReceiving] = useState(false);
+  const [pendingTransfers, setPendingTransfers] = useState<Awaited<ReturnType<typeof api.adminListTransferRequests>>>([]);
+  const [slipUrls, setSlipUrls] = useState<Record<string, string>>({});
+  const [confirmingRef, setConfirmingRef] = useState<string | null>(null);
+  const [rejectingRef, setRejectingRef] = useState<string | null>(null);
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [addingAdmin, setAddingAdmin] = useState(false);
+  const [ownGeminiKey, setOwnGeminiKey] = useState('');
+  const [showOwnGeminiKey, setShowOwnGeminiKey] = useState(false);
+  const [savingOwnGeminiKey, setSavingOwnGeminiKey] = useState(false);
+
   // Listen to Firestore 'users' collection in real-time (Only if verified admin)
   useEffect(() => {
     if (!authUser || !isAuthorized) {
@@ -108,7 +126,7 @@ export const Admin: React.FC<AdminProps> = ({
             email: data.email || '',
             displayName: data.displayName || 'ผู้ใช้ Sala AI',
             photoURL: data.photoURL,
-            credits: typeof data.credits === 'number' ? data.credits : 500,
+            credits: typeof data.remainingCredits === 'number' ? data.remainingCredits : (typeof data.credits === 'number' ? data.credits : 0),
             isLocked: Boolean(data.isLocked || data.status === 'locked'),
             status: data.isLocked || data.status === 'locked' ? 'locked' : 'active',
             role: data.role || (data.email === 'mama.ff9522@gmail.com' ? 'admin' : 'user'),
@@ -126,7 +144,7 @@ export const Admin: React.FC<AdminProps> = ({
             email: authUser.email || '',
             displayName: authUser.displayName || 'ผู้ดูแลระบบ',
             photoURL: authUser.photoURL || undefined,
-            credits: authUser.email === 'mama.ff9522@gmail.com' ? 9999 : 500,
+            credits: 0,
             isLocked: false,
             status: 'active',
             role: authUser.email === 'mama.ff9522@gmail.com' ? 'admin' : 'user',
@@ -166,7 +184,7 @@ export const Admin: React.FC<AdminProps> = ({
               email: authUser.email || '',
               displayName: authUser.displayName || 'ผู้ดูแลระบบ',
               photoURL: authUser.photoURL || undefined,
-              credits: 9999,
+              credits: 0,
               isLocked: false,
               status: 'active',
               role: 'admin',
@@ -245,6 +263,10 @@ export const Admin: React.FC<AdminProps> = ({
   // Handle Credits Adjustment
   const handleSaveCreditsAdjustment = async () => {
     if (!adjustingUser) return;
+    if (!adjustingUser.uid || adjustingUser.uid.includes('@')) {
+      setActionError('ต้องเลือกผู้ใช้จาก uid จริง ไม่สามารถมอบเครดิตด้วยการพิมพ์อีเมล');
+      return;
+    }
     const val = parseInt(creditAmountInput, 10);
     if (isNaN(val)) {
       setActionError('กรุณากรอกจำนวนเครดิตเป็นตัวเลขที่ถูกต้อง');
@@ -321,7 +343,7 @@ export const Admin: React.FC<AdminProps> = ({
           email: data.email || '',
           displayName: data.displayName || 'ผู้ใช้ Sala AI',
           photoURL: data.photoURL,
-          credits: typeof data.credits === 'number' ? data.credits : 500,
+          credits: typeof data.remainingCredits === 'number' ? data.remainingCredits : (typeof data.credits === 'number' ? data.credits : 0),
           isLocked: Boolean(data.isLocked || data.status === 'locked'),
           status: data.isLocked || data.status === 'locked' ? 'locked' : 'active',
           role: data.role || (data.email === 'mama.ff9522@gmail.com' ? 'admin' : 'user'),
@@ -343,6 +365,137 @@ export const Admin: React.FC<AdminProps> = ({
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const loadTransferAdmin = async () => {
+    if (!authUser || !isAuthorized) return;
+    try {
+      const [settingsRes, requests] = await Promise.all([
+        api.adminGetTransferSettings(),
+        api.adminListTransferRequests()
+      ]);
+      setBankName(settingsRes.settings.bankName || '');
+      setAccountNumber(settingsRes.settings.accountNumber || '');
+      setAccountName(settingsRes.settings.accountName || '');
+      setPromptPayId(settingsRes.settings.promptPayId || '');
+      setReceivingLoaded(true);
+      setPendingTransfers(requests);
+      const urls: Record<string, string> = {};
+      for (const req of requests) {
+        if (!req.hasSlip) continue;
+        try {
+          urls[req.reference] = await api.adminTransferSlipUrl(req.reference);
+        } catch {
+          /* slip preview is optional */
+        }
+      }
+      setSlipUrls((prev) => {
+        Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
+        return urls;
+      });
+    } catch (err: any) {
+      setReceivingLoaded(true);
+      setActionError(err?.message || 'โหลดบัญชีรับเงินหรือสลิปไม่สำเร็จ');
+    }
+  };
+
+  useEffect(() => {
+    if (!authUser || !isAuthorized) return;
+    loadTransferAdmin();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authUser, isAuthorized]);
+
+  useEffect(() => {
+    if (!isAuthorized) return;
+    let cancelled = false;
+    getApiKey('gemini').then((key) => {
+      if (!cancelled && key) setOwnGeminiKey(key);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [isAuthorized]);
+
+
+  const readImageFile = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('อ่านไฟล์ไม่สำเร็จ'));
+    reader.readAsDataURL(file);
+  });
+
+  const handleSaveReceivingAccount = async () => {
+    setSavingReceiving(true);
+    setActionError(null);
+    try {
+      const payload: {
+        bankName: string;
+        accountNumber: string;
+        accountName: string;
+        promptPayId: string;
+        qrImageBase64?: string;
+        qrMimeType?: string;
+        clearQr?: boolean;
+      } = { bankName, accountNumber, accountName, promptPayId };
+      if (clearQr) payload.clearQr = true;
+      if (qrFile) {
+        if (qrFile.size > 5 * 1024 * 1024) throw new Error('รูป QR ต้องไม่เกิน 5 MB');
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(qrFile.type)) {
+          throw new Error('รูป QR ต้องเป็น jpeg, png หรือ webp');
+        }
+        payload.qrImageBase64 = await readImageFile(qrFile);
+        payload.qrMimeType = qrFile.type;
+      }
+      const saved = await api.adminSaveTransferSettings(payload);
+      setBankName(saved.settings?.bankName || '');
+      setAccountNumber(saved.settings?.accountNumber || '');
+      setAccountName(saved.settings?.accountName || '');
+      setPromptPayId(saved.settings?.promptPayId || '');
+      setQrFile(null);
+      setClearQr(false);
+      setActionSuccess('บันทึกบัญชีรับเงินลงโปรไฟล์ Firestore ของแอดมินแล้ว');
+    } catch (err: any) {
+      setActionError(err?.message || 'บันทึกบัญชีรับเงินไม่สำเร็จ');
+    } finally {
+      setSavingReceiving(false);
+    }
+  };
+
+  const handleConfirmTransfer = async (reference: string) => {
+    setConfirmingRef(reference);
+    setActionError(null);
+    try {
+      const res = await api.adminConfirmTransfer(reference);
+      if (res.granted && typeof res.remainingCredits === 'number') {
+        setActionSuccess(`ยืนยัน ${reference} แล้ว เติมเครดิตจริง ยอดคงเหลือใหม่ ${res.remainingCredits.toLocaleString()} เครดิต`);
+      } else {
+        setActionError(res.message || 'ยืนยันไม่สำเร็จ ยังไม่ได้เติมเครดิต');
+      }
+      await loadTransferAdmin();
+    } catch (err: any) {
+      setActionError(err?.message || 'ยืนยันไม่สำเร็จ ยังไม่ได้เติมเครดิต');
+    } finally {
+      setConfirmingRef(null);
+    }
+  };
+
+  const handleRejectTransfer = async (reference: string) => {
+    setRejectingRef(reference);
+    setActionError(null);
+    try {
+      const res = await api.adminRejectTransfer(reference);
+      setActionSuccess(res.message || `ปฏิเสธ ${reference} แล้ว ยังไม่ได้เติมเครดิต`);
+      await loadTransferAdmin();
+    } catch (err: any) {
+      setActionError(err?.message || 'ปฏิเสธไม่สำเร็จ');
+    } finally {
+      setRejectingRef(null);
+    }
+  };
+
+  const formatThaiTime = (iso?: string | null) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', hour12: false });
   };
 
   // If user is NOT logged in, show access restriction screen
@@ -423,7 +576,7 @@ export const Admin: React.FC<AdminProps> = ({
             <div className="mb-6 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-xs text-slate-300">
               <span className="text-slate-400">เข้าสู่ระบบด้วย:</span>
               <span className="font-semibold text-amber-300">{authUser.email || authUser.displayName}</span>
-              <span className="text-[10px] text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-md ml-1">ไม่ใช่แอดมิน</span>
+              <span className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-md ml-1">ไม่ใช่แอดมิน</span>
             </div>
           ) : (
             <div className="mb-6 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-800/80 border border-slate-700 text-xs text-slate-400">
@@ -551,6 +704,223 @@ export const Admin: React.FC<AdminProps> = ({
         </div>
       </div>
 
+      <section className="mb-6 bg-slate-900/80 border border-amber-500/30 rounded-2xl p-5 space-y-3">
+        <h2 className="text-lg font-bold text-white">จัดการ Gemini API Key</h2>
+        <p className="text-xs text-slate-400">เฉพาะผู้ดูแลบนหน้านี้เท่านั้นที่เห็นและบันทึกคีย์นี้ ผู้ใช้ทั่วไปไม่มีช่องคีย์ การสร้างภาพ วิดีโอ และแยกบทยังใช้คีย์บนเซิร์ฟเวอร์ ไม่ได้อ่านคีย์จากเบราว์เซอร์ของผู้ใช้</p>
+        <label className="block text-xs font-semibold text-slate-200" htmlFor="admin-gemini-key">Gemini API Key ของบัญชีผู้ดูแล</label>
+        <div className="flex flex-wrap gap-2">
+          <input
+            id="admin-gemini-key"
+            type={showOwnGeminiKey ? 'text' : 'password'}
+            value={ownGeminiKey}
+            onChange={(e) => setOwnGeminiKey(e.target.value)}
+            autoComplete="off"
+            className="flex-1 min-w-[220px] px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white font-mono"
+          />
+          <button
+            type="button"
+            onClick={() => setShowOwnGeminiKey((v) => !v)}
+            className="px-3 py-2 rounded-xl bg-slate-800 text-slate-200 text-sm"
+          >
+            {showOwnGeminiKey ? 'ซ่อน' : 'แสดง'}
+          </button>
+          <button
+            type="button"
+            disabled={savingOwnGeminiKey}
+            onClick={async () => {
+              setSavingOwnGeminiKey(true);
+              setActionError(null);
+              try {
+                await saveApiKey(ownGeminiKey, 'gemini');
+                setActionSuccess('บันทึก Gemini API Key ของผู้ดูแลแล้ว');
+              } catch (err: any) {
+                setActionError(err?.message || 'บันทึก API Key ไม่สำเร็จ');
+              } finally {
+                setSavingOwnGeminiKey(false);
+              }
+            }}
+            className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 text-sm font-bold disabled:opacity-50"
+          >
+            {savingOwnGeminiKey ? 'กำลังบันทึก...' : 'บันทึกคีย์'}
+          </button>
+        </div>
+      </section>
+
+      <section className="mb-6 bg-slate-900/80 border border-amber-500/30 rounded-2xl p-5 space-y-3">
+        <h2 className="text-lg font-bold text-white">เพิ่มผู้ดูแล</h2>
+        <p className="text-xs text-slate-400">ผู้ใช้ทั่วไปเพิ่มผู้ดูแลไม่ได้ เฉพาะผู้ดูแลที่มีอยู่แล้วเท่านั้นที่เพิ่มอีเมลคนอื่นได้ ผู้ดูแลคนแรกคือ mama.ff9522@gmail.com</p>
+        <form
+          className="flex flex-wrap gap-2"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const email = newAdminEmail.trim().toLowerCase();
+            if (!email) return;
+            setAddingAdmin(true);
+            setActionError(null);
+            try {
+              await api.addAdminEmail(email);
+              await safeFirestoreWrite(async () => {
+                await setDoc(doc(db, 'config', 'admins'), { emails: arrayUnion(email) }, { merge: true });
+              });
+              setNewAdminEmail('');
+              setActionSuccess(`เพิ่ม ${email} เป็นผู้ดูแลแล้ว`);
+            } catch (err: any) {
+              setActionError(err?.message || 'เพิ่มผู้ดูแลไม่สำเร็จ');
+            } finally {
+              setAddingAdmin(false);
+            }
+          }}
+        >
+          <input
+            type="email"
+            required
+            value={newAdminEmail}
+            onChange={(e) => setNewAdminEmail(e.target.value)}
+            placeholder="email@example.com"
+            className="flex-1 min-w-[220px] px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white"
+          />
+          <button
+            type="submit"
+            disabled={addingAdmin}
+            className="px-4 py-2 rounded-xl bg-amber-500 text-slate-950 text-sm font-bold disabled:opacity-50"
+          >
+            {addingAdmin ? 'กำลังเพิ่ม...' : 'เพิ่มผู้ดูแล'}
+          </button>
+        </form>
+      </section>
+
+      <section className="mb-6 bg-slate-900/80 border border-emerald-500/30 rounded-2xl p-5 space-y-4">
+        <div>
+          <h2 className="text-lg font-bold text-white">บัญชีรับเงิน (โอน / พร้อมเพย์)</h2>
+          <p className="text-xs text-slate-400 mt-1">
+            บันทึกลง Firestore ที่โปรไฟล์ของแอดมินที่ล็อกอิน (users/uid) ช่องว่างไว้ได้ เพราะยังไม่มีเลขบัญชีในระบบ ห้ามใส่เลขที่ยังไม่ทราบ
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="text-xs text-slate-300 space-y-1 block">
+            <span>ธนาคาร</span>
+            <input
+              value={bankName}
+              onChange={(e) => setBankName(e.target.value)}
+              placeholder="ยังไม่ได้กรอก"
+              className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white"
+            />
+          </label>
+          <label className="text-xs text-slate-300 space-y-1 block">
+            <span>เลขบัญชี</span>
+            <input
+              value={accountNumber}
+              onChange={(e) => setAccountNumber(e.target.value)}
+              placeholder="ยังไม่ได้กรอก"
+              inputMode="numeric"
+              className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white font-mono"
+            />
+          </label>
+          <label className="text-xs text-slate-300 space-y-1 block">
+            <span>ชื่อบัญชี</span>
+            <input
+              value={accountName}
+              onChange={(e) => setAccountName(e.target.value)}
+              placeholder="ยังไม่ได้กรอก"
+              className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white"
+            />
+          </label>
+          <label className="text-xs text-slate-300 space-y-1 block">
+            <span>PromptPay ID</span>
+            <input
+              value={promptPayId}
+              onChange={(e) => setPromptPayId(e.target.value)}
+              placeholder="เบอร์ 10 หลักขึ้นต้น 0 หรือเลข 13 หลัก หรือว่าง"
+              className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white font-mono"
+            />
+          </label>
+        </div>
+        <label className="text-xs text-slate-300 block space-y-1">
+          <span>รูป QR (ไม่บังคับ — ถ้ามีจะใช้รูปนี้แทน QR ที่ระบบสร้าง)</span>
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="block w-full text-xs text-slate-300"
+            onChange={(e) => setQrFile(e.target.files?.[0] || null)}
+          />
+        </label>
+        <label className="text-xs text-slate-400 flex items-center gap-2">
+          <input type="checkbox" checked={clearQr} onChange={(e) => setClearQr(e.target.checked)} />
+          ลบรูป QR ที่อัปโหลดไว้
+        </label>
+        <button
+          type="button"
+          onClick={handleSaveReceivingAccount}
+          disabled={!receivingLoaded || savingReceiving}
+          className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold disabled:opacity-60"
+        >
+          {savingReceiving ? 'กำลังบันทึก...' : 'บันทึกบัญชีรับเงิน'}
+        </button>
+      </section>
+
+      <section className="mb-6 bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-bold text-white">สลิปรอตรวจ</h2>
+          <button type="button" onClick={loadTransferAdmin} className="text-xs text-indigo-300 underline">รีเฟรชสลิป</button>
+        </div>
+        {pendingTransfers.length === 0 ? (
+          <p className="text-sm text-slate-400">ยังไม่มีรายการโอนที่รอตรวจ</p>
+        ) : pendingTransfers.map((req) => (
+          <div key={req.reference} className="border border-slate-800 rounded-xl p-3 space-y-2 text-xs text-slate-200">
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              <span className="font-mono text-emerald-300">{req.reference}</span>
+              <span>{req.email || 'ไม่ทราบอีเมล'}</span>
+              <span className="font-mono">{req.uid}</span>
+              <span>ผู้ใช้ชำระ {req.amountThb} บาท</span>
+              <span>ระบบแนะนำให้มอบ {req.amountThb} เครดิต</span>
+              <span>{formatThaiTime(req.createdAt)}</span>
+            </div>
+            {slipUrls[req.reference] && (
+              <img src={slipUrls[req.reference]} alt={`สลิป ${req.reference}`} className="max-h-48 rounded-lg border border-slate-700" />
+            )}
+            {!req.slipRead ? (
+              <p className="text-amber-200">ยังไม่มีผลอ่านสลิป</p>
+            ) : req.slipRead.failed ? (
+              <p className="text-amber-200">อ่านสลิปไม่สำเร็จ: {req.slipRead.error || 'ไม่ทราบสาเหตุ'} — ยังไม่ได้เติมเครดิต แอดมินตรวจเองแล้วกดยืนยันได้</p>
+            ) : (
+              <div className="space-y-1">
+                <div>ชื่อผู้โอน: {req.slipRead.senderName || '—'}</div>
+                <div>ยอดที่อ่านได้: {req.slipRead.amountThb === null ? '—' : `${req.slipRead.amountThb} บาท`}</div>
+                <div>เวลาที่โอน: {req.slipRead.transferredAt || '—'}</div>
+                <div>รหัสที่อ่านได้: {req.slipRead.reference || '—'}</div>
+                {req.slipRead.matched ? (
+                  <p className="text-emerald-300">ตรงกับรายการ (รหัสและยอดเงิน) ยังไม่ได้เติมเครดิตจนกว่าจะกดยืนยัน</p>
+                ) : (
+                  <ul className="text-amber-200 list-disc pl-4">
+                    {req.slipRead.differences.map((diff) => <li key={diff}>{diff}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                id={`admin-approve-${req.reference}`}
+                disabled={!req.hasSlip || confirmingRef === req.reference || rejectingRef === req.reference}
+                onClick={() => handleConfirmTransfer(req.reference)}
+                className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold disabled:opacity-50"
+              >
+                {confirmingRef === req.reference ? 'กำลังอนุมัติ...' : 'อนุมัติ'}
+              </button>
+              <button
+                type="button"
+                id={`admin-reject-${req.reference}`}
+                disabled={confirmingRef === req.reference || rejectingRef === req.reference}
+                onClick={() => handleRejectTransfer(req.reference)}
+                className="px-3 py-1.5 rounded-lg bg-rose-600 text-white font-semibold disabled:opacity-50"
+              >
+                {rejectingRef === req.reference ? 'กำลังปฏิเสธ...' : 'ปฏิเสธ'}
+              </button>
+            </div>
+          </div>
+        ))}
+      </section>
+
       {/* Stats Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
         <div className="bg-slate-900/80 border border-slate-800/80 p-4 rounded-2xl">
@@ -559,7 +929,7 @@ export const Admin: React.FC<AdminProps> = ({
             <Users className="w-4 h-4 text-indigo-400" />
           </div>
           <div className="text-2xl font-black text-white">{totalCount}</div>
-          <div className="text-[11px] text-slate-500 mt-0.5">ใน Firestore Database</div>
+          <div className="text-xs text-slate-400 mt-0.5">ใน Firestore Database</div>
         </div>
 
         <div className="bg-slate-900/80 border border-slate-800/80 p-4 rounded-2xl">
@@ -568,7 +938,7 @@ export const Admin: React.FC<AdminProps> = ({
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="text-2xl font-black text-emerald-400">{activeCount}</div>
-          <div className="text-[11px] text-slate-500 mt-0.5">พร้อมใช้งานระบบ AI</div>
+          <div className="text-xs text-slate-400 mt-0.5">พร้อมใช้งานระบบ AI</div>
         </div>
 
         <div className="bg-slate-900/80 border border-slate-800/80 p-4 rounded-2xl">
@@ -577,7 +947,7 @@ export const Admin: React.FC<AdminProps> = ({
             <Lock className="w-4 h-4 text-rose-400" />
           </div>
           <div className="text-2xl font-black text-rose-400">{lockedCount}</div>
-          <div className="text-[11px] text-slate-500 mt-0.5">ถูกระงับสิทธิ์การใช้งาน</div>
+          <div className="text-xs text-slate-400 mt-0.5">ถูกระงับสิทธิ์การใช้งาน</div>
         </div>
 
         <div className="bg-slate-900/80 border border-slate-800/80 p-4 rounded-2xl">
@@ -586,7 +956,7 @@ export const Admin: React.FC<AdminProps> = ({
             <Key className="w-4 h-4 text-amber-400" />
           </div>
           <div className="text-2xl font-black text-amber-400">{withKeyCount}</div>
-          <div className="text-[11px] text-slate-500 mt-0.5">มีคีย์ Gemini / ผู้ให้บริการอื่น</div>
+          <div className="text-xs text-slate-400 mt-0.5">มีคีย์ Gemini / ผู้ให้บริการอื่น</div>
         </div>
       </div>
 
@@ -601,7 +971,7 @@ export const Admin: React.FC<AdminProps> = ({
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="ค้นหาตามชื่อ, อีเมล หรือ UID..."
             id="input-admin-search"
-            className="w-full pl-10 pr-4 py-2.5 bg-slate-950/70 border border-slate-800 rounded-xl text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-colors"
+            className="w-full pl-10 pr-4 py-2.5 bg-slate-950/70 border border-slate-800 rounded-xl text-xs text-white placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 transition-colors"
           />
         </div>
 
@@ -659,7 +1029,7 @@ export const Admin: React.FC<AdminProps> = ({
               รายชื่อผู้ใช้ ({filteredUsers.length} รายการ)
             </span>
           </div>
-          <span className="text-[11px] text-slate-400">
+          <span className="text-xs text-slate-400">
             ซิงค์อัตโนมัติแบบ Real-time กับ Cloud Firestore
           </span>
         </div>
@@ -670,10 +1040,10 @@ export const Admin: React.FC<AdminProps> = ({
             <p className="text-sm">กำลังโหลดข้อมูลผู้ใช้จาก Firestore...</p>
           </div>
         ) : filteredUsers.length === 0 ? (
-          <div className="py-16 text-center text-slate-500">
-            <Users className="w-10 h-10 mx-auto mb-3 text-slate-600" />
+          <div className="py-16 text-center text-slate-400">
+            <Users className="w-10 h-10 mx-auto mb-3 text-slate-400" />
             <p className="text-sm font-semibold text-slate-400">ไม่พบข้อมูลผู้ใช้ที่ตรงกับเงื่อนไข</p>
-            <p className="text-xs text-slate-500 mt-1">ลองเปลี่ยนคำค้นหาหรือตัวกรองสถานะ</p>
+            <p className="text-xs text-slate-400 mt-1">ลองเปลี่ยนคำค้นหาหรือตัวกรองสถานะ</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -721,17 +1091,17 @@ export const Admin: React.FC<AdminProps> = ({
                             <div className="font-bold text-white text-sm flex items-center gap-2">
                               <span>{user.displayName || 'ผู้ใช้ Sala AI'}</span>
                               {user.role === 'admin' && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                <span className="text-xs px-1.5 py-0.5 rounded font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
                                   ADMIN
                                 </span>
                               )}
                               {isCurrentUser && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                <span className="text-xs px-1.5 py-0.5 rounded font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                                   คุณ (YOU)
                                 </span>
                               )}
                             </div>
-                            <div className="font-mono text-[11px] text-slate-500 mt-0.5">
+                            <div className="font-mono text-xs text-slate-400 mt-0.5">
                               UID: {user.uid}
                             </div>
                           </div>
@@ -743,7 +1113,7 @@ export const Admin: React.FC<AdminProps> = ({
                         {user.email ? (
                           <span className="font-mono text-xs">{user.email}</span>
                         ) : (
-                          <span className="text-slate-500 italic">ไม่ได้ระบุอีเมล</span>
+                          <span className="text-slate-400 italic">ไม่ได้ระบุอีเมล</span>
                         )}
                       </td>
 
@@ -752,18 +1122,19 @@ export const Admin: React.FC<AdminProps> = ({
                         <div className="flex items-center gap-2">
                           <div className="flex items-center gap-1.5 font-bold text-amber-300 bg-amber-500/10 border border-amber-500/25 px-2.5 py-1 rounded-xl">
                             <Coins className="w-3.5 h-3.5 text-amber-400" />
-                            <span>{(user.credits ?? 500).toLocaleString()}</span>
+                            <span>{(user.credits ?? 0).toLocaleString()}</span>
                           </div>
                           <button
+                            type="button"
+                            id={`admin-grant-${user.uid}`}
                             onClick={() => {
                               setAdjustingUser(user);
                               setCreditAmountInput('100');
                               setCreditAdjustmentType('add');
                             }}
-                            className="p-1 rounded-lg text-slate-400 hover:text-indigo-300 hover:bg-indigo-500/20 transition-colors"
-                            title="ปรับยอดเครดิต"
+                            className="px-2 py-1 rounded-lg text-[16px] font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 transition-colors"
                           >
-                            <Edit3 className="w-3.5 h-3.5" />
+                            มอบเครดิต
                           </button>
                         </div>
                       </td>
@@ -772,7 +1143,7 @@ export const Admin: React.FC<AdminProps> = ({
                       <td className="py-4 px-4">
                         {hasApiKey ? (
                           <div className="flex items-center gap-2 max-w-xs">
-                            <div className="font-mono text-[11px] bg-slate-950/80 border border-slate-800 px-2.5 py-1 rounded-lg text-slate-300 truncate select-all">
+                            <div className="font-mono text-xs bg-slate-950/80 border border-slate-800 px-2.5 py-1 rounded-lg text-slate-300 truncate select-all">
                               {isRevealed
                                 ? rawKey
                                 : `${rawKey.slice(0, 4)}••••••••••••${rawKey.slice(-4)}`}
@@ -799,8 +1170,8 @@ export const Admin: React.FC<AdminProps> = ({
                             </button>
                           </div>
                         ) : (
-                          <span className="text-slate-500 text-[11px] italic flex items-center gap-1">
-                            <Key className="w-3 h-3 text-slate-600" /> ยังไม่ได้บันทึก
+                          <span className="text-slate-400 text-xs italic flex items-center gap-1">
+                            <Key className="w-3 h-3 text-slate-400" /> ยังไม่ได้บันทึก
                           </span>
                         )}
                       </td>
@@ -808,11 +1179,11 @@ export const Admin: React.FC<AdminProps> = ({
                       {/* Status */}
                       <td className="py-4 px-4">
                         {user.isLocked ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
                             <Lock className="w-3 h-3 text-rose-400" /> ถูกล็อก (Locked)
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                             <CheckCircle2 className="w-3 h-3 text-emerald-400" /> ปกติ (Active)
                           </span>
                         )}
@@ -880,12 +1251,15 @@ export const Admin: React.FC<AdminProps> = ({
                 <div className="font-bold text-white text-sm mt-0.5">
                   {adjustingUser.displayName || adjustingUser.email}
                 </div>
-                <div className="text-slate-500 font-mono text-[10px] mt-0.5">
+                <div className="text-slate-400 font-mono text-xs mt-0.5">
                   UID: {adjustingUser.uid}
                 </div>
                 <div className="text-amber-300 font-bold text-xs mt-2">
-                  เครดิตปัจจุบัน: {(adjustingUser.credits ?? 500).toLocaleString()} เครดิต
-                </div>
+                  เครดิตปัจจุบันใน Firestore: {(adjustingUser.credits ?? 0).toLocaleString()} เครดิต
+                  <p className="text-xs text-slate-400 mt-2">
+                  บันทึกที่ Firestore users/{adjustingUser.uid} ของผู้ใช้ที่เลือกเท่านั้น ไม่เติมเข้าอีเมลแอดมิน
+                </p>
+              </div>
               </div>
 
               <div>

@@ -136,7 +136,7 @@ export const PerformanceAnalytics: React.FC = () => {
               className={`rounded-3xl bg-gradient-to-b ${kpi.color} bg-[#090e1c] border ${kpi.borderColor} p-5 shadow-xl relative overflow-hidden`}
             >
               <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium text-slate-400 uppercase tracking-wider">
+                <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
                   {kpi.sub}
                 </span>
                 <div className={`p-2 rounded-xl bg-slate-900/80 border border-slate-800 ${kpi.textColor}`}>
@@ -154,7 +154,7 @@ export const PerformanceAnalytics: React.FC = () => {
                 <h3 className="text-xs font-semibold text-slate-300 mt-1">{kpi.title}</h3>
               </div>
 
-              <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+              <div className="mt-3 pt-3 border-t border-slate-800/80 flex items-center justify-between text-xs">
                 <span className="text-emerald-400 font-semibold">{kpi.change}</span>
                 <span className="text-slate-400">30 วันที่ผ่านมา</span>
               </div>
@@ -185,7 +185,7 @@ export const PerformanceAnalytics: React.FC = () => {
                 <span className="text-xs font-bold text-white group-hover:text-cyan-300 transition-colors">
                   {stage.title}
                 </span>
-                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${stage.statusColor}`}>
+                <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded-full border ${stage.statusColor}`}>
                   {stage.status}
                 </span>
               </div>
@@ -194,7 +194,7 @@ export const PerformanceAnalytics: React.FC = () => {
               </p>
 
               {/* Step indicator bar */}
-              <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400 font-mono">
+              <div className="mt-3 pt-2 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-400 font-mono">
                 <span>STAGE 0{idx + 1}</span>
                 <span className="text-cyan-400">Active Node</span>
               </div>
@@ -246,7 +246,7 @@ export const PerformanceAnalytics: React.FC = () => {
             </svg>
 
             {/* Day Labels */}
-            <div className="grid grid-cols-7 text-center text-[10px] font-mono text-slate-400 pt-2 border-t border-slate-800/80">
+            <div className="grid grid-cols-7 text-center text-xs font-mono text-slate-400 pt-2 border-t border-slate-800/80">
               <span>จันทร์ (18)</span>
               <span>อังคาร (22)</span>
               <span>พุธ (25)</span>
@@ -273,7 +273,7 @@ export const PerformanceAnalytics: React.FC = () => {
               <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold text-slate-200">System Engine</p>
-                  <p className="text-[10px] text-slate-400">คิวงานรอการประมวลผล</p>
+                  <p className="text-xs text-slate-400">คิวงานรอการประมวลผล</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-16 h-2 rounded-full bg-slate-800 overflow-hidden">
@@ -287,7 +287,7 @@ export const PerformanceAnalytics: React.FC = () => {
               <div className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold text-slate-200">GPU Compute Load</p>
-                  <p className="text-[10px] text-slate-400">การประมวลผล Tensor Core</p>
+                  <p className="text-xs text-slate-400">การประมวลผล Tensor Core</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-16 h-2 rounded-full bg-slate-800 overflow-hidden">
@@ -298,7 +298,7 @@ export const PerformanceAnalytics: React.FC = () => {
               </div>
 
               {/* Info stats */}
-              <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-850 text-[11px] space-y-1.5 font-mono">
+              <div className="p-3 rounded-2xl bg-slate-950/60 border border-slate-850 text-xs space-y-1.5 font-mono">
                 <div className="flex justify-between text-slate-400">
                   <span>VRAM Utilization:</span>
                   <span className="text-slate-200">5.4 / 8.0 GB</span>
@@ -311,7 +311,7 @@ export const PerformanceAnalytics: React.FC = () => {
             </div>
           </div>
 
-          <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
+          <div className="pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
             <span className="flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
               Latency &lt; 20ms

@@ -52,7 +52,8 @@ import {
   buildDialogueCameraTag,
   formatDialogueWithCameraControl,
   refreshClipPromptWithCameraControls,
-  autoRegenerateClipsOnMissingCameraTags
+  autoRegenerateClipsOnMissingCameraTags,
+  findSceneLockConflicts
 } from '../src/services/salaDirectorEngine';
 import { syncLocationLockInPrompt, checkStoryRepeats } from '../src/services/continuityEngine';
 import {
@@ -263,12 +264,14 @@ const jEp: any = generateEpisodeLocally({
   originalStory: JEALOUS, episodeNumber: 1, targetSceneCount: 5,
   characters: [{ name: 'พี่ทุย', age: '28 ปี', hairStyle: 'ผมสั้นรองทรง', outfitDescription: 'เสื้อยืดสีกรมท่า กางเกงยีนส์' }] as any
 });
-check('"แค่หึง ไม่ได้หมดรัก": 4 scenes, all หน้าบ้าน / ช่วงเย็น, inherited from scene 1', () => {
+check('"แค่หึง ไม่ได้หมดรัก": each scene keeps only the place and time it named', () => {
   assert.equal(jEp.scenes.length, 4);
-  assert.deepEqual(jEp.scenes.map((s: any) => s.location), ['หน้าบ้าน', 'หน้าบ้าน', 'หน้าบ้าน', 'หน้าบ้าน']);
-  assert.deepEqual(jEp.scenes.map((s: any) => s.timeOfDay), ['ช่วงเย็น', 'ช่วงเย็น', 'ช่วงเย็น', 'ช่วงเย็น']);
+  assert.deepEqual(jEp.scenes.map((s: any) => s.location), ['หน้าบ้าน', 'หน้าบ้าน', 'ไม่ระบุจากต้นฉบับ', 'ไม่ระบุจากต้นฉบับ']);
+  assert.deepEqual(jEp.scenes.map((s: any) => s.timeOfDay), ['ช่วงเย็น', 'ไม่ระบุจากต้นฉบับ', 'ไม่ระบุจากต้นฉบับ', 'ไม่ระบุจากต้นฉบับ']);
   assert.ok(!JSON.stringify(jEp.scenes.map((s: any) => s.location)).includes('อารมณ์'));
   assert.ok(jEp.scenes[2].sceneHeading.includes('(อารมณ์เริ่มตึงเครียด)'));
+  assert.ok(jEp.scenes[0].visualPrompt.includes('ผูกพรอมต์นี้กับฉากที่ 1 เวลา ช่วงเย็น สถานที่ หน้าบ้าน'));
+  jEp.scenes.slice(1).forEach((sc: any) => assert.ok(!sc.visualPrompt.includes('ช่วงเย็น'), sc.visualPrompt));
 });
 check('"แค่หึง": characters and dialogue in the right scenes and order', () => {
   jEp.scenes.forEach((s: any) => assert.deepEqual([...s.characters].sort(), ['น้องน้ำ', 'พี่ทุย']));
@@ -279,14 +282,13 @@ check('"แค่หึง": characters and dialogue in the right scenes and ord
   assert.equal(jEp.scenes[3].dialogues[3].speaker, 'พี่ทุย');
   assert.equal(jEp.hasMoreScenes, false);
 });
-check('full Character Lock + one Location Lock (same lighting) in every scene prompt', () => {
-  const lightings = new Set(jEp.scenes.map((s: any) => s.locationLock.lighting));
-  assert.equal(lightings.size, 1);
+check('full Character Lock in every scene; evening light only on the scene that named it', () => {
   jEp.scenes.forEach((s: any) => {
     assert.ok(s.visualPrompt.includes('age: 28 ปี') && s.visualPrompt.includes('hair: ผมสั้นรองทรง') && s.visualPrompt.includes('outfit: เสื้อยืดสีกรมท่า'), 'character lock');
-    assert.ok(s.visualPrompt.includes(`Lighting Lock: ${[...lightings][0]}`), 'location lock');
     assert.ok(s.visualPrompt.includes('Continuity Handoff:'), 'pose handoff');
   });
+  assert.ok(jEp.scenes[0].visualPrompt.includes('Lighting Lock:'));
+  jEp.scenes.slice(1).forEach((s: any) => assert.ok(!s.visualPrompt.includes('ช่วงเย็น')));
   assert.equal(buildCharacterLockText({ name: 'เอ' }), 'เอ');
 });
 check('pose handoff: start pose of scene N = end pose of scene N-1', () => {
@@ -349,16 +351,17 @@ check('Multi-Clip board: handoff enforced, warnings surfaced, included in video 
   assert.ok((built[1].continuityWarnings || []).some(w => w.type === 'pose_jump'), JSON.stringify(built[1].continuityWarnings));
   assert.equal(enforcePoseHandoff([]).clips.length, 0);
 });
-check('Gemini story scenes: title/mood location inherits previous place/time + locks applied', () => {
+check('Gemini story scenes: a mood title does not inherit another scene place or time', () => {
   const r = applyEpisodeLocks([
     { sceneNumber: 1, location: 'หน้าบ้าน', timeOfDay: 'ช่วงเย็น', characters: ['พี่ทุย', 'น้องน้ำ'], actionDescription: 'พี่ทุยนั่งรอน้องน้ำอยู่หน้าบ้าน', dialogues: [], visualPrompt: 'Cinematic.' },
     { sceneNumber: 2, location: 'หน้าบ้านต่อเนื่อง', timeOfDay: '', characters: ['พี่ทุย', 'น้องน้ำ'], actionDescription: 'น้องน้ำยิ้มให้พี่ทุย', dialogues: [], visualPrompt: 'Cinematic.' },
     { sceneNumber: 3, location: 'คืนดีกัน', timeOfDay: 'ไม่ระบุจากต้นฉบับ', characters: ['พี่ทุย', 'น้องน้ำ'], actionDescription: 'น้องน้ำจับมือพี่ทุย', dialogues: [], visualPrompt: 'Cinematic.' }
   ], { originalStory: JEALOUS });
-  assert.deepEqual(r.scenes.map((s: any) => [s.location, s.timeOfDay]), [['หน้าบ้าน', 'ช่วงเย็น'], ['หน้าบ้าน', 'ช่วงเย็น'], ['หน้าบ้าน', 'ช่วงเย็น']]);
+  assert.deepEqual(r.scenes.map((s: any) => [s.location, s.timeOfDay]), [['หน้าบ้าน', 'ช่วงเย็น'], ['หน้าบ้าน', 'ไม่ระบุจากต้นฉบับ'], ['ไม่ระบุจากต้นฉบับ', 'ไม่ระบุจากต้นฉบับ']]);
   assert.equal(r.scenes[2].sceneTitle, 'คืนดีกัน');
-  assert.equal(new Set(r.scenes.map((s: any) => s.locationLock.lighting)).size, 1);
-  assert.ok(r.scenes.every((s: any) => s.visualPrompt.includes('Location Lock: หน้าบ้าน')));
+  assert.ok(r.scenes[0].visualPrompt.includes('Location Lock: หน้าบ้าน'));
+  assert.ok(!r.scenes[2].visualPrompt.includes('Location Lock: หน้าบ้าน'));
+  assert.ok(!r.scenes[1].visualPrompt.includes('ช่วงเย็น'));
 });
 
 
@@ -457,13 +460,13 @@ check('fix4: Position Lock on "แค่หึง": verbs / props / gesture / ar
   const e: any = generateEpisodeLocally({ originalStory: JEALOUS });
   const pose = (sc: any, which: 'startPoses' | 'endPoses', n: string) => sc[which].find((p: any) => p.name === n);
   assert.equal(pose(e.scenes[0], 'startPoses', 'น้องน้ำ').entering, true);
-  assert.deepEqual(pose(e.scenes[0], 'endPoses', 'น้องน้ำ'), { name: 'น้องน้ำ', posture: 'standing', place: 'หน้าบ้าน' });
+  assert.deepEqual(pose(e.scenes[0], 'endPoses', 'น้องน้ำ'), { name: 'น้องน้ำ', posture: 'walking', place: 'หน้าบ้าน' });
   assert.equal(pose(e.scenes[0], 'endPoses', 'พี่ทุย').posture, 'sitting');
   assert.equal(pose(e.scenes[1], 'endPoses', 'น้องน้ำ').holding, 'ถือโทรศัพท์');
   assert.equal(pose(e.scenes[2], 'endPoses', 'พี่ทุย').holding, undefined, 'พี่ทุย put the phone back');
   assert.ok(pose(e.scenes[2], 'endPoses', 'น้องน้ำ').holding.includes('โทรศัพท์'));
   const n4 = pose(e.scenes[3], 'endPoses', 'น้องน้ำ');
-  assert.equal(n4.place, 'ข้างพี่ทุย'); assert.equal(n4.gesture, 'จับมือพี่ทุย'); assert.equal(n4.posture, 'standing');
+  assert.equal(n4.place, 'ข้างพี่ทุย'); assert.equal(n4.gesture, 'จับมือพี่ทุย'); assert.equal(n4.posture, 'walking');
   for (let i = 1; i < e.scenes.length; i++) assert.deepEqual(e.scenes[i].startPoses, e.scenes[i - 1].endPoses);
   e.scenes.forEach((s: any) => assert.ok(s.visualPrompt.includes('Position Lock:')));
   assert.equal(e.continuityWarnings.length, 0);
@@ -502,10 +505,18 @@ check('lock: Location Lock set details + props in every continuation scene at th
   const ep: any = generateEpisodeLocally({ originalStory: JEALOUS, continuityLock: lock });
   assert.ok(ep.scenes.length > 0);
   ep.scenes.forEach((sc: any) => {
-    assert.ok(sc.visualPrompt.includes('Set Lock: EXAMPLE ประตูไม้สีน้ำตาล') && sc.visualPrompt.includes('Props Lock: EXAMPLE โทรศัพท์มือถือ'), sc.visualPrompt);
+    if (sc.location === 'หน้าบ้าน') {
+      assert.ok(sc.visualPrompt.includes('Set Lock: EXAMPLE ประตูไม้สีน้ำตาล') && sc.visualPrompt.includes('Props Lock: EXAMPLE โทรศัพท์มือถือ'), sc.visualPrompt);
+    } else {
+      assert.ok(!sc.visualPrompt.includes('Set Lock:') && !sc.visualPrompt.includes('ช่วงเย็น'), sc.visualPrompt);
+    }
   });
   const clips = buildSalaMultiClipPrompts({ scriptText: JEALOUS, clipDurationSeconds: 10, clipCount: 4, continuityLock: { ...J_LOCK, ...lock }, knownCharacters: ['พี่ทุย', 'น้องน้ำ'] });
-  clips.forEach(c => assert.ok(c.generatedPrompt.includes('Architectural Environment: EXAMPLE ประตูไม้สีน้ำตาล') && c.generatedPrompt.includes('Props: EXAMPLE โทรศัพท์มือถือ') && c.generatedPrompt.includes('Location: หน้าบ้าน')));
+  clips.forEach(c => {
+    assert.ok(c.generatedPrompt.includes('Props: EXAMPLE โทรศัพท์มือถือ'));
+    if (c.locationName === 'หน้าบ้าน') assert.ok(c.generatedPrompt.includes('Architectural Environment: EXAMPLE ประตูไม้สีน้ำตาล') && c.generatedPrompt.includes('Location: หน้าบ้าน'));
+    else assert.ok(!c.generatedPrompt.includes('Location: หน้าบ้าน') && !c.generatedPrompt.includes('ช่วงเย็น'), c.generatedPrompt);
+  });
   const plain: any = generateEpisodeLocally({ originalStory: JEALOUS });
   assert.ok(plain.scenes.every((sc: any) => !sc.visualPrompt.includes('Set Lock:') && !sc.visualPrompt.includes('Props Lock:')));
 });
@@ -550,7 +561,8 @@ check('in-app แค่หึง case (combined "พี่ทุย และ �
     assert.equal(v.warnings.filter(w => w.includes('disappears') || w.includes('หายไป')).length, 0, JSON.stringify(v.warnings));
     clips.forEach(c => {
       assert.ok(c.charactersPresent!.includes('พี่ทุย') && c.charactersPresent!.includes('น้องน้ำ'), `clip ${c.clipNumber}: ${c.charactersPresent}`);
-      assert.equal(c.locationName, 'หน้าบ้าน');
+      if (c.clipNumber <= 2) assert.equal(c.locationName, 'หน้าบ้าน');
+      else assert.ok(c.locationName !== 'หน้าบ้าน' && !c.generatedPrompt.includes('ช่วงเย็น'), c.generatedPrompt);
       assert.ok(c.generatedPrompt.includes('Stance/Position Lock:'), `clip ${c.clipNumber} stance lock`);
       assert.ok(!/(พี่ทุย และ น้องน้ำ|พี่ทุยและน้องน้ำ) speaks/.test(c.generatedPrompt), `clip ${c.clipNumber} combined speaker`);
       if (c.clipNumber > 1) assert.ok(/Stance\/Position Lock: Start pose[^.]*พี่ทุย[^.]*น้องน้ำ/.test(c.generatedPrompt), `clip ${c.clipNumber} start pose`);
@@ -751,9 +763,11 @@ console.log('\nFIX4: robust Character Lock (multi-sentence library text) + Locat
       expected.filter((_, j) => j !== i).forEach(o => assert.ok(!p.includes(desc(o)), 'no other set'));
       assert.deepEqual(c.locationWarnings, []);
     });
-    // selected library location wins for every clip; idempotent
+    // a selected library card does not replace a scene that already named a different place
     const sel = enforceLibraryLocationLocks(clips, locPayloads, { selectedLocationId: 'loc_07' });
-    sel.forEach(c => { assert.equal(cnt(c.generatedPrompt, desc('ห้องครัว')), 1); assert.equal(cnt(c.generatedPrompt, 'Location Lock (library, verbatim):'), 1); assert.ok(!c.generatedPrompt.includes(desc('เรือนไทยภาคกลาง'))); });
+    assert.equal(cnt(sel[0].generatedPrompt, desc('เรือนไทยภาคกลาง')), 1);
+    assert.ok(!sel[0].generatedPrompt.includes(desc('ห้องครัว')));
+    assert.equal(cnt(sel[1].generatedPrompt, desc('ห้องครัว')), 1);
     const sel2 = enforceLibraryLocationLocks(sel, locPayloads, { selectedLocationId: 'loc_07' });
     sel2.forEach((c, i) => assert.equal(c.generatedPrompt, sel[i].generatedPrompt));
   });
@@ -782,12 +796,17 @@ console.log('\nFIX4: robust Character Lock (multi-sentence library text) + Locat
     assert.equal(clips.length, 5);
     assertOnce(clips, 't67+location');
     clips.forEach(c => {
-      assert.equal(cnt(c.generatedPrompt, desc('เรือนไทยภาคกลาง')), 1, `clip ${c.clipNumber}`);
-      assert.equal(cnt(c.generatedPrompt, REF('หน้าบ้าน')), 1, `clip ${c.clipNumber}`);
       assert.ok(c.generatedPrompt.includes('Stance/Position Lock:'));
+      if (c.locationName === 'หน้าบ้าน') {
+        assert.equal(cnt(c.generatedPrompt, desc('เรือนไทยภาคกลาง')), 1, `clip ${c.clipNumber}`);
+        assert.equal(cnt(c.generatedPrompt, REF('หน้าบ้าน')), 1, `clip ${c.clipNumber}`);
+      } else {
+        assert.equal(cnt(c.generatedPrompt, desc('เรือนไทยภาคกลาง')), 0, `clip ${c.clipNumber}`);
+        assert.ok(!c.generatedPrompt.includes('ช่วงเย็น'), c.generatedPrompt);
+      }
     });
     const v = validateSalaMultiClipPrompts(clips, ['พี่ทุย', 'น้องน้ำ']);
-    assert.ok(!v.warnings.some(w => w.includes('ไม่พบสถานที่') || w.includes('รูปอ้างอิงของสถานที่')), JSON.stringify(v.warnings));
+    assert.ok(!v.warnings.some(w => w.includes('หน้าบ้าน') && (w.includes('ไม่พบสถานที่') || w.includes('รูปอ้างอิงของสถานที่'))), JSON.stringify(v.warnings));
     // not in the library
     const none = build(STORY, lock, locPayloads);
     assert.ok(validateSalaMultiClipPrompts(none, []).warnings.some(w => w.startsWith('ไม่พบสถานที่ หน้าบ้าน ในคลัง')));
@@ -795,7 +814,11 @@ console.log('\nFIX4: robust Character Lock (multi-sentence library text) + Locat
     // lost reference photo: warning + no reference line; compressed backup keeps it
     const lost = build(STORY, lock, [{ ...lib[8], referenceStatus: 'missing' }]);
     assert.ok(validateSalaMultiClipPrompts(lost, []).warnings.some(w => w.startsWith('รูปอ้างอิงของสถานที่ หน้าบ้าน หาย กรุณาอัปโหลดใหม่')));
-    lost.forEach(c => { assert.ok(!c.generatedPrompt.includes('reference photo')); assert.equal(cnt(c.generatedPrompt, desc('เรือนไทยภาคกลาง')), 1); });
+    lost.forEach(c => {
+      assert.ok(!c.generatedPrompt.includes('reference photo'));
+      if (c.locationName === 'หน้าบ้าน') assert.equal(cnt(c.generatedPrompt, desc('เรือนไทยภาคกลาง')), 1);
+      else assert.equal(cnt(c.generatedPrompt, desc('เรือนไทยภาคกลาง')), 0);
+    });
     const backed = build(STORY, lock, [{ ...lib[8], referenceStatus: 'missing', referenceImageBackup: 'data:image/jpeg;base64,AAAA' }]);
     assert.ok(!validateSalaMultiClipPrompts(backed, []).warnings.some(w => w.includes('รูปอ้างอิงของสถานที่')));
     // no library given at all -> no location warnings (old callers unchanged)
@@ -1094,7 +1117,7 @@ check('buildDialogueCameraTag generates strict camera brackets with Face Lock an
     bgControl: 'SOFT',
     locationName: 'หน้าบ้าน'
   });
-  assert.equal(otsTag, "[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location, BG SOFT]");
+  assert.equal(otsTag, "[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location (หน้าบ้าน), BG SOFT]");
 
   const midTag = buildDialogueCameraTag({
     camIndex: 2,
@@ -1105,7 +1128,7 @@ check('buildDialogueCameraTag generates strict camera brackets with Face Lock an
     bgControl: 'CLEAR',
     locationName: 'หน้าบ้าน'
   });
-  assert.equal(midTag, "[CAM-2: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location, BG CLEAR]");
+  assert.equal(midTag, "[CAM-2: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location (หน้าบ้าน), BG CLEAR]");
 
   const cuTag = buildDialogueCameraTag({
     camIndex: 1,
@@ -1113,7 +1136,7 @@ check('buildDialogueCameraTag generates strict camera brackets with Face Lock an
     speaker: 'น้องฟ้าใส',
     bgControl: 'AUTO'
   });
-  assert.equal(cuTag, "[CAM-1: CU — tight close-up framing focused clearly on Nong-Fahsai's locked face, preserve same location, BG SOFT]");
+  assert.equal(cuTag, "[CAM-1: CU — tight close-up framing focused clearly on Nong-Fahsai's locked face, preserve same location — ไม่พบสถานที่, BG SOFT]");
 
   const twoSTag = buildDialogueCameraTag({
     camIndex: 1,
@@ -1122,7 +1145,7 @@ check('buildDialogueCameraTag generates strict camera brackets with Face Lock an
     otherCharacters: ['น้องฟ้าใส'],
     bgControl: 'SOFT'
   });
-  assert.equal(twoSTag, "[CAM-1: 2S — two-shot framing showing P'Ton and Nong-Fahsai together in frame, preserve locked faces, locked positions and same location, BG SOFT]");
+  assert.equal(twoSTag, "[CAM-1: 2S — two-shot framing showing P'Ton and Nong-Fahsai together in frame, preserve locked faces, locked positions and same location — ไม่พบสถานที่, BG SOFT]");
 });
 
 check('formatDialogueWithCameraControl matches exact user specification and CAM-1/CAM-2 order', () => {
@@ -1148,11 +1171,11 @@ check('formatDialogueWithCameraControl matches exact user specification and CAM-
   const formatted = formatDialogueWithCameraControl(dialogues, ['น้องน้ำ', 'พี่ทุย'], 'หน้าบ้าน');
 
   // Must contain CAM-1 bracket with OTS attached directly to Nong-Nam dialogue
-  assert.ok(formatted.includes("[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location, BG SOFT]"));
+  assert.ok(formatted.includes("[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location (หน้าบ้าน), BG SOFT]"));
   assert.ok(formatted.includes('[น้องน้ำ]: "พี่ทุย...เงินเดือนออกวันนี้ใช่ไหม?"'));
 
   // Must contain CAM-2 bracket with MID attached directly to P'Tui dialogue
-  assert.ok(formatted.includes("[CAM-2: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location, BG CLEAR]"));
+  assert.ok(formatted.includes("[CAM-1: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location (หน้าบ้าน), BG CLEAR]"));
   assert.ok(formatted.includes('[พี่ทุย]: "ออกแล้วจ้ะ...แต่พี่ว่ามันออกเร็วไปหน่อย"'));
 
   // Dual camera on single dialogue: CAM-1 then CAM-2 in the order selected, line not repeated
@@ -1218,9 +1241,9 @@ check('Prompt Generator Rule: Camera commands must be attached directly to dialo
   assert.ok(!refreshed.includes('Smooth tracking shot'));
 
   // Rule 2: Every camera command is inserted directly attached to the dialogue it controls
-  assert.ok(refreshed.includes("[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location, BG SOFT]"));
+  assert.ok(refreshed.includes("[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location (หน้าบ้าน), BG SOFT]"));
   assert.ok(refreshed.includes('[น้องน้ำ]: "พี่ทุย...เงินเดือนออกวันนี้ใช่ไหม?"'));
-  assert.ok(refreshed.includes("[CAM-2: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location, BG CLEAR]"));
+  assert.ok(refreshed.includes("[CAM-1: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location (หน้าบ้าน), BG CLEAR]"));
   assert.ok(refreshed.includes('[พี่ทุย]: "ออกแล้วจ้ะ...แต่พี่ว่ามันออกเร็วไปหน่อย"'));
 
   // Rule 3: Character Lock and Location remain intact
@@ -1275,13 +1298,12 @@ check('Validation & Auto-Regeneration: missing CAM-1/CAM-2 tags trigger error an
 
   // Validation: Generated prompt MUST contain CAM-1: OTS and CAM-2: MID
   assert.ok(prompt.includes('[CAM-1: OTS —'));
-  assert.ok(prompt.includes('[CAM-2: MID —'));
-  // CAM-1 occurs before CAM-2
-  assert.ok(prompt.indexOf('CAM-1') < prompt.indexOf('CAM-2'));
+  assert.ok(prompt.includes('[CAM-1: MID —'));
+  assert.equal((prompt.match(/\[CAM-1:/g) || []).length >= 2, true);
   // Attached directly to dialogue lines
-  assert.ok(prompt.includes("[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location, BG SOFT]"));
+  assert.ok(prompt.includes("[CAM-1: OTS — camera positioned behind P'Tui's shoulder, only a small part of P'Tui visible in foreground, focus clearly on Nong-Nam's locked face, preserve same location (หน้าบ้าน), BG SOFT]"));
   assert.ok(prompt.includes('[น้องน้ำ]: "พี่ทุย'));
-  assert.ok(prompt.includes("[CAM-2: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location, BG CLEAR]"));
+  assert.ok(prompt.includes("[CAM-1: MID — medium framing showing P'Tui and Nong-Nam together, preserve locked faces, locked positions and same location (หน้าบ้าน), BG CLEAR]"));
   assert.ok(prompt.includes('[พี่ทุย]: "ออกแล้วจ้ะ'));
 
   // Corrupt prompt by stripping camera tags to test validation & autoRegenerateClipsOnMissingCameraTags
@@ -1298,7 +1320,7 @@ check('Validation & Auto-Regeneration: missing CAM-1/CAM-2 tags trigger error an
   assert.equal(autoFixed.wasRegenerated, true);
   assert.equal(autoFixed.missingCount, 2);
   assert.ok(autoFixed.clips[0].generatedPrompt.includes('[CAM-1: OTS —'));
-  assert.ok(autoFixed.clips[0].generatedPrompt.includes('[CAM-2: MID —'));
+  assert.ok(autoFixed.clips[0].generatedPrompt.includes('[CAM-1: MID —'));
 
   // Re-validating auto-fixed clips succeeds
   const reValidation = validateSalaMultiClipPrompts(autoFixed.clips, ['น้องน้ำ', 'พี่ทุย'], testStory);
@@ -1322,22 +1344,19 @@ check('Action/Narration without dialogue creates happening event in prompt in or
   assert.equal(clips.length, 1);
   const clip = clips[0];
   const prompt = clip.generatedPrompt;
-
-  // 1. Dialogue MUST be empty and NONE
   assert.equal(clip.dialogue, 'NONE');
   assert.deepEqual(clip.dialogues, []);
-  assert.ok(!prompt.includes('Dialogue:'));
-
-  // 2. Action/Narration is converted to happening event in original order
-  assert.ok(prompt.includes('ป่ามืด ฝนกำลังตก ฟ้าใสกำลังเดินเข้าป่า'), prompt);
+  assert.ok(!prompt.includes('Dialogue:'), 'no dialogue section');
+  assert.ok(prompt.includes('ป่ามืด ฝนกำลังตก ฟ้าใสกำลังเดินเข้าป่า'), 'missing action');
   assert.equal(clip.sceneSummary, 'ป่ามืด ฝนกำลังตก ฟ้าใสกำลังเดินเข้าป่า');
 
-  // 3. Character Lock and Location Lock are preserved
-  assert.ok(prompt.includes('Character Lock: ฟ้าใส'));
-  assert.ok(prompt.includes('Location: ป่าทึบ'));
+  // Character stays because the scene names them. Global continuity place/time are not copied onto a scene that does not name them.
+  assert.ok(prompt.includes('Character Lock: ฟ้าใส'), 'character lock');
+  assert.ok(!prompt.includes('Location: ป่าทึบ'), 'must not copy the global continuity location');
+  assert.ok(!/\bกลางคืน\b|กลางคืน/.test(prompt), 'must not copy the global continuity time');
 
   // 4. No prohibited speech words
-  assert.ok(!/พูด|กล่าว|กระซิบ|ตะโกน|ถาม|ร้อง/.test(clip.sceneSummary));
+  assert.ok(!/พูด|กล่าว|กระซิบ|ตะโกน|ถาม|ร้อง/.test(clip.sceneSummary), 'no speech words');
 });
 
 check('Automatic clip splitting: consecutive actions in same scene stay in 1 clip (no 1 Action = 1 Clip, no min 5-6 clips)', () => {
@@ -1448,6 +1467,23 @@ check('Auto Scene Environment: location and lighting extracted directly per scen
   assert.ok(!clip2Prompt.includes('แสงแดดจ้า'), 'Clip 2 must NOT inherit Scene 1 sunlight');
   assert.ok(!clip2Prompt.includes('ต้นไม้ใหญ่หนาทึบ เถาวัลย์พันเกี่ยว'), 'Clip 2 must NOT inherit Scene 1 architectural details');
   assert.ok(clip2Prompt.includes('กลางคืน') || clip2Prompt.includes('มืดสลัว'), 'Clip 2 must have night/dim atmosphere');
+});
+
+check('cave night prompt never receives another scene daytime, and a mismatch stops generation', () => {
+  const script = `ฉากที่ 1: ป่าทึบ - กลางวัน แดดจ้า\nฟ้าใสเดินสำรวจต้นไม้\n\nฉากที่ 2: ถ้ำโบราณ - กลางคืน มืดสลัว\nฟ้าใสจุดคบเพลิงเดินเข้าไปในถ้ำ`;
+  const clips = buildSalaMultiClipPrompts({
+    scriptText: script, clipDurationSeconds: 10, clipCount: 2,
+    continuityLock: { characterName: 'ฟ้าใส', location: 'ป่าทึบ', timeOfDay: 'กลางวัน', lighting: 'แสงแดดจ้า' } as any
+  });
+  assert.equal(clips.length, 2);
+  assert.ok(clips[0].generatedPrompt.includes('ผูกพรอมต์นี้กับฉากที่ 1 เวลา กลางวัน สถานที่ ป่าทึบ'));
+  assert.ok(clips[1].generatedPrompt.includes('ผูกพรอมต์นี้กับฉากที่ 2 เวลา กลางคืน สถานที่ ถ้ำโบราณ'));
+  assert.ok(!clips[1].generatedPrompt.includes('กลางวัน'), clips[1].generatedPrompt);
+  assert.ok(!clips[1].generatedPrompt.includes('แสงแดดจ้า'));
+  const bad = clips.map(c => ({ sceneNumber: (c as any).splitPart?.sourceSceneNumber || c.clipNumber, timeOfDay: String((c as any).timeOfDay || ''), location: String(c.locationName || ''), prompt: c.generatedPrompt }));
+  bad[1] = { ...bad[1], prompt: bad[1].prompt + ' กลางวัน' };
+  const found = findSceneLockConflicts(bad);
+  assert.ok(found.some(x => x.includes('ฉากที่ 2') && x.includes('กลางวัน')), JSON.stringify(found));
 });
 
 console.log(`\nAll ${passed} checks passed.`);

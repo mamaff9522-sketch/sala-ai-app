@@ -33,7 +33,7 @@ export const VideoQualityControlBar: React.FC<VideoQualityControlBarProps> = ({
           <div>
             <h3 className="font-bold text-white text-sm sm:text-base flex items-center gap-2">
               <span>แถบควบคุมคุณภาพวิดีโอ (Video Control & Quality)</span>
-              <span className="text-[10px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-2 py-0.5 rounded-full font-mono">
+              <span className="text-xs bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-2 py-0.5 rounded-full font-mono">
                 Studio Ready
               </span>
             </h3>
@@ -57,7 +57,7 @@ export const VideoQualityControlBar: React.FC<VideoQualityControlBarProps> = ({
               <Monitor className="w-3.5 h-3.5 text-cyan-400" />
               <span>ความละเอียด (Resolution)</span>
             </span>
-            <span className="text-[11px] font-mono text-cyan-400 font-bold">
+            <span className="text-xs font-mono text-cyan-400 font-bold">
               {settings.resolution === '4K' ? '2160p (4K UHD)' : settings.resolution === '1080p' ? '1080p (FHD)' : '720p (HD)'}
             </span>
           </div>
@@ -90,7 +90,7 @@ export const VideoQualityControlBar: React.FC<VideoQualityControlBarProps> = ({
               <Zap className="w-3.5 h-3.5 text-indigo-400" />
               <span>ระดับคุณภาพเรนเดอร์ (Quality)</span>
             </span>
-            <span className="text-[11px] font-mono font-bold text-indigo-300">
+            <span className="text-xs font-mono font-bold text-indigo-300">
               {settings.quality}%
             </span>
           </div>
@@ -105,7 +105,7 @@ export const VideoQualityControlBar: React.FC<VideoQualityControlBarProps> = ({
               onChange={(e) => onChange({ ...settings, quality: Number(e.target.value) })}
               className="w-full accent-cyan-400 cursor-pointer h-2 bg-slate-800 rounded-lg appearance-none"
             />
-            <div className="flex justify-between text-[10px] text-slate-500 font-mono mt-1">
+            <div className="flex justify-between text-xs text-slate-400 font-mono mt-1">
               <span>Standard (50%)</span>
               <span className="text-cyan-400">High Def (85%)</span>
               <span className="text-indigo-400 font-bold">Ultra 100%</span>
@@ -118,14 +118,14 @@ export const VideoQualityControlBar: React.FC<VideoQualityControlBarProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-800/80">
         {/* Codec */}
         <div className="space-y-1.5">
-          <label className="text-[11px] font-medium text-slate-400">ตัวแปลงวิดีโอ (Codec)</label>
+          <label className="text-xs font-medium text-slate-400">ตัวแปลงวิดีโอ (Codec)</label>
           <div className="grid grid-cols-3 gap-1">
             {(['H.264', 'H.265', 'ProRes'] as const).map((cdc) => (
               <button
                 key={cdc}
                 type="button"
                 onClick={() => onChange({ ...settings, codec: cdc })}
-                className={`py-1.5 px-1 rounded-lg text-[10px] font-mono transition-all ${
+                className={`py-1.5 px-1 rounded-lg text-xs font-mono transition-all ${
                   settings.codec === cdc
                     ? 'bg-indigo-600/30 border border-indigo-400 text-indigo-200 font-bold'
                     : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
@@ -139,14 +139,14 @@ export const VideoQualityControlBar: React.FC<VideoQualityControlBarProps> = ({
 
         {/* Color Profile */}
         <div className="space-y-1.5">
-          <label className="text-[11px] font-medium text-slate-400">การจัดสี (Colors)</label>
+          <label className="text-xs font-medium text-slate-400">การจัดสี (Colors)</label>
           <div className="grid grid-cols-3 gap-1">
             {(['Identity', 'Cinematic', 'Same'] as const).map((cp) => (
               <button
                 key={cp}
                 type="button"
                 onClick={() => onChange({ ...settings, colorProfile: cp })}
-                className={`py-1.5 px-1 rounded-lg text-[10px] transition-all truncate ${
+                className={`py-1.5 px-1 rounded-lg text-xs transition-all truncate ${
                   settings.colorProfile === cp
                     ? 'bg-purple-600/30 border border-purple-400 text-purple-200 font-bold'
                     : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
@@ -160,14 +160,14 @@ export const VideoQualityControlBar: React.FC<VideoQualityControlBarProps> = ({
 
         {/* Framerate */}
         <div className="space-y-1.5">
-          <label className="text-[11px] font-medium text-slate-400">เฟรมเรต (FPS)</label>
+          <label className="text-xs font-medium text-slate-400">เฟรมเรต (FPS)</label>
           <div className="grid grid-cols-3 gap-1">
             {([24, 30, 60] as const).map((fpsVal) => (
               <button
                 key={fpsVal}
                 type="button"
                 onClick={() => onChange({ ...settings, fps: fpsVal })}
-                className={`py-1.5 px-1 rounded-lg text-[10px] font-mono transition-all ${
+                className={`py-1.5 px-1 rounded-lg text-xs font-mono transition-all ${
                   settings.fps === fpsVal
                     ? 'bg-cyan-600/30 border border-cyan-400 text-cyan-200 font-bold'
                     : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white'
@@ -192,11 +192,11 @@ export const VideoQualityControlBar: React.FC<VideoQualityControlBarProps> = ({
               <span className="font-semibold text-slate-200">
                 {isRendering ? 'กำลังประมวลผลเรนเดอร์...' : 'ระบบพร้อมเรนเดอร์ (Engine Ready)'}
               </span>
-              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-1.5 py-0.2 rounded">
+              <span className="text-xs font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-1.5 py-0.2 rounded">
                 AI v2.2.0 Stable
               </span>
             </div>
-            <p className="text-[11px] text-slate-400">
+            <p className="text-xs text-slate-400">
               ความเร็วประมวลผลเฉลี่ย ~38s / ช็อต • GPU Acceleration Active
             </p>
           </div>
@@ -217,7 +217,7 @@ export const VideoQualityControlBar: React.FC<VideoQualityControlBarProps> = ({
 
           {/* Compute usage */}
           <div className="text-right">
-            <span className="text-[10px] text-slate-400 block">Compute Usage</span>
+            <span className="text-xs text-slate-400 block">Compute Usage</span>
             <span className="text-xs font-mono font-bold text-cyan-300">GPU 68%</span>
           </div>
         </div>

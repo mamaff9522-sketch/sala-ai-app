@@ -30,20 +30,7 @@ import {
   uploadLocationReferenceImage,
   normalizeLocationPersistence
 } from './locationService';
-import { auth, getApiKey } from './auth';
-
-/**
- * Resolves the user's saved Gemini key (Firestore / local cache). Returns '' when none,
- * in which case the server falls back to its own GEMINI_API_KEY. Never logged.
- */
-async function resolveUserGeminiKey(explicit?: string): Promise<string> {
-  if (explicit && explicit.trim()) return explicit.trim();
-  try {
-    return (await getApiKey('gemini')) || '';
-  } catch {
-    return '';
-  }
-}
+import { auth } from './auth';
 
 /** Reads a JSON error body and builds a readable Error (Thai + English from the server). */
 /** Throws a clear error when an /api call returned HTML (e.g. index.html: the API server is not running in this preview) */
@@ -506,7 +493,6 @@ export const api = {
       body: JSON.stringify({
         image: primaryImage,
         images: imagesList,
-        apiKey: (await resolveUserGeminiKey(options?.apiKey)) || undefined,
         forceReanalyze: options?.forceReanalyze ?? false
       })
     });
@@ -521,9 +507,29 @@ export const api = {
   },
 
   async getProjects(): Promise<Project[]> {
+    const currentUid = getActiveUid();
+    if (!currentUid) return [];
     const res = await fetch('/api/projects', { headers: getAuthHeaders() });
     const data = await res.json();
-    return data.projects || [];
+    return (data.projects || []).filter((p: Project) => p.userId === currentUid);
+  },
+
+  async fetchServerRole(): Promise<'admin' | 'user'> {
+    const res = await fetch('/api/auth/role', { headers: getAuthHeaders() });
+    if (!res.ok) return 'user';
+    const data = await res.json().catch(() => ({}));
+    return data.role === 'admin' ? 'admin' : 'user';
+  },
+
+  async addAdminEmail(email: string): Promise<string[]> {
+    const res = await fetch('/api/admin/admins', {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ email })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.message || 'เพิ่มผู้ดูแลไม่สำเร็จ');
+    return data.emails || [];
   },
 
   async createProject(project: Partial<Project>): Promise<Project> {
@@ -565,31 +571,12 @@ export const api = {
 
   async getCredits(): Promise<CreditAccount> {
     const headers = getAuthHeaders();
-    try {
-      const res = await fetch('/api/credits', { headers });
-      const data = await res.json();
-      if (data && data.account) {
-        return data.account;
-      }
-    } catch (err) {
-      console.warn('Failed to fetch credits from server, returning default account:', err);
+    const res = await fetch('/api/credits', { headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.account || data.balanceSource === 'unavailable') {
+      throw new Error(data?.message || 'ไม่สามารถอ่านยอดเครดิตจาก Firestore ได้');
     }
-    return {
-      userId: 'user_sala_001',
-      userName: 'ผู้ใช้ศาลาเอไอ (Demo Member)',
-      userRole: 'user',
-      remainingCredits: 100,
-      totalUsedCredits: 0,
-      dailyUsedCredits: 0,
-      dailyLimit: 150,
-      monthlyUsedCredits: 0,
-      monthlyLimit: 1000,
-      perGenerationLimit: 40,
-      copyPromptFee: 10,
-      serviceFeeType: 'fixed',
-      serviceFeeValue: 0,
-      transactions: []
-    };
+    return data.account;
   },
 
   async topupCredits(amount: number): Promise<CreditAccount> {
@@ -605,6 +592,175 @@ export const api = {
     return data.account;
   },
 
+  async getTransferSettings(packageId?: string): Promise<{
+    success: boolean;
+    settings: { bankName: string; accountNumber: string; accountName: string; hasQr: boolean; configured: boolean };
+    qrDataUrl: string | null;
+    qrSource: 'uploaded' | 'promptpay' | null;
+    package: { id: string; credits: number; priceThb: number } | null;
+  }> {
+    await getFreshAuthToken();
+    const q = packageId ? `?packageId=${encodeURIComponent(packageId)}` : '';
+    const res = await fetch(`/api/credits/transfer/settings${q}`, { headers: getAuthHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.message || 'โหลดข้อมูลการโอนไม่สำเร็จ');
+    return data;
+  },
+
+  async createTransferRequest(input: string | { packageId?: string; credits?: number; amountThb?: number }): Promise<{
+    success: boolean;
+    creditsGranted: false;
+    message: string;
+    request: { reference: string; packageId: string; amountThb: number; credits?: number; status: string; createdAt: string };
+  }> {
+    await getFreshAuthToken();
+    const body = typeof input === 'string' ? { packageId: input } : input;
+    const res = await fetch('/api/credits/transfer/requests', {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success || data.creditsGranted) {
+      throw new Error(data.message || 'สร้างรายการโอนไม่สำเร็จ');
+    }
+    return data;
+  },
+
+  async uploadTransferSlip(reference: string, imageBase64: string, mimeType: string): Promise<{ success: boolean; creditsGranted: boolean; status: string; message: string }> {
+    await getFreshAuthToken();
+    const res = await fetch(`/api/credits/transfer/requests/${encodeURIComponent(reference)}/slip`, {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ imageBase64, mimeType })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success || data.creditsGranted || data.status !== 'pending') {
+      throw new Error(data.message || 'ส่งสลิปไม่สำเร็จ');
+    }
+    return data;
+  },
+
+  async adminGetTransferSettings(): Promise<{
+    success: boolean;
+    settings: { bankName: string; accountNumber: string; accountName: string; promptPayId: string; hasUploadedQr: boolean };
+    qrDataUrl: string | null;
+    qrSource: 'uploaded' | 'promptpay' | null;
+  }> {
+    await getFreshAuthToken();
+    const res = await fetch('/api/admin/transfer/settings', { headers: getAuthHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.message || 'โหลดบัญชีรับเงินไม่สำเร็จ');
+    return data;
+  },
+
+  async adminSaveTransferSettings(payload: {
+    bankName: string;
+    accountNumber: string;
+    accountName: string;
+    promptPayId: string;
+    qrImageBase64?: string;
+    qrMimeType?: string;
+    clearQr?: boolean;
+  }) {
+    await getFreshAuthToken();
+    const res = await fetch('/api/admin/transfer/settings', {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.message || 'บันทึกบัญชีรับเงินไม่สำเร็จ');
+    return data;
+  },
+
+  async adminListTransferRequests(): Promise<Array<{
+    reference: string;
+    uid: string;
+    email: string;
+    amountThb: number;
+    credits: number | null;
+    packageId: string;
+    status: string;
+    createdAt: string;
+    slipUploadedAt: string | null;
+    hasSlip: boolean;
+    confirmedAt: string | null;
+    remainingCredits: number | null;
+    slipRead: null | {
+      failed: boolean;
+      error: string | null;
+      senderName: string;
+      amountThb: number | null;
+      transferredAt: string;
+      reference: string;
+      referenceMatch: boolean;
+      amountMatch: boolean;
+      matched: boolean;
+      differences: string[];
+      model: string | null;
+    };
+  }>> {
+    await getFreshAuthToken();
+    const res = await fetch('/api/admin/transfer/requests?status=pending', { headers: getAuthHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) throw new Error(data.message || 'โหลดรายการโอนไม่สำเร็จ');
+    return data.requests || [];
+  },
+
+  async adminTransferSlipUrl(reference: string): Promise<string> {
+    await getFreshAuthToken();
+    const res = await fetch(`/api/admin/transfer/requests/${encodeURIComponent(reference)}/slip`, { headers: getAuthHeaders() });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.message || 'โหลดสลิปไม่สำเร็จ');
+    }
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
+  },
+
+  async adminConfirmTransfer(reference: string): Promise<{
+    success: boolean;
+    granted: boolean;
+    already: boolean;
+    creditsGranted: boolean;
+    remainingCredits: number | null;
+    creditsAdded: number;
+    message: string;
+  }> {
+    await getFreshAuthToken();
+    const res = await fetch(`/api/admin/transfer/requests/${encodeURIComponent(reference)}/confirm`, {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: '{}'
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success || !data.granted) {
+      throw new Error(data.message || 'ยืนยันไม่สำเร็จ ยังไม่ได้เติมเครดิต');
+    }
+    return data;
+  },
+
+  async adminRejectTransfer(reference: string): Promise<{
+    success: boolean;
+    rejected: boolean;
+    already: boolean;
+    creditsGranted: boolean;
+    message: string;
+  }> {
+    await getFreshAuthToken();
+    const res = await fetch(`/api/admin/transfer/requests/${encodeURIComponent(reference)}/reject`, {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: '{}'
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success || !data.rejected) {
+      throw new Error(data.message || 'ปฏิเสธไม่สำเร็จ');
+    }
+    return data;
+  },
+
   async getAdminStats(): Promise<AdminStats> {
     const res = await fetch('/api/admin/stats', { headers: getAuthHeaders() });
     const data = await res.json();
@@ -618,6 +774,7 @@ export const api = {
       body: JSON.stringify({ userId, amount })
     });
     const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.message || 'มอบเครดิตไม่สำเร็จ');
     return data.remainingCredits;
   },
 
@@ -651,11 +808,11 @@ export const api = {
     autoSplit?: { requestedClipCount: number; finalClipCount: number; autoSplitApplied: boolean; splitScenes: Array<{ sourceSceneNumber: number; parts: number; clipNumbers: number[]; reason: string }> };
   }> {
     await getFreshAuthToken();
-    const apiKey = payload.offline ? '' : await resolveUserGeminiKey(payload.apiKey);
+    const { apiKey: _ignoredKey, ...promptPayload } = payload;
     const res = await fetch('/api/director/generate-multi-clip-prompts', {
       method: 'POST',
       headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ ...payload, apiKey: apiKey || undefined })
+      body: JSON.stringify(promptPayload)
     });
     assertJsonResponse(res, '/api/director/generate-multi-clip-prompts');
     if (!res.ok) {
@@ -926,14 +1083,21 @@ export const api = {
   },
 
   // Video to Script
-  async analyzeVideoToScript(payload: { videoUrl?: string; videoName?: string; sampleId?: string }) {
+  async analyzeVideoToScript(file: File): Promise<string> {
+    const form = new FormData();
+    form.append('video', file, file.name);
     const res = await fetch('/api/video-to-script/analyze', {
       method: 'POST',
-      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(payload)
+      headers: getAuthHeaders(),
+      body: form
     });
-    const data = await res.json();
-    return data.result as import('../types').VideoToScriptResult;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data?.success === false) {
+      throw new Error(data?.message || 'ถอดวิดีโอไม่สำเร็จ');
+    }
+    const transcript = String(data?.transcript || '').trim();
+    if (!transcript) throw new Error('โมเดลไม่ได้ส่งบทพูดกลับมา');
+    return transcript;
   },
 
   // Script Editor / Character Replace
@@ -1028,11 +1192,11 @@ export const api = {
 
     // 2. Call server API
     try {
-      const apiKey = await resolveUserGeminiKey(payload.apiKey);
+      const { apiKey: _ignoredStoryKey, ...storyPayload } = payload;
       const res = await fetch('/api/story/continue', {
         method: 'POST',
         headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ ...payload, apiKey: apiKey || undefined })
+        body: JSON.stringify(storyPayload)
       });
 
       const text = await res.text();

@@ -1,0 +1,5 @@
+#!include:.gitignore
+.git
+android
+tests
+*.apk

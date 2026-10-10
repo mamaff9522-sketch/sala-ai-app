@@ -13,6 +13,7 @@ import {
   browserPopupRedirectResolver,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithCredential,
   signOut,
   onAuthStateChanged,
   onIdTokenChanged,
@@ -26,6 +27,8 @@ import {
   getDocFromServer
 } from 'firebase/firestore';
 import firebaseAppletConfig from '../../firebase-applet-config.json';
+import { deviceGoogleClientId, googleLoginMethod, isNativeApp } from './appAccess';
+import { registerPlugin } from '@capacitor/core';
 import {
   safeFirestoreWrite,
   isFirestoreQuotaExhausted,
@@ -179,24 +182,64 @@ export function isDemoUser(user: { uid?: string } | null | undefined): boolean {
 /**
  * ดึง role ของผู้ใช้จาก Firestore โดยตรงตามเงื่อนไข role === "admin"
  */
+const SEED_ADMIN_EMAIL = 'mama.ff9522@gmail.com';
+
+/** Seed email, or an email an existing admin stored on config/admins. */
+export async function emailIsAllowlistedAdmin(email?: string | null): Promise<boolean> {
+  const e = String(email || '').trim().toLowerCase();
+  if (!e) return false;
+  if (e === SEED_ADMIN_EMAIL) return true;
+  try {
+    const snap = await getDoc(doc(db, 'config', 'admins'));
+    const emails = snap.exists() && Array.isArray(snap.data()?.emails) ? snap.data()!.emails : [];
+    return emails.map((x: unknown) => String(x).trim().toLowerCase()).includes(e);
+  } catch {
+    return false;
+  }
+}
+
+async function serverSaysAdmin(): Promise<boolean> {
+  const token = getStoredToken();
+  if (!token) return false;
+  try {
+    const res = await fetch('/api/auth/role', { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.role === 'admin';
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchUserRole(uid: string): Promise<'admin' | 'user'> {
   if (uid === 'demo_creator') {
     return 'user';
+  }
+  const email = auth.currentUser?.uid === uid ? auth.currentUser.email : '';
+  if (await emailIsAllowlistedAdmin(email)) {
+    localStorage.setItem(AUTH_USER_ROLE_KEY, 'admin');
+    return 'admin';
   }
   try {
     const userRef = doc(db, 'users', uid);
     const snap = await getDoc(userRef);
     if (snap.exists()) {
       const data = snap.data();
-      const role: 'admin' | 'user' = data?.role === 'admin' ? 'admin' : 'user';
+      let role: 'admin' | 'user' = data?.role === 'admin' ? 'admin' : 'user';
+      if (role !== 'admin' && await emailIsAllowlistedAdmin(data?.email)) role = 'admin';
+      if (role !== 'admin' && await serverSaysAdmin()) role = 'admin';
       localStorage.setItem(AUTH_USER_ROLE_KEY, role);
       return role;
-    } else {
-      localStorage.setItem(AUTH_USER_ROLE_KEY, 'user');
-      return 'user';
     }
+    if (await serverSaysAdmin()) {
+      localStorage.setItem(AUTH_USER_ROLE_KEY, 'admin');
+      return 'admin';
+    }
+    localStorage.setItem(AUTH_USER_ROLE_KEY, 'user');
+    return 'user';
   } catch (err) {
     console.warn('Error fetching user role from Firestore:', err);
+    if (await serverSaysAdmin()) return 'admin';
     const cachedRole = (localStorage.getItem(AUTH_USER_ROLE_KEY) === 'admin') ? 'admin' : 'user';
     return cachedRole;
   }
@@ -228,6 +271,9 @@ export function clearAuthStorage(): void {
   localStorage.removeItem(AUTH_USER_KEY);
   localStorage.removeItem(AUTH_TOKEN_EXP_KEY);
   localStorage.removeItem(AUTH_USER_ROLE_KEY);
+  localStorage.removeItem('sala_gemini_api_key');
+  localStorage.removeItem('sala_meta_api_key');
+  localStorage.removeItem('sala_xai_api_key');
 }
 
 /**
@@ -295,6 +341,34 @@ onIdTokenChanged(auth, async (user) => {
   // หมายเหตุ: ไม่ล้าง localStorage ที่นี่ เพื่อรักษา session ค้างไว้จนกว่าจะกด logout เอง
 });
 
+
+interface SalaGooglePlugin {
+  signIn(options: { clientId: string; pickAccount: boolean }): Promise<{ idToken?: string }>;
+}
+
+const SalaGoogle = registerPlugin<SalaGooglePlugin>('SalaGoogle');
+
+async function deviceGoogleIdToken(pickAccount: boolean): Promise<string> {
+  const clientId = deviceGoogleClientId(firebaseAppletConfig.oAuthClientId);
+  const result = await SalaGoogle.signIn({ clientId, pickAccount });
+  const idToken = String(result?.idToken || '').trim();
+  if (!idToken) throw new Error('กูเกิลบนเครื่องไม่ส่งรหัสเข้าแอป');
+  return idToken;
+}
+
+async function googleUser(pickAccount: boolean): Promise<User> {
+  if (googleLoginMethod(isNativeApp()) === 'device') {
+    const idToken = await deviceGoogleIdToken(pickAccount);
+    const credential = GoogleAuthProvider.credential(idToken);
+    const result = await signInWithCredential(auth, credential);
+    return result.user;
+  }
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  const result = await signInWithPopup(auth, provider);
+  return result.user;
+}
+
 /**
  * เข้าสู่ระบบด้วย Google (Google Sign-In)
  * - ใช้ setPersistence(auth, browserLocalPersistence) ก่อน signInWithPopup
@@ -305,12 +379,7 @@ export async function loginWithGoogle(): Promise<User> {
   try {
     // บังคับใช้ setPersistence(auth, browserLocalPersistence) ก่อน signInWithPopup
     await setPersistence(auth, browserLocalPersistence);
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({
-      prompt: 'select_account'
-    });
-    const result = await signInWithPopup(auth, provider);
-    const user = result.user;
+    const user = await googleUser(false);
 
     if (user) {
       // ดึงและเก็บ token ลง localStorage ทันที
@@ -346,7 +415,8 @@ export async function loginWithGoogle(): Promise<User> {
                 displayName: user.displayName || '',
                 photoURL: user.photoURL || '',
                 role: determinedRole,
-                credits: determinedRole === 'admin' ? 9999 : 500,
+                credits: 0,
+                remainingCredits: 0,
                 status: 'active',
                 isLocked: false,
                 updatedAt: new Date().toISOString()
@@ -358,6 +428,9 @@ export async function loginWithGoogle(): Promise<User> {
         console.warn('Firestore user profile sync notice (offline mode available):', err);
       }
 
+      if (determinedRole !== 'admin' && (await emailIsAllowlistedAdmin(user.email) || await serverSaysAdmin())) {
+        determinedRole = 'admin';
+      }
       cacheUserData(user, determinedRole);
     }
 
@@ -376,12 +449,7 @@ export async function loginWithGoogle(): Promise<User> {
 export async function switchGoogleAccount(): Promise<User> {
   try {
     await setPersistence(auth, browserLocalPersistence);
-    const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({
-      prompt: 'select_account'
-    });
-    const result = await signInWithPopup(auth, provider);
-    const user = result.user;
+    const user = await googleUser(true);
 
     if (user) {
       const token = await user.getIdToken(true);
@@ -415,7 +483,8 @@ export async function switchGoogleAccount(): Promise<User> {
                 displayName: user.displayName || '',
                 photoURL: user.photoURL || '',
                 role: determinedRole,
-                credits: determinedRole === 'admin' ? 9999 : 500,
+                credits: 0,
+                remainingCredits: 0,
                 status: 'active',
                 isLocked: false,
                 updatedAt: new Date().toISOString()
@@ -427,6 +496,9 @@ export async function switchGoogleAccount(): Promise<User> {
         console.warn('Firestore sync on account switch notice:', err);
       }
 
+      if (determinedRole !== 'admin' && (await emailIsAllowlistedAdmin(user.email) || await serverSaysAdmin())) {
+        determinedRole = 'admin';
+      }
       cacheUserData(user, determinedRole);
     }
 
@@ -457,17 +529,26 @@ export async function logout(): Promise<void> {
  * @param apiKey ข้อความ API key
  * @param provider ชื่อผู้ให้บริการ เช่น 'gemini' (default), 'meta', 'xai'
  */
+async function currentUserMayManageApiKeys(): Promise<boolean> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) return false;
+  if (await emailIsAllowlistedAdmin(currentUser.email)) return true;
+  if (await serverSaysAdmin()) return true;
+  try {
+    const snap = await getDoc(doc(db, 'users', currentUser.uid));
+    return snap.exists() && snap.data()?.role === 'admin';
+  } catch {
+    return false;
+  }
+}
+
 export async function saveApiKey(apiKey: string, provider: string = 'gemini'): Promise<void> {
   const currentUser = auth.currentUser;
   if (!currentUser) {
     throw new Error('กรุณาเข้าสู่ระบบด้วย Google ก่อนบันทึก API Key');
   }
-
-  // แคชไว้ใน localStorage เพื่อความสะดวกและความต่อเนื่องเสมอ
-  if (apiKey) {
-    localStorage.setItem(`sala_${provider}_api_key`, apiKey.trim());
-  } else {
-    localStorage.removeItem(`sala_${provider}_api_key`);
+  if (!(await currentUserMayManageApiKeys())) {
+    throw new Error('เฉพาะผู้ดูแลระบบเท่านั้นที่จัดการ API Key ได้');
   }
 
   // พยายามบันทึกลง Firestore ผ่าน safeFirestoreWrite
@@ -492,9 +573,8 @@ export async function saveApiKey(apiKey: string, provider: string = 'gemini'): P
  */
 export async function getApiKey(provider: string = 'gemini'): Promise<string> {
   const currentUser = auth.currentUser;
-  if (!currentUser) {
-    // หากยังไม่ล็อกอิน ให้ดึงจาก localStorage หรือว่างไว้
-    return localStorage.getItem(`sala_${provider}_api_key`) || '';
+  if (!currentUser || !(await currentUserMayManageApiKeys())) {
+    return '';
   }
 
   try {
@@ -506,16 +586,13 @@ export async function getApiKey(provider: string = 'gemini'): Promise<string> {
       const keyFromMap = data.apiKeys?.[provider];
       const primaryKey = data.apiKey;
       const key = keyFromMap || primaryKey || '';
-      if (key) {
-        localStorage.setItem(`sala_${provider}_api_key`, key);
-      }
       return key;
     }
   } catch (error: any) {
     console.warn('Failed to retrieve API key from Firestore:', error);
   }
 
-  return localStorage.getItem(`sala_${provider}_api_key`) || '';
+  return '';
 }
 
 /**

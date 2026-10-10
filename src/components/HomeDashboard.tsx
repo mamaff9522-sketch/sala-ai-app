@@ -40,12 +40,15 @@ import {
   saveStoryFlowState,
   LocationSceneSegment
 } from '../services/salaStoryFlowEngine';
-import scriptCardImg from '../assets/cards/script-card.svg';
-import sceneCardImg from '../assets/cards/scene-card.svg';
-import characterCardImg from '../assets/cards/character-card.svg';
-import locationCardImg from '../assets/cards/location-card.svg';
-import imageCardImg from '../assets/cards/image-card.svg';
-import videoCardImg from '../assets/cards/video-card.svg';
+import { HOME_HORROR_STORY } from '../constants/homeHorrorStory';
+import { api } from '../services/api';
+import scriptCardImg from '../assets/cards/script-card.png';
+import sceneCardImg from '../assets/cards/scene-card.png';
+import characterCardImg from '../assets/cards/character-card.png';
+import locationCardImg from '../assets/cards/location-card.png';
+import imageCardImg from '../assets/cards/image-card.png';
+import videoCardImg from '../assets/cards/video-card.png';
+import videoToScriptCardImg from '../assets/cards/video-to-script-card.svg';
 
 interface HomeDashboardProps {
   onNavigate: (tab: string) => void;
@@ -59,6 +62,7 @@ interface HomeDashboardProps {
   onOpenNewLocationModal: () => void;
   onOpenQuickGenerate: (type: 'image' | 'video') => void;
   onOpenScriptWriter?: () => void;
+  isAdmin?: boolean;
 }
 
 export const HomeDashboard: React.FC<HomeDashboardProps> = ({
@@ -72,19 +76,25 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onOpenNewCharacterModal,
   onOpenNewLocationModal,
   onOpenQuickGenerate,
-  onOpenScriptWriter
+  onOpenScriptWriter,
+  isAdmin = false
 }) => {
   const [showNotificationModal, setShowNotificationModal] = useState(false);
+  const [topupOpen, setTopupOpen] = useState(false);
+  const [bahtRequest, setBahtRequest] = useState('');
+  const [slipFile, setSlipFile] = useState<File | null>(null);
+  const [topupBusy, setTopupBusy] = useState(false);
+  const [topupNote, setTopupNote] = useState<string | null>(null);
 
   // -------------------------------------------------------------
   // Full Story State (ช่อง "เนื้อเรื่องเต็ม" หน้าแรก)
   // -------------------------------------------------------------
   const [fullStoryInput, setFullStoryInput] = useState<string>(() => {
-    return getSavedFullStory() || (typeof localStorage !== 'undefined' ? localStorage.getItem('sala_story') || '' : '');
+    return getSavedFullStory() || (typeof localStorage !== 'undefined' ? localStorage.getItem('sala_story') || '' : '') || HOME_HORROR_STORY;
   });
   const [savedSuccessNotice, setSavedSuccessNotice] = useState<string | null>(null);
   const [analyzedSegments, setAnalyzedSegments] = useState<LocationSceneSegment[]>(() => {
-    const saved = getSavedFullStory() || (typeof localStorage !== 'undefined' ? localStorage.getItem('sala_story') || '' : '');
+    const saved = getSavedFullStory() || (typeof localStorage !== 'undefined' ? localStorage.getItem('sala_story') || '' : '') || HOME_HORROR_STORY;
     return saved ? analyzeStoryLocationSegments(saved) : [];
   });
   const [currentFlowSegmentIndex, setCurrentFlowSegmentIndex] = useState<number>(() => {
@@ -93,7 +103,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
   // ซิงค์ข้อมูลเนื้อเรื่องเต็มและสถานะจุดเปลี่ยนสถานที่ทุกครั้งที่กลับมาหน้าแรก (Rule 6)
   useEffect(() => {
-    const saved = getSavedFullStory() || (typeof localStorage !== 'undefined' ? localStorage.getItem('sala_story') || '' : '');
+    const saved = getSavedFullStory() || (typeof localStorage !== 'undefined' ? localStorage.getItem('sala_story') || '' : '') || HOME_HORROR_STORY;
     if (saved && saved !== fullStoryInput) {
       setFullStoryInput(saved);
       setAnalyzedSegments(analyzeStoryLocationSegments(saved));
@@ -155,7 +165,51 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   const displayCredits =
     credits && typeof credits.remainingCredits === 'number'
       ? credits.remainingCredits.toLocaleString()
-      : '2,450';
+      : '0';
+
+  const closeTopupRequest = () => {
+    setTopupOpen(false);
+    setTopupNote(null);
+  };
+
+  const submitTopupRequest = async () => {
+    const bahtAsked = Number(bahtRequest.trim());
+    if (!Number.isInteger(bahtAsked) || bahtAsked < 1) {
+      setTopupNote('ระบุจำนวนเงินเป็นบาท เป็นจำนวนเต็ม');
+      return;
+    }
+    if (!slipFile) {
+      setTopupNote('เลือกสลิปการโอนก่อนส่งคำขอ');
+      return;
+    }
+    if (slipFile.size > 5 * 1024 * 1024) {
+      setTopupNote('ไฟล์สลิปต้องไม่เกิน 5 MB');
+      return;
+    }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(slipFile.type)) {
+      setTopupNote('รองรับเฉพาะไฟล์ jpeg, png หรือ webp');
+      return;
+    }
+    setTopupBusy(true);
+    setTopupNote(null);
+    try {
+      const created = await api.createTransferRequest({ amountThb: bahtAsked });
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('อ่านไฟล์ไม่สำเร็จ'));
+        reader.readAsDataURL(slipFile);
+      });
+      const uploaded = await api.uploadTransferSlip(created.request.reference, dataUrl, slipFile.type);
+      setTopupNote(uploaded.message || `ส่งคำขอ ${created.request.reference} แล้ว รอแอดมินอนุมัติ ยังไม่ได้เติมเครดิต`);
+      setBahtRequest('');
+      setSlipFile(null);
+    } catch (err: any) {
+      setTopupNote(err?.message || 'ส่งคำขอไม่สำเร็จ ยังไม่ได้เติมเครดิต');
+    } finally {
+      setTopupBusy(false);
+    }
+  };
 
   const menuCards = [
     // แถว 1 ซ้าย: วางบท / เขียนบท -> รูปม้วนบทและปากกา
@@ -165,9 +219,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       desc1: 'จากไอเดีย สู่บทภาพยนตร์',
       desc2: 'ด้วย AI',
       imgSrc: scriptCardImg,
-      borderStyle: {
-        boxShadow: '0 0 25px rgba(123, 44, 255, 0.45), inset 0 0 15px rgba(123, 44, 255, 0.15)'
-      },
       onClick: () => {
         if (onOpenScriptWriter) {
           onOpenScriptWriter();
@@ -183,9 +234,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       desc1: 'จัดโครงสร้างฉาก',
       desc2: 'และสตอรี่บอร์ดอัตโนมัติ',
       imgSrc: sceneCardImg,
-      borderStyle: {
-        boxShadow: '0 0 25px rgba(255, 53, 212, 0.45), inset 0 0 15px rgba(247, 201, 74, 0.15)'
-      },
       onClick: () => onNavigate('director')
     },
     // แถว 2 ซ้าย: ตัวละคร -> รูปตัวละคร 3 คน
@@ -195,9 +243,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       desc1: 'สร้างและเลือกคาแรกเตอร์',
       desc2: 'ให้สไตล์โดดเด่น',
       imgSrc: characterCardImg,
-      borderStyle: {
-        boxShadow: '0 0 25px rgba(0, 216, 255, 0.45), inset 0 0 15px rgba(255, 217, 106, 0.15)'
-      },
       onClick: () => onNavigate('characters')
     },
     // แถว 2 ขวา: สถานที่ -> รูปปราสาท/โลกแฟนตาซี
@@ -207,9 +252,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       desc1: 'สร้างโลก สถานที่',
       desc2: 'และบรรยากาศของเรื่อง',
       imgSrc: locationCardImg,
-      borderStyle: {
-        boxShadow: '0 0 25px rgba(123, 44, 255, 0.45), inset 0 0 15px rgba(0, 216, 255, 0.15)'
-      },
       onClick: () => onNavigate('locations')
     },
     // แถว 3 ซ้าย: สร้างภาพ -> รูปภาพซ้อนกัน
@@ -219,9 +261,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       desc1: 'สร้างภาพด้วย AI',
       desc2: 'จากบทหรือฉากที่ต้องการ',
       imgSrc: imageCardImg,
-      borderStyle: {
-        boxShadow: '0 0 25px rgba(255, 53, 212, 0.45), inset 0 0 15px rgba(169, 44, 255, 0.15)'
-      },
       onClick: () => onOpenQuickGenerate('image')
     },
     // แถว 3 ขวา: สร้างวิดีโอ -> รูปฟิล์ม + Play
@@ -231,35 +270,26 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       desc1: 'เปลี่ยนภาพและบท',
       desc2: 'เป็นวิดีโอสุดสมจริง',
       imgSrc: videoCardImg,
-      borderStyle: {
-        boxShadow: '0 0 25px rgba(247, 201, 74, 0.45), inset 0 0 15px rgba(0, 216, 255, 0.15)'
-      },
       onClick: () => onOpenQuickGenerate('video')
+    }
+    ,
+    {
+      id: 'video-to-script',
+      title: 'ถอดวิดีโอเป็นบท',
+      desc1: 'เลือกวิดีโอจากเครื่อง',
+      desc2: 'แปลงเสียงพูดเป็นบท',
+      imgSrc: videoToScriptCardImg,
+      onClick: () => {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('sala_open_video_to_script', '1');
+        }
+        onNavigate('director');
+      }
     }
   ];
 
   return (
-    <div className="min-h-screen text-white pb-28 pt-[max(env(safe-area-inset-top),8px)] px-3 sm:px-6 relative overflow-hidden bg-[#020716] font-sans">
-      {/* 1. Global Background: Deep Sci-Fi Universe Space Theme (#020716, #07112A, #0A1633) */}
-      <div className="fixed inset-0 pointer-events-none z-0">
-        {/* Deep space cosmic gradient */}
-        <div className="absolute inset-0 bg-gradient-to-b from-[#020716] via-[#07112A] to-[#0A1633]" />
-
-        {/* Real cosmic galaxy starfield overlay */}
-        <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-40 mix-blend-screen scale-105"
-          style={{
-            backgroundImage: `url('https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=2400&q=85')`
-          }}
-        />
-
-        {/* Ambient Neon Atmosphere Glows */}
-        <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[600px] h-[500px] bg-gradient-to-b from-[#7B2CFF]/30 via-[#FF35D4]/20 to-transparent rounded-full blur-[130px]" />
-        <div className="absolute top-1/3 -left-20 w-[450px] h-[450px] bg-[#00D8FF]/20 rounded-full blur-[140px]" />
-        <div className="absolute top-1/2 -right-20 w-[500px] h-[500px] bg-[#FF35D4]/20 rounded-full blur-[150px]" />
-        <div className="absolute bottom-0 left-1/4 w-[600px] h-[400px] bg-[#1E90FF]/20 rounded-full blur-[140px]" />
-      </div>
-
+    <div className="min-h-screen text-white pb-28 pt-[max(env(safe-area-inset-top),8px)] px-3 sm:px-6 relative overflow-hidden app-sky font-sans">
       {/* Main Content Area */}
       <div className="max-w-xl mx-auto space-y-3.5 sm:space-y-4 relative z-10">
         {/* ============================================================== */}
@@ -283,11 +313,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                     className="w-full h-full rounded-full object-cover"
                   />
                 ) : (
-                  <img
-                    src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"
-                    alt="Avatar"
-                    className="w-full h-full rounded-full object-cover"
-                  />
+                  <div className="w-full h-full rounded-full bg-[#07112A] flex items-center justify-center text-[16px] font-bold text-white">
+                    {(authUser?.displayName || 'S').trim().slice(0, 1)}
+                  </div>
                 )}
               </div>
               {/* Online Green Dot on bottom right */}
@@ -311,11 +339,11 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
             {/* 3. Brand Text: SALA (White) + AI (Neon Cyan/Purple/Pink Glow) */}
             <div className="flex items-center gap-1.5 cursor-pointer" onClick={() => onNavigate('home')}>
-              <span className="text-xl sm:text-2xl font-black tracking-wide text-[#FFFFFF] drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)]">
+              <span className="text-xl font-black tracking-wide text-[#FFFFFF] drop-shadow-[0_2px_10px_rgba(0,0,0,0.8)]">
                 SALA
               </span>
               <span
-                className="text-xl sm:text-2xl font-black tracking-wide bg-gradient-to-r from-[#00D8FF] via-[#7B2CFF] to-[#FF35D4] bg-clip-text text-transparent"
+                className="text-xl font-black tracking-wide bg-gradient-to-r from-[#00D8FF] via-[#7B2CFF] to-[#FF35D4] bg-clip-text [-webkit-background-clip:text] text-transparent [-webkit-text-fill-color:transparent]"
                 style={{
                   filter: 'drop-shadow(0 0 10px rgba(0, 216, 255, 0.75)) drop-shadow(0 0 15px rgba(255, 53, 212, 0.5))'
                 }}
@@ -324,14 +352,24 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               </span>
 
               {/* 4. Pro Pill Badge (Vivid Pink-Purple) */}
-              <span className="text-[10px] font-black uppercase px-2.5 py-0.5 rounded-full bg-gradient-to-r from-[#FF35D4] via-[#FF4ECF] to-[#7B2CFF] text-[#FFFFFF] shadow-[0_0_12px_rgba(255,53,212,0.8)] border border-pink-300/60 ml-0.5">
+              <span className="text-xs font-black uppercase px-2.5 py-0.5 rounded-full bg-gradient-to-r from-[#FF35D4] via-[#FF4ECF] to-[#7B2CFF] text-[#FFFFFF] shadow-[0_0_12px_rgba(255,53,212,0.8)] border border-pink-300/60 ml-0.5">
                 Pro
               </span>
             </div>
           </div>
 
+          {isAdmin && (
+            <a
+              id="apk-download-admin"
+              href="salaai://download-apk"
+              className="relative z-20 pointer-events-auto mr-1 px-2.5 py-1.5 rounded-xl text-xs font-bold text-white border border-amber-400/70 bg-[#07112A]"
+            >
+              ดาวน์โหลด APK
+            </a>
+          )}
           {/* 5. Notification Bell (Pure White Icon) */}
           <button
+            type="button"
             onClick={() => setShowNotificationModal(true)}
             className="w-10 h-10 rounded-2xl bg-[#07112A]/80 border border-[#7B2CFF]/40 hover:border-[#00D8FF]/70 backdrop-blur-xl flex items-center justify-center text-[#FFFFFF] hover:text-[#00D8FF] transition-all shadow-[0_0_15px_rgba(123,44,255,0.3)] relative active:scale-95"
             title="การแจ้งเตือน"
@@ -370,11 +408,11 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 </div>
 
                 <div>
-                  <span className="text-[11px] text-[#D8DDF0] font-medium block leading-tight tracking-wide">
+                  <span className="text-xs text-[#D8DDF0] font-medium block leading-tight tracking-wide">
                     เครดิตของคุณ
                   </span>
                   <div className="flex items-baseline gap-1 mt-0.5">
-                    <span className="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#FFFFFF] font-mono drop-shadow-[0_0_12px_rgba(255,255,255,0.5)]">
+                    <span className="text-xl font-extrabold tracking-tight text-[#FFFFFF] font-mono drop-shadow-[0_0_12px_rgba(255,255,255,0.5)]">
                       {displayCredits}
                     </span>
                   </div>
@@ -383,18 +421,87 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
               {/* Right Side: เติมเครดิต + (Cyan/Blue Neon Glowing Pill Button) */}
               <button
-                onClick={onOpenCredits}
-                className="px-4 py-2 rounded-xl text-xs sm:text-sm font-bold bg-[#0A1633]/90 hover:bg-[#07112A] text-[#FFFFFF] border-2 border-[#00D8FF] hover:border-[#4EDBFF] transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                type="button"
+                id="home-topup-credits-btn"
+                aria-expanded={topupOpen}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setTopupOpen(true);
+                }}
+                className="relative z-20 pointer-events-auto px-4 py-2 rounded-xl text-[16px] font-bold bg-[#0A1633]/90 hover:bg-[#07112A] text-[#FFFFFF] border-2 border-[#00D8FF] hover:border-[#4EDBFF] transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
                 style={{
                   boxShadow: '0 0 18px rgba(0, 216, 255, 0.55), inset 0 0 10px rgba(0, 216, 255, 0.25)'
                 }}
               >
                 <span>เติมเครดิต</span>
-                <span className="text-sm font-bold text-[#00D8FF]">+</span>
+                <span className="text-[16px] font-bold text-[#00D8FF]">+</span>
               </button>
             </div>
           </div>
         </div>
+
+        {topupOpen && (
+          <form
+            id="home-topup-request"
+            className="relative z-20 rounded-2xl border border-[#00D8FF]/40 bg-[#07112A]/95 p-4 space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitTopupRequest();
+            }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-sm text-slate-200">
+                โอนเงินแล้วส่งสลิป แอดมินเป็นคนกำหนดจำนวนเครดิตและอนุมัติเท่านั้น ยังไม่เติมเข้าบัญชีเอง
+              </p>
+              <button
+                type="button"
+                id="home-topup-close"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  closeTopupRequest();
+                }}
+                className="shrink-0 px-3 py-1.5 rounded-xl text-[16px] font-bold text-white border border-slate-500 bg-[#0A1633]"
+              >
+                ปิด
+              </button>
+            </div>
+            <label className="block text-xs text-slate-300" htmlFor="topup-baht-input">
+              จำนวนเงินที่โอน (บาท)
+              <input
+                id="topup-baht-input"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                step={1}
+                value={bahtRequest}
+                onChange={(event) => setBahtRequest(event.target.value)}
+                placeholder="บาท"
+                className="mt-1 w-full rounded-xl border border-slate-600 bg-[#030714] px-3 py-2 text-[16px] text-white"
+              />
+            </label>
+            <label className="block text-xs text-slate-300" htmlFor="topup-slip-input">
+              สลิปการโอน
+              <input
+                id="topup-slip-input"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="mt-1 block w-full text-xs text-slate-300"
+                onChange={(event) => setSlipFile(event.target.files?.[0] || null)}
+              />
+            </label>
+            <button
+              type="submit"
+              id="topup-submit-btn"
+              disabled={topupBusy}
+              className="px-4 py-2 rounded-xl text-[16px] font-bold text-slate-950 bg-[#00D8FF] disabled:opacity-60"
+            >
+              {topupBusy ? 'กำลังส่งคำขอ...' : 'ส่งคำขอและสลิป'}
+            </button>
+            {topupNote && <p className="text-sm text-amber-200">{topupNote}</p>}
+          </form>
+        )}
 
         {/* ============================================================== */}
         {/* 5) FULL STORY CARD (ช่อง "เนื้อเรื่องเต็ม" เฉพาะหน้าแรก)         */}
@@ -418,13 +525,13 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                   </div>
                 </div>
                 <div>
-                  <h2 className="text-base sm:text-lg font-black text-white tracking-wide flex items-center gap-2">
+                  <h2 className="text-[20px] sm:text-[22px] font-black text-white tracking-wide flex items-center gap-2">
                     <span>เนื้อเรื่องเต็ม</span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#00D8FF]/15 text-[#00D8FF] border border-[#00D8FF]/30">
+                    <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-[#00D8FF]/15 text-[#00D8FF] border border-[#00D8FF]/30">
                       Master Full Story
                     </span>
                   </h2>
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-xs text-slate-400">
                     วางบทตั้งแต่ต้นจนจบ AI จำเนื้อเรื่องและวิเคราะห์ดึงฉากตามสถานที่เข้า Story
                   </p>
                 </div>
@@ -435,7 +542,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 <button
                   type="button"
                   onClick={handleClearFullStory}
-                  className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-500/40 text-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                  className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-slate-800 hover:border-rose-500/40 text-[16px] flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
                   title="ลบเนื้อเรื่องเต็ม"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -461,9 +568,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 placeholder="วางเนื้อเรื่องเต็มตั้งแต่ต้นจนจบที่นี่ เช่น บทภาพยนตร์ทั้งเรื่อง, นิยายสั้น, หรือลำดับเหตุการณ์ทั้งหมด...
 
 เมื่อกด 'บันทึกเนื้อเรื่องเต็ม' AI จะอ่านและจำเนื้อเรื่องทั้งหมด วิเคราะห์จุดเปลี่ยนสถานที่ และดึงฉากแรกในสถานที่นั้นเข้าสู่ระบบ Story อัตโนมัติ"
-                className="w-full bg-[#030714]/90 border border-slate-700/80 focus:border-[#00D8FF] rounded-2xl p-3.5 text-xs sm:text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none transition-all leading-relaxed resize-none shadow-inner"
+                className="w-full bg-[#030714]/90 border border-slate-700/80 focus:border-[#00D8FF] rounded-2xl p-3.5 text-[16px] text-slate-100 placeholder:text-slate-400 focus:outline-none transition-all leading-relaxed resize-none shadow-inner"
               />
-              <div className="absolute right-3 bottom-3 text-[10px] text-slate-500 pointer-events-none">
+              <div className="absolute right-3 bottom-3 text-xs text-slate-400 pointer-events-none">
                 {fullStoryInput.length.toLocaleString()} ตัวอักษร
               </div>
             </div>
@@ -477,7 +584,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                     วิเคราะห์พบ <strong className="text-[#00D8FF]">{analyzedSegments.length} สถานที่</strong> ในเนื้อเรื่องเต็ม
                   </span>
                 </div>
-                <div className="text-[11px] text-slate-400">
+                <div className="text-xs text-slate-400">
                   ฉากปัจจุบัน: <span className="text-pink-300 font-semibold">{analyzedSegments[currentFlowSegmentIndex - 1]?.locationName || analyzedSegments[0]?.locationName}</span> ({analyzedSegments[currentFlowSegmentIndex - 1]?.sceneRange || analyzedSegments[0]?.sceneRange})
                 </div>
               </div>
@@ -490,7 +597,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 id="btn-save-full-story"
                 onClick={handleSaveFullStory}
                 disabled={!fullStoryInput.trim()}
-                className="w-full sm:flex-1 py-3 px-4 rounded-2xl font-bold text-xs sm:text-sm text-white bg-gradient-to-r from-[#7B2CFF] via-[#FF35D4] to-[#00D8FF] hover:brightness-110 disabled:opacity-50 shadow-[0_0_20px_rgba(123,44,255,0.4)] border border-pink-400/40 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.98]"
+                className="w-full sm:flex-1 py-3 px-4 rounded-2xl font-bold text-[16px] text-white bg-gradient-to-r from-[#7B2CFF] via-[#FF35D4] to-[#00D8FF] hover:brightness-110 disabled:opacity-50 shadow-[0_0_20px_rgba(123,44,255,0.4)] border border-pink-400/40 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.98]"
               >
                 <Save className="w-4 h-4" />
                 <span>บันทึกเนื้อเรื่องเต็ม & ดึงฉากแรกเข้า Story</span>
@@ -499,7 +606,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               <button
                 type="button"
                 onClick={() => onNavigate('director')}
-                className="w-full sm:w-auto py-3 px-5 rounded-2xl font-semibold text-xs sm:text-sm text-slate-200 hover:text-white bg-slate-900/80 hover:bg-slate-800 border border-slate-700/80 hover:border-[#00D8FF]/60 flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
+                className="w-full sm:w-auto py-3 px-5 rounded-2xl font-semibold text-[16px] text-slate-200 hover:text-white bg-slate-900/80 hover:bg-slate-800 border border-slate-700/80 hover:border-[#00D8FF]/60 flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
               >
                 <span>เปิดห้อง Story</span>
                 <ChevronRight className="w-4 h-4 text-[#00D8FF]" />
@@ -509,9 +616,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
         </div>
 
         {/* ============================================================== */}
-        {/* 6) MAIN 6-CARD GRID MENU (2 COLUMNS X 3 ROWS)                  */}
+        {/* 6) MAIN CARD GRID MENU                  */}
         {/* Strict Order: 1:วางบท, 2:แยกฉาก, 3:ตัวละคร, 4:สถานที่,         */}
-        {/* 5:สร้างภาพ, 6:สร้างวิดีโอ (Neon Glow Glassmorphism)              */}
+        {/* 5:สร้างภาพ, 6:สร้างวิดีโอ, 7:ถอดวิดีโอเป็นบท              */}
         {/* ============================================================== */}
         <div className="pt-1">
           <div className="grid grid-cols-2 gap-3 sm:gap-3.5">
@@ -520,19 +627,18 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
                 <div
                   key={card.id}
                   onClick={card.onClick}
-                  className="group relative w-full aspect-[2/1] rounded-[20px] overflow-hidden cursor-pointer transition-all duration-300 active:scale-[0.98] hover:scale-[1.02]"
+                  className="home-menu-neon group relative w-full aspect-[2/1] rounded-[20px] overflow-hidden cursor-pointer transition-all duration-300 active:scale-[0.98] hover:scale-[1.02]"
                   style={{
                     position: 'relative',
                     overflow: 'hidden',
                     borderRadius: '20px',
-                    aspectRatio: '2 / 1',
-                    ...card.borderStyle
+                    aspectRatio: '2 / 1'
                   }}
                 >
                   <img
                     src={card.imgSrc}
                     alt={card.title}
-                    className="w-full h-full block select-none pointer-events-none transition-transform duration-300 group-hover:scale-[1.03]"
+                    className="w-full h-full block select-none pointer-events-none"
                     style={{
                       width: '100%',
                       height: '100%',
@@ -557,11 +663,11 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Bell className="w-5 h-5 text-[#FF35D4]" />
-                <h3 className="font-bold text-[#FFFFFF] text-sm">การแจ้งเตือนระบบ</h3>
+                <h3 className="font-bold text-[#FFFFFF] text-[20px]">การแจ้งเตือนระบบ</h3>
               </div>
               <button
                 onClick={() => setShowNotificationModal(false)}
-                className="text-[#D8DDF0] hover:text-white text-xs px-2.5 py-1 rounded-xl bg-[#0A1633] border border-slate-700"
+                className="text-[#D8DDF0] hover:text-white text-[16px] px-2.5 py-1 rounded-xl bg-[#0A1633] border border-slate-700"
               >
                 ปิด
               </button>
@@ -569,14 +675,14 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
             <div className="space-y-2.5 text-xs text-[#D8DDF0]">
               <div className="p-3 rounded-2xl bg-[#0A1633]/80 border border-[#7B2CFF]/40">
                 <p className="font-bold text-[#4EDBFF]">ยินดีต้อนรับสู่ SALA AI Pro</p>
-                <p className="text-[#D8DDF0] text-[11px] mt-0.5">
+                <p className="text-[#D8DDF0] text-xs mt-0.5">
                   พร้อมใช้งานระบบ Multi-Clip Director และ Character Lock สไตล์ Futuristic Sci-Fi
                 </p>
               </div>
               <div className="p-3 rounded-2xl bg-[#0A1633]/80 border border-[#FF35D4]/40">
-                <p className="font-bold text-[#FF35D4]">เครดิตพร้อมใช้งาน</p>
-                <p className="text-[#D8DDF0] text-[11px] mt-0.5">
-                  คุณมีเครดิตสำหรับทดลองสร้างภาพและวิดีโอ 2,450 เครดิต
+                <p className="font-bold text-[#A78BFA]">เครดิตพร้อมใช้งาน</p>
+                <p className="text-[#D8DDF0] text-xs mt-0.5">
+                  ยอดเครดิตจะแสดงเมื่อเข้าสู่ระบบและอ่านได้จาก Firestore เท่านั้น
                 </p>
               </div>
             </div>

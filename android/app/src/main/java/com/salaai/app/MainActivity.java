@@ -4,19 +4,54 @@ import android.content.Intent;
 import android.media.MediaPlayer;
 import android.os.Bundle;
 import android.view.ViewGroup;
+import android.webkit.WebView;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
+import androidx.activity.OnBackPressedCallback;
 import androidx.core.splashscreen.SplashScreen;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
     private MediaPlayer welcomePlayer;
     private ImageView splashView;
+    private final OnBackPressedCallback backCallback = new OnBackPressedCallback(true) {
+        @Override
+        public void handleOnBackPressed() {
+            WebView webView = bridge != null ? bridge.getWebView() : null;
+            if (webView == null) {
+                leaveApp();
+                return;
+            }
+            // One press asks the page to move exactly one screen. false means there is no previous page.
+            webView.evaluateJavascript(
+                "(function(){try{return window.salaGoBackOne?window.salaGoBackOne()===true:false;}catch(e){return false;}})()",
+                value -> {
+                    if (!"true".equals(value)) {
+                        runOnUiThread(MainActivity.this::leaveApp);
+                    }
+                }
+            );
+        }
+    };
+
+    /** Leave only when the page reports there is no previous screen. Login stays a gate because that path returns false. */
+    private void leaveApp() {
+        if (isFinishing()) {
+            return;
+        }
+        backCallback.setEnabled(false);
+        getOnBackPressedDispatcher().onBackPressed();
+        if (!isFinishing()) {
+            backCallback.setEnabled(true);
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         SplashScreen.installSplashScreen(this);
+        registerPlugin(SalaGooglePlugin.class);
         super.onCreate(savedInstanceState);
+        getOnBackPressedDispatcher().addCallback(this, backCallback);
         showPosterSplash();
         if (this.bridge == null) {
             return;

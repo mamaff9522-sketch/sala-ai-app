@@ -85,7 +85,7 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
               </p>
             </div>
           </div>
-          <button
+          <button aria-label="ปิด" title="ปิด"
             onClick={onClose}
             className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800/60 transition-all"
           >
@@ -129,7 +129,7 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
                   />
                   <div className="truncate">
                     <div className="text-xs font-medium text-white">{c.name}</div>
-                    <div className="text-[10px] text-slate-400">{c.gender}, {c.age}</div>
+                    <div className="text-xs text-slate-400">{c.gender}, {c.age}</div>
                   </div>
                 </button>
               ))}
@@ -157,14 +157,14 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
             </div>
 
             <div className="space-y-1.5">
-              <span className="text-[11px] text-slate-400">บทภาพยนตร์หลังแทนที่:</span>
+              <span className="text-xs text-slate-400">บทภาพยนตร์หลังแทนที่:</span>
               <pre className="p-3 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-300 font-mono whitespace-pre-wrap max-h-48 overflow-y-auto leading-relaxed">
                 {previewResult.updatedScript}
               </pre>
             </div>
 
             <div className="space-y-1.5">
-              <span className="text-[11px] text-slate-400">บทพูดของตัวละคร ({previewResult.updatedDialogues.length} บรรทัด):</span>
+              <span className="text-xs text-slate-400">บทพูดของตัวละคร ({previewResult.updatedDialogues.length} บรรทัด):</span>
               <div className="space-y-1.5 max-h-36 overflow-y-auto">
                 {previewResult.updatedDialogues.map((d: any, i: number) => (
                   <div key={i} className="p-2 bg-slate-900 border border-slate-800 rounded-lg text-xs">

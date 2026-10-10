@@ -29,10 +29,14 @@ public class SalaNavigationTest {
     }
 
     @Test
-    public void accountsGoogleIsExternal() {
+    public void accountsGoogleStaysInApp() {
         assertEquals(
-            SalaNavigation.Decision.EXTERNAL,
+            SalaNavigation.Decision.IN_APP,
             SalaNavigation.decide("https://accounts.google.com/o/oauth2/v2/auth")
+        );
+        assertEquals(
+            SalaNavigation.Decision.IN_APP,
+            SalaNavigation.decide("https://sala-ai.firebaseapp.com/__/auth/handler")
         );
     }
 

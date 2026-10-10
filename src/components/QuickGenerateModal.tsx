@@ -99,12 +99,12 @@ export const QuickGenerateModal: React.FC<QuickGenerateModalProps> = ({
               <h3 className="font-extrabold text-white text-base">
                 {type === 'video' ? 'สร้างวิดีโอด้วย AI (Video Studio)' : 'สร้างภาพด้วย AI (Image Studio)'}
               </h3>
-              <p className="text-[11px] text-purple-200/70">
+              <p className="text-xs text-purple-200/70">
                 ประมวลผลผ่าน SALA AI Cinema Engine
               </p>
             </div>
           </div>
-          <button
+          <button aria-label="ปิด" title="ปิด"
             onClick={onClose}
             className="w-8 h-8 rounded-full bg-slate-800/80 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-all"
           >
@@ -118,7 +118,7 @@ export const QuickGenerateModal: React.FC<QuickGenerateModalProps> = ({
           <div>
             <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center justify-between">
               <span>คำอธิบายภาพหรือฉาก (Prompt)</span>
-              <span className="text-[10px] text-cyan-400">ภาษาไทย / English</span>
+              <span className="text-xs text-cyan-400">ภาษาไทย / English</span>
             </label>
             <textarea
               value={prompt}
@@ -131,7 +131,7 @@ export const QuickGenerateModal: React.FC<QuickGenerateModalProps> = ({
 
           {/* Aspect Ratio Picker */}
           <div>
-            <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
               อัตราส่วนภาพ (Aspect Ratio)
             </label>
             <div className="grid grid-cols-4 gap-2">
@@ -155,7 +155,7 @@ export const QuickGenerateModal: React.FC<QuickGenerateModalProps> = ({
           {/* Character & Location Lock Selection */}
           <div className="grid grid-cols-2 gap-2.5">
             <div>
-              <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
                 ล็อคตัวละคร (Character Lock)
               </label>
               <select
@@ -173,7 +173,7 @@ export const QuickGenerateModal: React.FC<QuickGenerateModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-[11px] font-semibold text-slate-300 mb-1">
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
                 ล็อคสถานที่ (Location Lock)
               </label>
               <select
@@ -194,9 +194,9 @@ export const QuickGenerateModal: React.FC<QuickGenerateModalProps> = ({
           {/* Video Duration (if video) */}
           {type === 'video' && (
             <div>
-              <label className="block text-[11px] font-semibold text-slate-300 mb-1 flex items-center justify-between">
+              <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
                 <span>ความยาววิดีโอ</span>
-                <span className="text-cyan-400 font-mono text-[10px]">{duration} วินาที</span>
+                <span className="text-cyan-400 font-mono text-xs">{duration} วินาที</span>
               </label>
               <input
                 type="range"

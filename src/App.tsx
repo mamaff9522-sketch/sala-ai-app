@@ -11,6 +11,8 @@ import { Admin } from './pages/Admin';
 import { Pricing } from './pages/Pricing';
 import { ActiveJobBanner } from './components/ActiveJobBanner';
 import { HomeDashboard } from './components/HomeDashboard';
+import { ProjectList } from './components/ProjectList';
+import { ChatRoom } from './components/ChatRoom';
 import { QuickGenerateModal } from './components/QuickGenerateModal';
 import {
   Character,
@@ -28,17 +30,15 @@ import {
   loginWithGoogle,
   switchGoogleAccount,
   logout,
-  saveApiKey,
-  getApiKey,
   onAuthStateChange,
   getStoredUserAsUser,
   getStoredUser,
   fetchUserRole,
-  isDemoUser,
   auth
 } from './services/auth';
+import { goBackOnePage, isAppUnlocked } from './services/appAccess';
 import type { User } from 'firebase/auth';
-import { X, Play, Download, AlertCircle, RefreshCw, Loader2, Key, CheckCircle2, ShieldCheck, LogIn, LogOut, Users } from 'lucide-react';
+import { X, Play, Download, AlertCircle, RefreshCw, Loader2, CheckCircle2, ShieldCheck, LogOut, Users } from 'lucide-react';
 import { downloadMediaFile } from './utils/download';
 import { saveLibraryLockCache, clearLibraryLockCache, saveLocationLockCache, clearLocationLockCache } from './services/characterLibraryLock';
 import { DEFAULT_SAMPLE_CHARACTERS } from './services/characterService';
@@ -115,7 +115,34 @@ export default function App() {
     }
   }, [activeTab, isAdmin]);
 
+  const tabHistoryRef = useRef<string[]>([]);
+
+  const handleBack = () => {
+    if (!isAppUnlocked(authUser)) return false;
+    const step = goBackOnePage(tabHistoryRef.current);
+    tabHistoryRef.current = step.history;
+    if (!step.page) return false;
+    setActiveTab(step.page);
+    const previous = step.page;
+    if (typeof window === 'undefined') return true;
+    if (previous === 'admin') {
+      if (window.location.pathname !== '/admin') window.history.pushState(null, '', '/admin');
+    } else if (previous === 'pricing') {
+      if (window.location.pathname !== '/pricing') window.history.pushState(null, '', '/pricing');
+    } else if (window.location.pathname === '/admin' || window.location.pathname === '/pricing') {
+      window.history.pushState(null, '', '/');
+    }
+    return true;
+  };
+
+  const handleBackRef = useRef(handleBack);
+  handleBackRef.current = handleBack;
+  useEffect(() => {
+    (window as unknown as { salaGoBackOne?: () => boolean }).salaGoBackOne = () => Boolean(handleBackRef.current());
+  }, []);
+
   const handleTabChange = (tab: string) => {
+    if (!isAppUnlocked(authUser)) return;
     if (tab === 'admin' && !isAdmin) {
       // Prevent non-admins from switching to admin tab
       setActiveTab('home');
@@ -123,6 +150,10 @@ export default function App() {
         window.history.replaceState(null, '', '/');
       }
       return;
+    }
+
+    if (tab !== activeTab) {
+      tabHistoryRef.current = [...tabHistoryRef.current, activeTab].slice(-30);
     }
 
     setActiveTab(tab);
@@ -159,13 +190,7 @@ export default function App() {
   const [isNewCharModalOpen, setIsNewCharModalOpen] = useState(false);
   const [isNewLocModalOpen, setIsNewLocModalOpen] = useState(false);
 
-  // Authentication & API Key State
   const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
-  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState<boolean>(false);
-  const [inputApiKey, setInputApiKey] = useState<string>('');
-  const [apiKeySaveStatus, setApiKeySaveStatus] = useState<string>('');
-  const [isSavingKey, setIsSavingKey] = useState<boolean>(false);
-  const [isFetchingKey, setIsFetchingKey] = useState<boolean>(false);
 
   // Selected Output Modal for video/image viewing
   const [viewingOutput, setViewingOutput] = useState<{ url: string; type: MediaType } | null>(null);
@@ -223,22 +248,7 @@ export default function App() {
       setCharacters(chars && chars.length > 0 ? chars : DEFAULT_SAMPLE_CHARACTERS);
       setLocations(locs && locs.length > 0 ? locs : DEFAULT_SAMPLE_LOCATIONS);
       setJobs(allJobs || []);
-      setCredits(creds || {
-        userId: 'demo_creator',
-        userName: 'ผู้ใช้ทดสอบ (Demo Creator)',
-        userRole: 'user',
-        remainingCredits: 2000,
-        totalUsedCredits: 10,
-        dailyUsedCredits: 10,
-        dailyLimit: 5000,
-        monthlyUsedCredits: 10,
-        monthlyLimit: 20000,
-        perGenerationLimit: 100,
-        copyPromptFee: 0,
-        serviceFeeType: 'percentage' as const,
-        serviceFeeValue: 0,
-        transactions: []
-      });
+      setCredits(creds);
 
       const running = (allJobs || []).filter(j => j.status === 'processing' || j.status === 'queued');
       setActiveJobs(running);
@@ -248,10 +258,6 @@ export default function App() {
       setLocations(DEFAULT_SAMPLE_LOCATIONS);
     }
   };
-
-  useEffect(() => {
-    loadInitialData();
-  }, []);
 
   // Keep a lock-data copy of the signed-in user's character library on this device, so offline
   // Multi-Clip prompts still use the library if the session is lost (cleared on explicit logout)
@@ -273,27 +279,25 @@ export default function App() {
       if (user) {
         setAuthUser(user);
         loadInitialData();
+        let role: 'admin' | 'user' = 'user';
         try {
-          const role = await fetchUserRole(user.uid);
+          role = await fetchUserRole(user.uid);
           setUserRole(role);
         } catch (err) {
           console.warn('Could not fetch user role:', err);
           setUserRole('user');
         }
-        try {
-          const key = await getApiKey('gemini');
-          if (key) setInputApiKey(key);
-        } catch (e) {
-          console.warn('Could not load user API key from Firestore:', e);
+        if (role !== 'admin' && typeof localStorage !== 'undefined') {
+          localStorage.removeItem('sala_gemini_api_key');
+          localStorage.removeItem('sala_meta_api_key');
+          localStorage.removeItem('sala_xai_api_key');
         }
       } else {
         // เมื่อไม่ได้ล็อกอิน ให้คืนค่า null ชัดเจน เพื่อให้ผู้ใช้สามารถกดเข้าสู่ระบบหรือสลับบัญชีได้
         setAuthUser(null);
         setUserRole('user');
-        setInputApiKey('');
-        setCharacters(DEFAULT_SAMPLE_CHARACTERS);
-        setLocations(DEFAULT_SAMPLE_LOCATIONS);
-        loadInitialData();
+        setCharacters([]);
+        setLocations([]);
       }
     });
     return () => unsubscribe();
@@ -308,7 +312,6 @@ export default function App() {
         const role = await fetchUserRole(user.uid);
         setUserRole(role);
         loadInitialData();
-        setActiveTab('home');
       }
     } catch (err: any) {
       if (err?.code !== 'auth/popup-closed-by-user' && err?.code !== 'auth/cancelled-popup-request') {
@@ -345,96 +348,18 @@ export default function App() {
       clearLocationLockCache();
       setAuthUser(null);
       setUserRole('user');
-      setCharacters(DEFAULT_SAMPLE_CHARACTERS);
-      setLocations(DEFAULT_SAMPLE_LOCATIONS);
+      setCharacters([]);
+      setLocations([]);
       if (activeTab === 'admin') {
         setActiveTab('home');
         if (typeof window !== 'undefined' && window.location.pathname === '/admin') {
           window.history.replaceState(null, '', '/');
         }
       }
-      loadInitialData();
     } catch (err: any) {
       console.error('Logout error:', err);
     }
   };
-
-  const handleSaveApiKeyToFirestore = async () => {
-    if (!authUser) {
-      alert('กรุณาเข้าสู่ระบบด้วย Google ก่อนบันทึก API Key');
-      return;
-    }
-    setIsSavingKey(true);
-    setApiKeySaveStatus('');
-    try {
-      await saveApiKey(inputApiKey, 'gemini');
-      setApiKeySaveStatus('บันทึก API Key ลง Firestore ผูกกับ UID เรียบร้อยแล้ว');
-      setTimeout(() => setApiKeySaveStatus(''), 4000);
-    } catch (err: any) {
-      alert('เกิดข้อผิดพลาดในการบันทึก: ' + (err?.message || 'ไม่สามารถบันทึกได้'));
-    } finally {
-      setIsSavingKey(false);
-    }
-  };
-
-  const handleFetchApiKeyFromFirestore = async () => {
-    if (!authUser) {
-      alert('กรุณาเข้าสู่ระบบด้วย Google ก่อนดึง API Key');
-      return;
-    }
-    setIsFetchingKey(true);
-    try {
-      const key = await getApiKey('gemini');
-      setInputApiKey(key);
-      if (key) {
-        setApiKeySaveStatus('ดึง API Key จาก Firestore สำเร็จ');
-      } else {
-        setApiKeySaveStatus('ไม่พบ API Key ใน Firestore ของบัญชีนี้');
-      }
-      setTimeout(() => setApiKeySaveStatus(''), 4000);
-    } catch (err: any) {
-      alert('ดึงข้อมูลไม่สำเร็จ: ' + (err?.message || ''));
-    } finally {
-      setIsFetchingKey(false);
-    }
-  };
-
-  // Polling Effect for Active Background Jobs
-  useEffect(() => {
-    const processingJobs = activeJobs.filter(
-      j => j.status === 'processing' || j.status === 'queued'
-    );
-    if (processingJobs.length === 0) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const updatedJobs = await Promise.all(
-          processingJobs.map(job => api.getJob(job.id))
-        );
-
-        setActiveJobs(prev => {
-          return prev.map(existing => {
-            const updated = updatedJobs.find(u => u.id === existing.id);
-            return updated || existing;
-          });
-        });
-
-        const justFinished = updatedJobs.filter(
-          j => j.status === 'completed' || j.status === 'failed'
-        );
-
-        // If any job completed or failed, refresh full jobs list and credits
-        if (justFinished.length > 0) {
-          api.getAllJobs().then(setJobs);
-          api.getCredits().then(setCredits);
-        }
-      } catch (err) {
-        console.error('Error polling jobs:', err);
-      }
-    }, 1500);
-
-    return () => clearInterval(interval);
-  }, [activeJobs]);
 
   const handleGenerationStarted = async (jobId: string) => {
     try {
@@ -516,8 +441,33 @@ export default function App() {
     }
   };
 
+  if (authUser === undefined) {
+    return (
+      <div className="min-h-screen app-sky text-slate-100 flex items-center justify-center px-6">
+        <p className="text-[16px]">กำลังตรวจสอบการเข้าสู่ระบบ...</p>
+      </div>
+    );
+  }
+
+  if (!isAppUnlocked(authUser)) {
+    return (
+      <div className="min-h-screen app-sky text-slate-100 flex flex-col items-center justify-center px-6 gap-5">
+        <h1 className="text-2xl font-black tracking-wide">SALA AI</h1>
+        <p className="text-[16px] text-center text-slate-300">ต้องเข้าสู่ระบบก่อน ปุ่มและฟีเจอร์อื่นยังใช้ไม่ได้</p>
+        <button
+          type="button"
+          onClick={handleLoginGoogle}
+          disabled={isLoggingIn}
+          className="px-6 py-3 rounded-2xl font-bold text-[16px] text-white bg-gradient-to-r from-[#7B2CFF] to-[#00D8FF] disabled:opacity-60"
+        >
+          {isLoggingIn ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบด้วย Google'}
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
+    <div className="min-h-screen app-sky text-slate-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       {/* Top Navbar */}
       <Navbar
         activeTab={activeTab}
@@ -530,7 +480,6 @@ export default function App() {
         onLogin={handleLoginGoogle}
         onLogout={handleLogout}
         onSwitchAccount={handleSwitchAccount}
-        onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
         isLoggingIn={isLoggingIn}
         isAdmin={isAdmin}
       />
@@ -566,6 +515,16 @@ export default function App() {
                       <ShieldCheck className="w-3 h-3 text-amber-400" /> แอดมิน (Admin)
                     </span>
                   )}
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      id="btn-open-admin"
+                      onClick={() => handleTabChange('admin')}
+                      className="text-[16px] bg-amber-500 hover:bg-amber-400 text-slate-950 border border-amber-300 px-3 py-1 rounded-full font-bold cursor-pointer"
+                    >
+                      เปิดหน้าแอดมิน
+                    </button>
+                  )}
                 </div>
                 <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
                   <span>{authUser.email || ''}</span>
@@ -597,7 +556,7 @@ export default function App() {
               </div>
               <div>
                 <div className="font-semibold text-white text-xs sm:text-sm">เข้าสู่ระบบ Sala AI ด้วย Google</div>
-                <div className="text-slate-400 text-[11px]">ล็อกอินเพื่อบันทึกงานสร้าง คาแรกเตอร์ สถานที่ และจัดเก็บ API Key ใน Firestore อัตโนมัติ</div>
+                <div className="text-slate-400 text-[11px]">ล็อกอินเพื่อบันทึกงานสร้าง คาแรกเตอร์ และสถานที่</div>
               </div>
             </div>
           )}
@@ -605,15 +564,6 @@ export default function App() {
           <div className="flex items-center gap-2 ml-auto">
             {authUser && authUser.uid !== 'demo_creator' ? (
               <>
-                <button
-                  type="button"
-                  id="btn-app-open-api-key"
-                  onClick={() => setIsApiKeyModalOpen(true)}
-                  className="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-medium py-1.5 px-3 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 active:scale-95"
-                >
-                  <Key className="w-3.5 h-3.5 text-amber-400" />
-                  <span>จัดการ API Key</span>
-                </button>
                 <button
                   type="button"
                   id="btn-app-switch-account"
@@ -686,6 +636,17 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 w-full">
+        {['home', 'chat', 'director', 'characters', 'locations'].includes(activeTab) && (
+          <div className="px-3 pt-3">
+            <button
+              type="button"
+              onClick={handleBack}
+              className="inline-flex items-center gap-1 rounded-xl border border-slate-600 bg-slate-900/80 px-3 py-2 text-[16px] font-semibold text-white"
+            >
+              <span>← กลับ</span>
+            </button>
+          </div>
+        )}
         {activeTab === 'home' && (
           <HomeDashboard
             onNavigate={(tab) => handleTabChange(tab)}
@@ -708,7 +669,16 @@ export default function App() {
               setIsQuickGenOpen(true);
             }}
             onOpenScriptWriter={() => handleTabChange('director')}
+            isAdmin={isAdmin}
           />
+        )}
+
+        {activeTab === 'projects' && (
+          <ProjectList onOpen={() => handleTabChange('director')} />
+        )}
+
+        {activeTab === 'chat' && (
+          <ChatRoom authUser={authUser} />
         )}
 
         {activeTab === 'director' && (
@@ -753,6 +723,52 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'profile' && (
+          <div className="px-4 py-6 text-white space-y-4">
+            <h2 className="text-[22px] font-bold">โปรไฟล์</h2>
+            {authUser ? (
+              <div className="rounded-2xl border border-slate-700 bg-slate-900/80 p-4 space-y-2">
+                <p className="text-[18px] font-semibold">{authUser.displayName || 'ผู้ใช้ Google'}</p>
+                <p className="text-[16px] text-slate-300">{authUser.email || ''}</p>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="mt-3 rounded-xl bg-rose-600 px-4 py-2 text-[16px] font-semibold text-white"
+                >
+                  ออกจากระบบ
+                </button>
+                {isAdmin && (
+                  <button
+                    type="button"
+                    id="profile-open-admin-btn"
+                    onClick={() => handleTabChange('admin')}
+                    className="mt-3 inline-flex rounded-xl bg-amber-500 px-4 py-2 text-[16px] font-semibold text-slate-950"
+                  >
+                    เปิดหน้าแอดมิน
+                  </button>
+                )}
+                {isAdmin && (
+                  <a
+                    id="profile-apk-download-admin"
+                    href="salaai://download-apk"
+                    className="mt-3 inline-flex rounded-xl border border-amber-400/70 px-4 py-2 text-[16px] font-semibold text-white"
+                  >
+                    ดาวน์โหลด APK
+                  </a>
+                )}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleLoginGoogle}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-[16px] font-semibold text-white"
+              >
+                {isLoggingIn ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบด้วย Google'}
+              </button>
+            )}
+          </div>
+        )}
+
         {activeTab === 'gallery' && (
           <GalleryModal
             jobs={jobs}
@@ -776,6 +792,7 @@ export default function App() {
             onNavigateToStudio={() => handleTabChange('home')}
             onLogin={handleLoginGoogle}
             onSwitchAccount={handleSwitchAccount}
+            serverCredits={credits?.remainingCredits ?? 0}
             onCreditsUpdated={(newCredits) => {
               setCredits(prev => prev ? { ...prev, remainingCredits: newCredits } : null);
             }}
@@ -873,132 +890,6 @@ export default function App() {
                   </>
                 )}
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Firebase Firestore API Key Modal */}
-      {isApiKeyModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-[#0e1424] border border-slate-700 w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl relative">
-            <div className="flex items-center justify-between p-5 border-b border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-                  <Key className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">จัดการ API Key ใน Firestore</h3>
-                  <p className="text-[11px] text-slate-400">จัดเก็บแบบปลอดภัยผูกกับ UID ของบัญชีคุณ</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsApiKeyModalOpen(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4">
-              {authUser ? (
-                <>
-                  <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-3.5 space-y-1.5 text-xs">
-                    <div className="flex items-center justify-between text-slate-400">
-                      <span>บัญชีผู้ใช้:</span>
-                      <span className="text-slate-200 font-medium">{authUser.email || authUser.displayName || 'Google User'}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-400">
-                      <span>Firebase UID:</span>
-                      <span className="text-amber-400 font-mono text-[11px] select-all truncate max-w-[240px]">{authUser.uid}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-slate-400">
-                      <span>Firestore Collection:</span>
-                      <span className="text-indigo-400 font-mono text-[11px]">users/{authUser.uid}</span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold text-slate-200 flex items-center justify-between">
-                      <span>Gemini API Key</span>
-                      <button
-                        type="button"
-                        onClick={handleFetchApiKeyFromFirestore}
-                        disabled={isFetchingKey}
-                        className="text-[11px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
-                      >
-                        {isFetchingKey ? 'กำลังดึงข้อมูล...' : 'ดึงค่าล่าสุดจาก Firestore'}
-                      </button>
-                    </label>
-                    <input
-                      type="password"
-                      value={inputApiKey}
-                      onChange={(e) => setInputApiKey(e.target.value)}
-                      placeholder="AIzaSy..."
-                      className="w-full bg-slate-950/90 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder:text-slate-500 font-mono focus:outline-none focus:border-indigo-500"
-                    />
-                    <p className="text-[11px] text-slate-400">
-                      คีย์นี้จะถูกบันทึกไว้ในคลาวด์ Firestore เฉพาะบัญชีของคุณ และดึงมาใช้เมื่อสร้างภาพ/วิดีโอ
-                    </p>
-                  </div>
-
-                  {apiKeySaveStatus && (
-                    <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/30 text-xs text-emerald-300 flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                      <span>{apiKeySaveStatus}</span>
-                    </div>
-                  )}
-
-                  <div className="pt-2 flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setIsApiKeyModalOpen(false)}
-                      className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-all cursor-pointer"
-                    >
-                      ปิด
-                    </button>
-                    <button
-                      type="button"
-                      disabled={isSavingKey}
-                      onClick={handleSaveApiKeyToFirestore}
-                      className="bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer disabled:opacity-50"
-                    >
-                      {isSavingKey ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>กำลังบันทึก...</span>
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>บันทึก API Key ลง Firestore</span>
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-6 space-y-4">
-                  <div className="w-12 h-12 rounded-full bg-indigo-600/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mx-auto">
-                    <ShieldCheck className="w-6 h-6" />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm font-semibold text-white">กรุณาเข้าสู่ระบบด้วย Google</p>
-                    <p className="text-xs text-slate-400 max-w-xs mx-auto">
-                      เข้าสู่ระบบเพื่อใช้งานระบบรักษาความปลอดภัย Firestore และจัดเก็บ API Key ผูกกับบัญชีของคุณ
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleLoginGoogle}
-                    disabled={isLoggingIn}
-                    className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-6 py-2.5 rounded-xl shadow-lg transition-all inline-flex items-center gap-2 cursor-pointer"
-                  >
-                    {isLoggingIn ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-                    <span>เข้าสู่ระบบด้วย Google</span>
-                  </button>
-                </div>
-              )}
             </div>
           </div>
         </div>

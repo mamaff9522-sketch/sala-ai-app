@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import { execFile } from 'child_process';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -44,12 +45,43 @@ import { expandCombinedCharacterNames, buildCharacterLockText, lightingForTime, 
 import { resolveCharacterProfiles, formatCharacterAppearanceLock, parseScriptCharacterList, buildCharacterAppearanceLock, mergeDeclaredCharacters, continuityLockCharacter } from './src/services/characterAppearance';
 import { parseScriptLocally, applySplitLocks } from './src/services/localScriptParser';
 import { applyDialogue20WordSplitToClips } from './src/services/dialogueWordSplitter';
-import { verifyFirebaseIdToken, createSessionToken, verifySessionToken, isAdminIdentity, parseAdminEmails, type VerifiedFirebaseClaims } from './serverAuth';
+import { buildSocialPostsFromStory } from './src/services/socialPostFromStory';
+import { verifyFirebaseIdToken, createSessionToken, verifySessionToken, isAdminIdentity, type VerifiedFirebaseClaims } from './serverAuth';
+import { addAdminEmail, readAdminEmails } from './adminAllowlist';
+import { CREDIT_CATALOG, MISSING_FIRESTORE_CREDENTIAL_MESSAGE, MISSING_STRIPE_SECRET_MESSAGE, adjustFirestoreCredits, assertFirestoreCredentialConfigured, chargeFromUsageMetadata, creditPaidUserInFirestore, creditsForTokens, deductUsableCredits, ensureCanCallFlashLite, isRealCreditUid, normalizeVideoResolution, paymentAlreadyRecorded, readFirestoreCreditBalance, readPlatformAdminShare, stripHiddenCreditFields } from './serverBilling';
+import { registerTransferRoutes } from './serverTransfer';
 
 dotenv.config();
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+
+// Capacitor Android (androidScheme https) loads the bundled UI from this origin.
+// API fetches from the phone are cross-origin, so preflight must allow it.
+// Not deployed by this change. Same-origin browser traffic is unchanged.
+const CAPACITOR_WEBVIEW_ORIGIN = 'https://localhost';
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin !== CAPACITOR_WEBVIEW_ORIGIN) return next();
+  res.setHeader('Access-Control-Allow-Origin', CAPACITOR_WEBVIEW_ORIGIN);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS');
+  const requested = req.headers['access-control-request-headers'];
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    typeof requested === 'string' && requested.trim()
+      ? requested
+      : 'Authorization, Content-Type, Accept, Range'
+  );
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Range, Accept-Ranges');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
+
 console.log('Using PORT:', PORT);
 
 // Support large payload for base64 image reference uploads & capture rawBody for Stripe Webhook signature verification
@@ -103,6 +135,9 @@ export interface GenerationParams {
   sceneId?: string;
   sceneNumber?: number;
   durationSeconds?: number;
+  resolution?: string;
+  /** Optional pre-call token estimate. Used only when the client already has a count. Never invented here. */
+  estimatedTokens?: number;
   seed?: number;
   consistencyStrength?: number;
 }
@@ -127,8 +162,8 @@ export interface ProviderAdapter {
   hasKey: boolean;
   isMockOnly: boolean;
   estimateCost(params: GenerationParams): { estimatedCredits: number; approximateThb: number; breakdown: string };
-  generateImage(params: GenerationParams, jobId: string): Promise<{ outputUrl: string; isMock: boolean }>;
-  generateVideo(params: GenerationParams, jobId: string, updateProgress: (prog: number, stage: string) => void): Promise<{ outputUrl: string; isMock: boolean }>;
+  generateImage(params: GenerationParams, jobId: string): Promise<{ outputUrl: string; isMock: boolean; usage?: any }>;
+  generateVideo(params: GenerationParams, jobId: string, updateProgress: (prog: number, stage: string) => void): Promise<{ outputUrl: string; isMock: boolean; usage?: any }>;
 }
 
 // ==========================================
@@ -162,6 +197,12 @@ export interface GenerationJob {
   completedAt?: string;
   error?: string;
   durationSeconds?: number;
+  resolution?: string;
+  tokensUsed?: number | null;
+  creditsCharged?: number;
+  remainingCredits?: number;
+  usageMissing?: boolean;
+  skipMemoryCharge?: boolean;
 }
 
 export type FieldSource = 'USER_CONFIRMED' | 'REFERENCE_TEXT' | 'VISUAL_OBSERVATION' | 'UNKNOWN';
@@ -852,8 +893,7 @@ const FIREBASE_PROJECT_ID: string = (() => {
     return '';
   }
 })();
-// Admins: verified Firebase email in this list (ADMIN_EMAILS env, comma separated)
-const ADMIN_EMAILS = parseAdminEmails(process.env.ADMIN_EMAILS, ['mama.ff9522@gmail.com']);
+// Admins: verified Firebase email from readAdminEmails() (seed plus emails an existing admin added).
 // HMAC secret for local session tokens.
 const SESSION_SECRET: string = process.env.SESSION_SECRET || (FIREBASE_PROJECT_ID ? `sala-session-secret-${FIREBASE_PROJECT_ID}` : 'sala-ai-default-session-secret-2026');
 if (!process.env.SESSION_SECRET) console.warn('[auth] SESSION_SECRET not set: using persistent project fallback secret for local sessions');
@@ -863,39 +903,14 @@ const currentUserAccount: CreditAccount = {
   userId: 'user_sala_001',
   userName: 'ครีเอเตอร์ศาลาเอไอ (Creator)',
   userRole: 'user', // Standard user role
-  remainingCredits: 250,
-  totalUsedCredits: 50,
-  dailyUsedCredits: 20,
+  remainingCredits: 0,
+  totalUsedCredits: 0,
+  dailyUsedCredits: 0,
   dailyLimit: 150,
-  monthlyUsedCredits: 180,
+  monthlyUsedCredits: 0,
   monthlyLimit: 1000,
   perGenerationLimit: 40,
-  transactions: [
-    {
-      id: 'tx_welcome',
-      timestamp: new Date(Date.now() - 86400000 * 2).toISOString(),
-      amount: 300,
-      type: 'bonus',
-      description: 'ยินดีต้อนรับสู่ ศาลาเอไอ! โบนัสเริ่มต้นใช้งานฟรี',
-      balanceAfter: 300
-    },
-    {
-      id: 'tx_01',
-      timestamp: new Date(Date.now() - 86400000).toISOString(),
-      amount: -10,
-      type: 'usage',
-      description: 'สร้างภาพ: กานต์ ฉากที่ 1 (16:9)',
-      balanceAfter: 290
-    },
-    {
-      id: 'tx_02',
-      timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
-      amount: -40,
-      type: 'usage',
-      description: 'สร้างวิดีโอ: กานต์ ฉากที่ 2 ภาพยนตร์สั้น',
-      balanceAfter: 250
-    }
-  ]
+  transactions: []
 };
 
 // Admin Credit Account
@@ -903,7 +918,7 @@ const adminCreditAccount: CreditAccount = {
   userId: 'user_admin_01',
   userName: 'ผู้ดูแลระบบศาลาเอไอ (Admin)',
   userRole: 'admin',
-  remainingCredits: 9999,
+  remainingCredits: 0,
   totalUsedCredits: 100,
   dailyUsedCredits: 0,
   dailyLimit: 10000,
@@ -978,7 +993,7 @@ async function getAuthenticatedUser(req: express.Request): Promise<{ user: Store
       }
 
       if (!user) {
-        const isAdmin = isAdminIdentity(decoded, ADMIN_EMAILS);
+        const isAdmin = isAdminIdentity(decoded, readAdminEmails());
         user = {
           id: userId,
           username: decoded.email?.split('@')[0] || `user_${userId.slice(0, 8)}`,
@@ -1025,28 +1040,18 @@ async function getAuthenticatedUser(req: express.Request): Promise<{ user: Store
 
   let account = creditAccountsStore.get(user.id);
   if (!account) {
-    const initialCredits = user.role === 'admin' ? 9999 : 500;
     account = {
       userId: user.id,
       userName: `${user.firstName || user.username} (${user.role === 'admin' ? 'ผู้ดูแลระบบ' : 'สมาชิก'})`,
       userRole: user.role,
-      remainingCredits: initialCredits,
+      remainingCredits: 0,
       totalUsedCredits: 0,
       dailyUsedCredits: 0,
       dailyLimit: user.role === 'admin' ? 10000 : 250,
       monthlyUsedCredits: 0,
       monthlyLimit: user.role === 'admin' ? 50000 : 2000,
       perGenerationLimit: user.role === 'admin' ? 500 : 50,
-      transactions: [
-        {
-          id: `tx_welcome_${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          amount: initialCredits,
-          type: 'bonus',
-          description: 'ยินดีต้อนรับสู่ ศาลาเอไอ! โบนัสเริ่มต้นใช้งานฟรี',
-          balanceAfter: initialCredits
-        }
-      ]
+      transactions: []
     };
     creditAccountsStore.set(user.id, account);
   }
@@ -1056,6 +1061,49 @@ async function getAuthenticatedUser(req: express.Request): Promise<{ user: Store
 }
 
 // Middleware: Require valid session token
+
+function jobForViewer(job: any, role?: string) {
+  if (!job) return job;
+  if (role === 'admin') return job;
+  const copy = { ...job };
+  delete copy.tokensUsed;
+  delete copy.usageMissing;
+  return copy;
+}
+
+function chargeFieldsFrom(req: any) {
+  const charge = req?.creditCharge;
+  if (!charge) return {};
+  return {
+    creditsCharged: charge.creditsCharged ?? 0,
+    remainingCredits: charge.remainingCredits ?? null,
+  };
+}
+
+/** Gate, call Gemini, then charge tokens/TOKENS_PER_CREDIT. No token count => charge 0 and record usageMissing. Does not add another 10%. */
+async function callBillableGemini(req: any, res: any, ai: any, payload: any, reason: string): Promise<{ response: any } | null> {
+  let uid = req.user?.id as string | undefined;
+  if (!uid) {
+    const auth = await getAuthenticatedUser(req);
+    uid = auth?.user?.id;
+  }
+  try {
+    await ensureCanCallFlashLite(uid);
+  } catch (err: any) {
+    res.status(err?.status || 503).json({ success: false, message: err?.message || MISSING_FIRESTORE_CREDENTIAL_MESSAGE });
+    return null;
+  }
+  const response = await ai.models.generateContent(payload);
+  const priced = chargeFromUsageMetadata(response?.usageMetadata || response?.usage || null);
+  const charge = await deductUsableCredits(uid as string, priced.creditsCharged, reason, {
+    tokensUsed: priced.tokensUsed,
+    usageMissing: priced.usageMissing,
+  });
+  req.creditCharge = charge;
+  if (isRealCreditUid(uid)) rememberUserBalance(uid as string, charge.remainingCredits);
+  return { response };
+}
+
 async function requireAuth(req: any, res: express.Response, next: express.NextFunction) {
   let auth: Awaited<ReturnType<typeof getAuthenticatedUser>> = null;
   try { auth = await getAuthenticatedUser(req); } catch { auth = null; }
@@ -1072,7 +1120,7 @@ async function requireAuth(req: any, res: express.Response, next: express.NextFu
 
 // Middleware: Require Admin role.
 // Admin = cryptographically verified Firebase ID token whose email is verified (email_verified)
-// and listed in ADMIN_EMAILS. No uid bypass, no local-session admin, no self-writable role flags.
+// and listed in readAdminEmails(). No uid bypass, no local-session admin, no self-writable role flags.
 async function requireAdmin(req: any, res: express.Response, next: express.NextFunction) {
   let auth: Awaited<ReturnType<typeof getAuthenticatedUser>> = null;
   try { auth = await getAuthenticatedUser(req); } catch { auth = null; }
@@ -1083,7 +1131,7 @@ async function requireAdmin(req: any, res: express.Response, next: express.NextF
     });
   }
 
-  const isAuthorizedAdmin = auth.identity.via === 'firebase' && isAdminIdentity(auth.identity.firebase, ADMIN_EMAILS);
+  const isAuthorizedAdmin = auth.identity.via === 'firebase' && isAdminIdentity(auth.identity.firebase, readAdminEmails());
   if (!isAuthorizedAdmin) {
     return res.status(403).json({
       success: false,
@@ -1130,27 +1178,8 @@ const redeemCodesStore: Map<string, RedeemCode> = new Map([
   ]
 ]);
 
-// Seed Project Templates
-let projectTemplatesStore: ProjectTemplate[] = [
-  {
-    id: 'tmpl_cinematic_thai_01',
-    name: 'เทมเพลต: มหากาพย์โบราณคดีไทย (Cinematic Thai Heritage)',
-    description: 'แสงคบเพลิง Chiaroscuro อัตราส่วน 16:9 กล้อง Dolly In สไตล์ภาพยนตร์ 35mm',
-    aspectRatio: '16:9',
-    visualStyle: 'Cinematic',
-    defaultCharacterId: 'char_karn_02',
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'tmpl_cyberpunk_neon_02',
-    name: 'เทมเพลต: ไซเบอร์พังก์อนาคต (Cyberpunk Neon 9:16)',
-    description: 'เหมาะสำหรับ TikTok / Reels 9:16 แสงนีออนสะท้อนน้ำฝน กล้อง Tracking ไวรัล',
-    aspectRatio: '9:16',
-    visualStyle: '3D Animation',
-    defaultCharacterId: 'char_fahsai_01',
-    createdAt: new Date().toISOString()
-  }
-];
+// Project templates. Archaeology and cyberpunk samples are not seeded.
+let projectTemplatesStore: ProjectTemplate[] = [];
 
 // Seed initial completed jobs in store for download gallery
 const initialJobs: GenerationJob[] = [
@@ -1357,22 +1386,29 @@ class GeminiProviderAdapter implements ProviderAdapter {
   }
 
   estimateCost(params: GenerationParams) {
-    if (params.type === 'video') {
-      const dur = params.durationSeconds || 5;
-      const credits = 30 + dur * 2;
+    const hinted = Number(params.estimatedTokens);
+    if (Number.isFinite(hinted) && hinted > 0) {
+      const credits = creditsForTokens(hinted);
       return {
         estimatedCredits: credits,
-        approximateThb: Number((credits * 0.45).toFixed(2)),
-        breakdown: `วิดีโอ Veo ความยาว ${dur} วิ (30 เครดิตพื้นฐาน + ${dur * 2} เครดิตเฟรมเรนเดอร์)`
-      };
-    } else {
-      const credits = 8;
-      return {
-        estimatedCredits: credits,
-        approximateThb: Number((credits * 0.45).toFixed(2)),
-        breakdown: 'ภาพความละเอียดสูง Imagen 3 (8 เครดิต/ภาพ)'
+        approximateThb: credits,
+        breakdown: `ประมาณ ${credits} เครดิต (ยอดจริงคิดหลังระบบตอบกลับ)`
       };
     }
+    if (params.type === 'video') {
+      const dur = params.durationSeconds || 5;
+      const resolution = normalizeVideoResolution(params.resolution);
+      return {
+        estimatedCredits: 0,
+        approximateThb: 0,
+        breakdown: `วิดีโอ Veo ${resolution} ${dur} วินาที คิดเครดิตหลังระบบตอบกลับ (ยังไม่หักล่วงหน้า)`
+      };
+    }
+    return {
+      estimatedCredits: 0,
+      approximateThb: 0,
+      breakdown: `ภาพ Gemini คิดเครดิตหลังระบบตอบกลับ (ยังไม่หักล่วงหน้า)`
+    };
   }
 
   async generateImage(params: GenerationParams, jobId: string): Promise<{ outputUrl: string; isMock: boolean }> {
@@ -1404,7 +1440,8 @@ class GeminiProviderAdapter implements ProviderAdapter {
             const mime = part.inlineData.mimeType || 'image/png';
             return {
               outputUrl: `data:${mime};base64,${part.inlineData.data}`,
-              isMock: false
+              isMock: false,
+              usage: (response as any).usageMetadata || (response as any).usage || null
             };
           }
         }
@@ -1458,9 +1495,10 @@ class GeminiProviderAdapter implements ProviderAdapter {
 
     const targetAspectRatio: '16:9' | '9:16' = params.aspectRatio === '9:16' ? '9:16' : '16:9';
 
+    const videoResolution = normalizeVideoResolution(params.resolution);
     const videoConfig: any = {
       numberOfVideos: 1,
-      resolution: '720p',
+      resolution: videoResolution,
       aspectRatio: targetAspectRatio,
     };
 
@@ -1551,9 +1589,15 @@ class GeminiProviderAdapter implements ProviderAdapter {
     }
 
     updateProgress(100, 'สร้างวิดีโอด้วย Google Veo สำเร็จสมบูรณ์ พร้อมเปิดเล่นและดาวน์โหลด MP4');
+    const veoUsage = (currentOp as any)?.response?.usageMetadata
+      || (currentOp as any)?.response?.usage
+      || (currentOp as any)?.usageMetadata
+      || (currentOp as any)?.usage
+      || null;
     return {
       outputUrl: `/api/video-stream/${jobId}`,
       isMock: false,
+      usage: veoUsage,
     };
   }
 }
@@ -1589,14 +1633,14 @@ class MetaProviderAdapter implements ProviderAdapter {
       const credits = 35 + dur * 2;
       return {
         estimatedCredits: credits,
-        approximateThb: Number((credits * 0.45).toFixed(2)),
+        approximateThb: credits,
         breakdown: `Meta Movie Gen (35 เครดิต + ${dur * 2} เครดิตความยาว)`
       };
     } else {
       const credits = 10;
       return {
         estimatedCredits: credits,
-        approximateThb: Number((credits * 0.45).toFixed(2)),
+        approximateThb: credits,
         breakdown: 'Meta Emu 3 Generation (10 เครดิต/ภาพ)'
       };
     }
@@ -1637,14 +1681,14 @@ class XaiProviderAdapter implements ProviderAdapter {
       const credits = 32 + dur * 2;
       return {
         estimatedCredits: credits,
-        approximateThb: Number((credits * 0.45).toFixed(2)),
+        approximateThb: credits,
         breakdown: `xAI Grok Motion (${credits} เครดิต)`
       };
     } else {
       const credits = 9;
       return {
         estimatedCredits: credits,
-        approximateThb: Number((credits * 0.45).toFixed(2)),
+        approximateThb: credits,
         breakdown: 'xAI Grok Imagine (9 เครดิต/ภาพ)'
       };
     }
@@ -1745,14 +1789,14 @@ class ProviderManager {
           name: `${adapter.name} Standard`,
           description: 'ความละเอียดมาตรฐาน สมดุลความเร็วและความแม่นยำ',
           costPerImage: adapter.estimateCost({ type: 'image', provider: adapter.id, model: '', prompt: '', aspectRatio: '1:1' }).estimatedCredits,
-          costPerVideoSec: 6
+          costPerVideoSec: 0
         },
         {
           id: `${adapter.id}-ultra`,
           name: `${adapter.name} Ultra Cinematic`,
           description: 'คุณภาพสูงสุดสำหรับงานภาพยนตร์และสตอรี่บอร์ด',
-          costPerImage: adapter.estimateCost({ type: 'image', provider: adapter.id, model: '', prompt: '', aspectRatio: '1:1' }).estimatedCredits + 4,
-          costPerVideoSec: 8
+          costPerImage: adapter.estimateCost({ type: 'image', provider: adapter.id, model: '', prompt: '', aspectRatio: '1:1' }).estimatedCredits,
+          costPerVideoSec: 0
         }
       ]
     }));
@@ -1855,6 +1899,31 @@ function processJobInBackground(jobId: string, params: GenerationParams) {
         await delay(500);
       }
 
+      if (!result.isMock && params.provider === 'gemini' && job.userId && isRealCreditUid(job.userId)) {
+        const priced = chargeFromUsageMetadata((result as any).usage);
+        const charge = await deductUsableCredits(
+          job.userId,
+          priced.creditsCharged,
+          `สร้าง${params.type === 'video' ? 'วิดีโอ' : 'ภาพ'} ${jobId}`,
+          {
+            tokensUsed: priced.tokensUsed,
+            usageMissing: priced.usageMissing,
+            durationSeconds: params.type === 'video' ? (params.durationSeconds || job.durationSeconds || 5) : undefined,
+            resolution: params.type === 'video' ? normalizeVideoResolution(params.resolution) : undefined,
+          }
+        );
+        job.tokensUsed = charge.tokensUsed;
+        job.creditsCharged = charge.creditsCharged;
+        job.remainingCredits = charge.remainingCredits;
+        job.costCredits = charge.creditsCharged;
+        job.usageMissing = charge.usageMissing === true;
+        if (params.type === 'video') {
+          job.durationSeconds = params.durationSeconds || job.durationSeconds || 5;
+          job.resolution = normalizeVideoResolution(params.resolution);
+        }
+        rememberUserBalance(job.userId, charge.remainingCredits);
+      }
+
       job.status = 'completed';
       job.progress = 100;
       job.stage = 'สำเร็จสมบูรณ์ (พร้อมดาวน์โหลด)';
@@ -1896,7 +1965,11 @@ function processJobInBackground(jobId: string, params: GenerationParams) {
         }
       }
 
-      // Refund credits on failure (to the job owner's account)
+      // Refund an in-memory hold only. Gemini jobs are charged from Firestore after a real token count, so a failed call must not invent a refund.
+      if (job.skipMemoryCharge) {
+        jobsStore.set(jobId, job);
+        return;
+      }
       const refundAccount = (job.userId && creditAccountsStore.get(job.userId)) || currentUserAccount;
       refundAccount.remainingCredits += job.costCredits;
       if (refundAccount !== currentUserAccount) {
@@ -1945,7 +2018,7 @@ app.post('/api/estimate-cost', (req, res) => {
     ? pricingConfig.serviceFeeValue
     : Math.ceil(apiCredits * (pricingConfig.serviceFeeValue / 100));
   const totalCredits = apiCredits + serviceFee;
-  const approximateThb = Number((totalCredits * 0.35).toFixed(2));
+  const approximateThb = Number(Number(totalCredits).toFixed(2));
   const canAfford = currentUserAccount.remainingCredits >= totalCredits;
 
   const breakdown = `ต้นทุน API จริง: ${apiCredits} เครดิต | ค่าบริการ Sala AI (${pricingConfig.serviceFeeType === 'fixed' ? `${pricingConfig.serviceFeeValue} เครดิตคงที่` : `${pricingConfig.serviceFeeValue}%`}): ${serviceFee} เครดิต | ยอดรวม: ${totalCredits} เครดิต (ประมาณ ${approximateThb} บาท)`;
@@ -1996,6 +2069,21 @@ app.post('/api/director/generate-multi-clip-prompts', requireAuth, async (req: a
 
     const count = Math.max(1, Math.min(10, Number(clipCount) || 3));
     const duration = Math.max(3, Math.min(30, Number(clipDurationSeconds) || 10));
+    const sceneCredits = Math.round(count * 0.5 * 100) / 100;
+    const creditUid = req.user?.id;
+    if (isRealCreditUid(creditUid)) {
+      const balance = (await readFirestoreCreditBalance(creditUid)) ?? 0;
+      if (balance < sceneCredits) {
+        return res.status(402).json({
+          success: false,
+          message: `เครดิตไม่พอสำหรับผู้กำกับ Multi-Clip (ต้องการ ${sceneCredits} เครดิต คงเหลือ ${balance})`
+        });
+      }
+      await deductUsableCredits(creditUid, sceneCredits, `ผู้กำกับ Multi-Clip ${count} ฉาก`, {
+        tokensUsed: 0,
+        usageMissing: false
+      });
+    }
     // Library cards with server-side reference check (lost /uploads files -> re-upload warning)
     const libraryChars = markMissingUploadReferences(Array.isArray(characters) ? characters : []);
     // Location library (lock payloads) with the same reference check; undefined = client sent no library
@@ -2169,11 +2257,13 @@ Respond ONLY with a JSON array containing exactly ${count} objects (no markdown 
   }
 ]`;
 
-          const response = await ai.models.generateContent({
+          const billed = await callBillableGemini(req, res, ai, {
             model: 'gemini-3.1-flash-lite',
             contents: promptInstruction,
             config: { responseMimeType: 'application/json' }
-          });
+          }, 'multi-clip prompts');
+          if (!billed) return;
+          const response = billed.response;
 
           const rawText = response.text ? response.text.trim() : '';
           const cleanedJson = rawText
@@ -2287,7 +2377,8 @@ Respond ONLY with a JSON array containing exactly ${count} objects (no markdown 
       success: true,
       source,
       clips,
-      validation
+      validation,
+      ...chargeFieldsFrom(req)
     });
   } catch (err: any) {
     console.error('Error in /api/director/generate-multi-clip-prompts:', err);
@@ -2636,14 +2727,16 @@ ${lockedContext}
   }
 }`;
 
-        const response = await ai.models.generateContent({
+        const billed = await callBillableGemini(req, res, ai, {
           model: 'gemini-3.1-flash-lite',
           contents: userPrompt,
           config: {
             systemInstruction,
             responseMimeType: 'application/json'
           }
-        });
+        }, 'script split');
+        if (!billed) return;
+        const response = billed.response;
 
         const rawText = response.text || '';
         const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -2741,6 +2834,7 @@ ${lockedContext}
         return res.json({
           success: true,
           source: 'gemini-flash',
+          ...chargeFieldsFrom(req),
           ORIGINAL_DIALOGUE_ONLY: true,
           INVENT_DIALOGUE: false,
           NARRATION_TO_DIALOGUE: false,
@@ -3023,7 +3117,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
 
     let rawText = '';
     try {
-      const response = await ai.models.generateContent({
+      const billed = await callBillableGemini(req, res, ai, {
         model: 'gemini-3.1-flash-lite',
         contents: prompt,
         config: {
@@ -3032,7 +3126,9 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
           responseMimeType: 'application/json',
           responseSchema: storyEpisodeSchema
         }
-      });
+      }, 'story continue');
+      if (!billed) return;
+      const response = billed.response;
       rawText = response.text || '';
     } catch (geminiErr: any) {
       const reason = formatGenAIError(geminiErr);
@@ -3109,7 +3205,8 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
       ...parsed,
       success: true,
       source: 'gemini-flash',
-      declaredCharacters: declaredNames
+      declaredCharacters: declaredNames,
+      ...chargeFieldsFrom(req)
     });
   } catch (err: any) {
     console.error('Error in /api/story/continue:', err?.message || err);
@@ -3510,7 +3607,7 @@ app.post('/api/character/analyze-image', async (req: express.Request, res: expre
 5. ตอบเป็น JSON ตามโครงสร้างที่กำหนดเท่านั้น`
         });
 
-        const response = await ai.models.generateContent({
+        const billed = await callBillableGemini(req, res, ai, {
           model: 'gemini-3.1-flash-lite',
           contents: {
             parts
@@ -3519,7 +3616,9 @@ app.post('/api/character/analyze-image', async (req: express.Request, res: expre
             systemInstruction,
             responseMimeType: 'application/json'
           }
-        });
+        }, 'character analyze');
+        if (!billed) return;
+        const response = billed.response;
 
         const rawText = response.text || '';
         let jsonResult: any = null;
@@ -3787,7 +3886,8 @@ app.post('/api/character/analyze-image', async (req: express.Request, res: expre
             success: true,
             source: 'gemini-flash',
             cached: false,
-            data: returnData
+            data: returnData,
+            ...chargeFieldsFrom(req)
           });
         }
       } catch (geminiErr: any) {
@@ -4100,14 +4200,16 @@ app.post('/api/location/analyze-image', async (req: express.Request, res: expres
         }
       ];
 
-      const response = await ai.models.generateContent({
+      const billed = await callBillableGemini(req, res, ai, {
         model: 'gemini-3.1-flash-lite',
         contents: parts,
         config: {
           systemInstruction,
           responseMimeType: 'application/json'
         }
-      });
+      }, 'location analyze');
+      if (!billed) return;
+      const response = billed.response;
 
       const text = (response.text || '').replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
       analysisResult = text ? JSON.parse(text) : null;
@@ -4183,7 +4285,8 @@ app.post('/api/location/analyze-image', async (req: express.Request, res: expres
       success: true,
       source: 'gemini-flash',
       cached: false,
-      data: fullResult
+      data: fullResult,
+      ...chargeFieldsFrom(req)
     });
   } catch (err: any) {
     console.error('Error in /api/location/analyze-image:', err);
@@ -4197,7 +4300,7 @@ app.post('/api/location/analyze-image', async (req: express.Request, res: expres
 
 
 // 6.3 Generate Media (Unified Endpoint)
-app.post('/api/generate', requireAuth, (req: any, res) => {
+app.post('/api/generate', requireAuth, async (req: any, res) => {
   const params: GenerationParams = req.body;
   const user = req.user as StoredUser;
   const userAccount = req.creditAccount as CreditAccount;
@@ -4222,29 +4325,36 @@ app.post('/api/generate', requireAuth, (req: any, res) => {
     });
   }
 
-  // Cost calculation
+  // Cost calculation. Gemini/Veo charges the real token count after the call (tokens / TOKENS_PER_CREDIT). No flat 8 or 40.
   const cost = adapter.estimateCost(params);
-
-  // Check limits
-  if (userAccount.remainingCredits < cost.estimatedCredits) {
+  const billGemini = adapter.id === 'gemini';
+  if (billGemini) {
+    try {
+      await ensureCanCallFlashLite(user.id);
+    } catch (err: any) {
+      return res.status(err?.status || 503).json({
+        success: false,
+        message: err?.message || MISSING_FIRESTORE_CREDENTIAL_MESSAGE
+      });
+    }
+  } else if (userAccount.remainingCredits < cost.estimatedCredits) {
     return res.status(403).json({
       success: false,
       message: `เครดิตคงเหลือไม่เพียงพอ (ต้องการ ${cost.estimatedCredits} เครดิต แต่คงเหลือ ${userAccount.remainingCredits} เครดิต) กรุณาเติมเครดิต`
     });
-  }
-
-  if (userAccount.dailyUsedCredits + cost.estimatedCredits > userAccount.dailyLimit) {
+  } else if (userAccount.dailyUsedCredits + cost.estimatedCredits > userAccount.dailyLimit) {
     return res.status(403).json({
       success: false,
       message: `คุณใช้งานเกินโควตาประจำวัน (Daily Limit: ${userAccount.dailyLimit} เครดิต) กรุณาลองใหม่อีกครั้งในวันพรุ่งนี้หรือติดต่อแอดมิน`
     });
   }
 
-  // Deduct credits from user's account
-  userAccount.remainingCredits -= cost.estimatedCredits;
-  userAccount.totalUsedCredits += cost.estimatedCredits;
-  userAccount.dailyUsedCredits += cost.estimatedCredits;
-  userAccount.monthlyUsedCredits += cost.estimatedCredits;
+  if (!billGemini) {
+    userAccount.remainingCredits -= cost.estimatedCredits;
+    userAccount.totalUsedCredits += cost.estimatedCredits;
+    userAccount.dailyUsedCredits += cost.estimatedCredits;
+    userAccount.monthlyUsedCredits += cost.estimatedCredits;
+  }
 
   const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const seed = params.seed || Math.floor(Math.random() * 1000000);
@@ -4269,7 +4379,8 @@ app.post('/api/generate', requireAuth, (req: any, res) => {
     projectId: params.projectId,
     sceneId: params.sceneId,
     sceneNumber: params.sceneNumber,
-    costCredits: cost.estimatedCredits,
+    costCredits: billGemini ? 0 : cost.estimatedCredits,
+    skipMemoryCharge: billGemini,
     seed,
     createdAt: new Date().toISOString(),
     durationSeconds: params.durationSeconds || (params.type === 'video' ? 5 : undefined)
@@ -4277,25 +4388,28 @@ app.post('/api/generate', requireAuth, (req: any, res) => {
 
   jobsStore.set(jobId, job);
 
-  // Record credit transaction
-  userAccount.transactions.unshift({
-    id: `tx_${jobId}`,
-    timestamp: new Date().toISOString(),
-    amount: -cost.estimatedCredits,
-    type: 'usage',
-    description: `สร้าง${params.type === 'video' ? 'วิดีโอ' : 'ภาพ'}: ${params.prompt.substring(0, 32)}... (${adapter.name})`,
-    jobId,
-    balanceAfter: userAccount.remainingCredits
-  });
+  if (!billGemini) {
+    userAccount.transactions.unshift({
+      id: `tx_${jobId}`,
+      timestamp: new Date().toISOString(),
+      amount: -cost.estimatedCredits,
+      type: 'usage',
+      description: `สร้าง${params.type === 'video' ? 'วิดีโอ' : 'ภาพ'}: ${params.prompt.substring(0, 32)}... (${adapter.name})`,
+      jobId,
+      balanceAfter: userAccount.remainingCredits
+    });
+  }
 
   // Start background asynchronous job execution
   processJobInBackground(jobId, params);
 
+  const balanceNow = billGemini ? await readFirestoreCreditBalance(user.id) : userAccount.remainingCredits;
   res.json({
     success: true,
     jobId,
-    job,
-    remainingCredits: userAccount.remainingCredits
+    job: jobForViewer(job, req.user?.role),
+    creditsCharged: 0,
+    remainingCredits: balanceNow
   });
 });
 
@@ -4305,20 +4419,17 @@ app.get('/api/jobs/:id', (req, res) => {
   if (!job) {
     return res.status(404).json({ success: false, message: 'ไม่พบงานที่ระบุ' });
   }
-  res.json({ success: true, job });
+  res.json({ success: true, job: jobForViewer(job) });
 });
 
 // 6.5 List All Jobs (History / Gallery - Filtered per user or all for admin)
 app.get('/api/jobs', requireAuth, (req: any, res) => {
   const user = req.user as StoredUser;
-  let jobs = Array.from(jobsStore.values());
-  if (user.role !== 'admin') {
-    jobs = jobs.filter(j => !j.userId || j.userId === user.id);
-  }
+  const jobs = Array.from(jobsStore.values()).filter(j => j.userId === user.id);
   jobs.sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
-  res.json({ success: true, jobs });
+  res.json({ success: true, jobs: jobs.map((job) => jobForViewer(job, user.role)) });
 });
 
 // Helper to resolve local video file path
@@ -4630,6 +4741,9 @@ app.post('/api/characters', requireAuth, async (req: any, res) => {
   };
 
   const existingIdx = charactersStore.findIndex(c => c.id === newChar.id);
+  if (existingIdx >= 0 && charactersStore[existingIdx].userId && charactersStore[existingIdx].userId !== currentUserId) {
+    return res.status(403).json({ success: false, message: 'คุณไม่มีสิทธิ์แก้ตัวละครของผู้ใช้อื่น' });
+  }
   if (existingIdx >= 0) {
     charactersStore[existingIdx] = newChar;
   } else {
@@ -4656,11 +4770,11 @@ app.post('/api/characters', requireAuth, async (req: any, res) => {
 app.delete('/api/characters/:id', requireAuth, async (req: any, res) => {
   const currentUserId = req.user.id;
   const char = charactersStore.find(c => c.id === req.params.id);
-  if (char && char.userId && char.userId !== currentUserId) {
+  if (char && char.userId !== currentUserId) {
     return res.status(403).json({ success: false, message: 'คุณไม่มีสิทธิ์ลบตัวละครของผู้ใช้อื่น' });
   }
 
-  charactersStore = charactersStore.filter(c => c.id !== req.params.id);
+  charactersStore = charactersStore.filter(c => !(c.id === req.params.id && c.userId === currentUserId));
 
   // Delete from Firestore
   if (!isServerQuotaExhausted()) {
@@ -4710,8 +4824,11 @@ app.get('/api/locations', async (req, res) => {
     }
   }
 
-  // Strict isolation: User sees their own locations + sample locations
-  const userLocations = locationsStore.filter(l => !l.userId || l.userId === currentUserId || l.userId === 'default_system');
+  // Strict isolation: only this user's locations. Unscoped or another user's rows are not returned.
+  if (!currentUserId) {
+    return res.json({ success: true, locations: [] });
+  }
+  const userLocations = locationsStore.filter(l => l.userId === currentUserId);
   res.json({ success: true, locations: userLocations });
 });
 
@@ -4817,6 +4934,9 @@ app.post('/api/locations', requireAuth, async (req: any, res) => {
   };
 
   const existingIdx = locationsStore.findIndex(l => l.id === newLocation.id);
+  if (existingIdx >= 0 && locationsStore[existingIdx].userId && locationsStore[existingIdx].userId !== currentUserId) {
+    return res.status(403).json({ success: false, message: 'คุณไม่มีสิทธิ์แก้สถานที่ของผู้ใช้อื่น' });
+  }
   if (existingIdx >= 0) {
     locationsStore[existingIdx] = newLocation;
   } else {
@@ -4842,7 +4962,7 @@ app.post('/api/locations', requireAuth, async (req: any, res) => {
 app.delete('/api/locations/:id', requireAuth, async (req: any, res) => {
   const currentUserId = req.user.id;
   const loc = locationsStore.find(l => l.id === req.params.id);
-  if (loc && loc.userId && loc.userId !== currentUserId && req.user.role !== 'admin') {
+  if (loc && loc.userId !== currentUserId) {
     return res.status(403).json({ success: false, message: 'คุณไม่มีสิทธิ์ลบสถานที่ของผู้ใช้อื่น' });
   }
 
@@ -4865,10 +4985,7 @@ app.delete('/api/locations/:id', requireAuth, async (req: any, res) => {
 
 // 6.7 Projects & Scenes Endpoints
 app.get('/api/projects', requireAuth, (req: any, res) => {
-  if (req.user.role === 'admin') {
-    return res.json({ success: true, projects: projectsStore });
-  }
-  const userProjects = projectsStore.filter(p => !p.userId || p.userId === req.user.id);
+  const userProjects = projectsStore.filter(p => p.userId === req.user.id);
   res.json({ success: true, projects: userProjects });
 });
 
@@ -4910,13 +5027,18 @@ app.put('/api/projects/:id', requireAuth, (req: any, res) => {
   }
 
   const existing = projectsStore[index];
-  if (existing.userId && existing.userId !== req.user.id && req.user.role !== 'admin') {
+  if (existing.userId !== req.user.id) {
     return res.status(403).json({ success: false, message: 'คุณไม่มีสิทธิ์แก้ไขโปรเจ็กต์ของผู้ใช้อื่น' });
   }
 
+  const body = { ...(req.body || {}) };
+  delete body.userId;
+  delete body.id;
   projectsStore[index] = {
     ...existing,
-    ...req.body,
+    ...body,
+    id: existing.id,
+    userId: existing.userId,
     updatedAt: new Date().toISOString()
   };
 
@@ -4929,7 +5051,7 @@ app.delete('/api/projects/:id', requireAuth, (req: any, res) => {
     return res.status(404).json({ success: false, message: 'ไม่พบโปรเจ็กต์' });
   }
 
-  if (existing.userId && existing.userId !== req.user.id && req.user.role !== 'admin') {
+  if (existing.userId !== req.user.id) {
     return res.status(403).json({ success: false, message: 'คุณไม่มีสิทธิ์ลบโปรเจ็กต์ของผู้ใช้อื่น' });
   }
 
@@ -4938,36 +5060,75 @@ app.delete('/api/projects/:id', requireAuth, (req: any, res) => {
 });
 
 // 6.8 User Credits & Transactions
+function rememberUserBalance(uid: string, remaining: number, entry?: { id: string; amount: number; description: string; type?: 'topup' | 'bonus' | 'refund' | 'usage' }) {
+  let account = creditAccountsStore.get(uid);
+  if (!account) {
+    account = {
+      userId: uid,
+      userName: `ผู้ใช้ (${uid.slice(0, 8)})`,
+      userRole: 'user',
+      remainingCredits: remaining,
+      totalUsedCredits: 0,
+      dailyUsedCredits: 0,
+      dailyLimit: 250,
+      monthlyUsedCredits: 0,
+      monthlyLimit: 2000,
+      perGenerationLimit: 50,
+      transactions: []
+    };
+    creditAccountsStore.set(uid, account);
+  } else {
+    account.remainingCredits = remaining;
+  }
+  if (entry && !account.transactions.some(tx => tx.id === entry.id)) {
+    account.transactions.unshift({
+      id: entry.id,
+      timestamp: new Date().toISOString(),
+      amount: entry.amount,
+      type: entry.type || 'topup',
+      description: entry.description,
+      balanceAfter: remaining
+    });
+  }
+  return account;
+}
+
 app.get('/api/credits', async (req: any, res) => {
   const auth = await getAuthenticatedUser(req);
-  const account = auth?.account || creditAccountsStore.get('user_sala_001') || currentUserAccount;
-  res.json({
-    success: true,
-    account
-  });
+  if (!auth) {
+    return res.status(401).json({
+      success: false,
+      message: 'กรุณาเข้าสู่ระบบก่อนดูยอดเครดิต'
+    });
+  }
+  if (!isRealCreditUid(auth.user.id)) {
+    return res.status(403).json({
+      success: false,
+      message: 'บัญชีนี้ไม่มียอดเครดิตใน Firestore และระบบจะไม่แสดงยอดบัญชีสาธิต'
+    });
+  }
+  try {
+    const remaining = await readFirestoreCreditBalance(auth.user.id);
+    const account = stripHiddenCreditFields(rememberUserBalance(auth.user.id, remaining ?? 0));
+    return res.json({
+      success: true,
+      balanceSource: 'firestore',
+      account
+    });
+  } catch (err: any) {
+    return res.status(err?.status || 503).json({
+      success: false,
+      balanceSource: 'unavailable',
+      message: err?.message || MISSING_FIRESTORE_CREDENTIAL_MESSAGE
+    });
+  }
 });
 
-// Arbitrary top-up endpoint restricted to Admin (Ordinary users must pay via Stripe)
-app.post('/api/credits/topup', requireAdmin, async (req: any, res) => {
-  const auth = await getAuthenticatedUser(req);
-  const account = (auth?.account || creditAccountsStore.get('user_sala_001') || currentUserAccount) as CreditAccount;
-  const { amount } = req.body;
-  const numAmount = Number(amount) || 100;
-
-  account.remainingCredits += numAmount;
-  account.transactions.unshift({
-    id: `tx_topup_${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    amount: numAmount,
-    type: 'topup',
-    description: `เติมเครดิตระบบ (ทดสอบ Sandbox +${numAmount} เครดิต)`,
-    balanceAfter: account.remainingCredits
-  });
-
-  res.json({
-    success: true,
-    account,
-    message: `เติมเครดิตสำเร็จ +${numAmount} เครดิต`
+// Sandbox self-topup is disabled. It used to add credits to the admin's own in-memory account with no payment.
+app.post('/api/credits/topup', async (_req: any, res) => {
+  return res.status(410).json({
+    success: false,
+    message: 'ปิดการเติมเครดิตทดสอบแล้ว ไม่มีการเพิ่มเครดิต ต้องชำระผ่าน Stripe หรือให้แอดมินมอบเครดิตให้ uid จริงผ่านหน้าแอดมินเท่านั้น'
   });
 });
 
@@ -5078,169 +5239,158 @@ function markTransactionProcessed(txId: string): void {
 // Track credited sessions to avoid duplicate top-ups
 const processedStripeSessions = processedTransactions;
 
-// Mock sessions when testing without a live Stripe Secret Key
-const mockCheckoutSessions = new Map<string, {
-  sessionId: string;
-  uid: string;
-  credits: number;
-  amountThb: number;
-  status: 'pending' | 'completed';
-  createdAt: string;
-}>();
-
-// Helper to credit user in Firestore users/{uid} and local memory
-async function creditUserInFirestore(uid: string, credits: number, description: string = 'Stripe Payment', transactionId?: string) {
-  // Update in-memory account
-  const account = creditAccountsStore.get(uid) || currentUserAccount;
-  if (account) {
-    account.remainingCredits += credits;
-    account.transactions.unshift({
-      id: transactionId || `tx_stripe_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      amount: credits,
-      type: 'topup',
-      description: `${description} (+${credits} เครดิต)`,
-      balanceAfter: account.remainingCredits
-    });
-  }
-
-  // Update in Firestore users/{uid} doc server-side
-  if (!isServerQuotaExhausted()) {
-    try {
-      const db = getServerFirestore();
-      if (db && uid) {
-        const userRef = docServer(db, 'users', uid);
-        await setDocServer(userRef, {
-          credits: incrementServer(credits),
-          remainingCredits: incrementServer(credits),
-          updatedAt: new Date().toISOString(),
-          lastTopupAt: new Date().toISOString(),
-          lastTopupAmount: credits,
-          lastPaymentMethod: 'stripe'
-        }, { merge: true });
-        console.log(`[Stripe -> Firestore] Successfully credited +${credits} to users/${uid}`);
-      }
-    } catch (err: any) {
-      handleServerFirestoreError(err, 'Stripe credit sync');
-    }
-  }
-}
+// Paid credits are written only by serverBilling.ts (Firebase Admin). No simulator sessions.
 
 // 0. Stripe Public Configuration (Publishable key & Status)
 app.get('/api/stripe/config', (_req: any, res) => {
   const publishableKey = process.env.STRIPE_PUBLISHABLE_KEY || process.env.VITE_STRIPE_PUBLISHABLE_KEY || '';
   const hasSecretKey = Boolean(process.env.STRIPE_SECRET_KEY);
+  let firestoreReady = false;
+  try {
+    assertFirestoreCredentialConfigured();
+    firestoreReady = true;
+  } catch {
+    firestoreReady = false;
+  }
   res.json({
     success: true,
     publishableKey,
     hasSecretKey,
-    isMock: !hasSecretKey
+    firestoreReady,
+    isMock: false,
+    paymentsEnabled: hasSecretKey && firestoreReady
   });
 });
 
-// 1. Create Checkout Session
+// 1. Create Checkout Session — authenticated user only, server catalog price, no simulator
 app.post('/api/stripe/create-checkout-session', async (req: any, res) => {
   try {
-    const { credits, packageId, uid, userEmail, returnUrl } = req.body;
-    const numCredits = Number(credits) || 100;
-    const baseReturnUrl = returnUrl || `${req.protocol}://${req.get('host')}`;
-
-    // Calculate price in THB
-    let priceThb = 99;
-    if (packageId === 'pkg_starter_100' || numCredits === 100) priceThb = 99;
-    else if (packageId === 'pkg_pro_500' || numCredits === 500) priceThb = 399;
-    else if (packageId === 'pkg_master_1000' || numCredits === 1000) priceThb = 699;
-    else if (packageId === 'pkg_studio_2500' || numCredits === 2500) priceThb = 1499;
-    else priceThb = Math.max(20, Math.round(numCredits * 0.8));
-
-    const stripe = getStripe();
-
-    // If Stripe API key is configured, create a real Stripe Checkout Session
-    if (stripe) {
-      console.log(`[Stripe] Creating checkout session for ${numCredits} credits (${priceThb} THB)...`);
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ['card', 'promptpay'],
-        mode: 'payment',
-        line_items: [
-          {
-            price_data: {
-              currency: 'thb',
-              product_data: {
-                name: `แพ็กเกจเครดิต Sala AI (${numCredits.toLocaleString()} เครดิต)`,
-                description: `เติม ${numCredits.toLocaleString()} เครดิตสำหรับสร้างภาพและวิดีโอในศาลาเอไอ`,
-                images: ['https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop&q=80']
-              },
-              unit_amount: priceThb * 100 // in satang
-            },
-            quantity: 1
-          }
-        ],
-        client_reference_id: uid || undefined,
-        customer_email: userEmail || undefined,
-        metadata: {
-          uid: uid || 'user_sala_001',
-          credits: String(numCredits),
-          packageId: packageId || '',
-          userEmail: userEmail || ''
-        },
-        success_url: `${baseReturnUrl}/pricing?payment_success=true&session_id={CHECKOUT_SESSION_ID}&credits=${numCredits}`,
-        cancel_url: `${baseReturnUrl}/pricing?canceled=true`
+    const auth = await getAuthenticatedUser(req);
+    if (!auth || !isRealCreditUid(auth.user.id)) {
+      return res.status(401).json({
+        success: false,
+        isSimulator: false,
+        error: 'กรุณาเข้าสู่ระบบก่อนเติมเครดิต ระบบไม่รับ uid จากหน้าเว็บ และจะไม่เติมเข้าบัญชีสาธิตหรือบัญชีแอดมินคนอื่น'
       });
-
-      return res.json({
-        success: true,
-        url: session.url,
-        sessionId: session.id,
-        isSimulator: false
+    }
+    const packageId = String(req.body?.packageId || '');
+    const pkg = CREDIT_CATALOG[packageId];
+    if (!pkg) {
+      return res.status(400).json({
+        success: false,
+        error: 'แพ็กเกจไม่ถูกต้อง ราคาและจำนวนเครดิตกำหนดจากเซิร์ฟเวอร์เท่านั้น'
+      });
+    }
+    const stripe = getStripe();
+    if (!stripe) {
+      return res.status(503).json({
+        success: false,
+        isSimulator: false,
+        error: MISSING_STRIPE_SECRET_MESSAGE
+      });
+    }
+    try {
+      assertFirestoreCredentialConfigured();
+    } catch (err: any) {
+      return res.status(503).json({
+        success: false,
+        isSimulator: false,
+        error: err?.message || MISSING_FIRESTORE_CREDENTIAL_MESSAGE
       });
     }
 
-    // Fallback: Sandbox / Simulator mode for instant preview and development
-    const mockSessionId = `sim_cs_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-    mockCheckoutSessions.set(mockSessionId, {
-      sessionId: mockSessionId,
-      uid: uid || 'user_sala_001',
-      credits: numCredits,
-      amountThb: priceThb,
-      status: 'pending',
-      createdAt: new Date().toISOString()
+    const uid = auth.user.id;
+    const baseReturnUrl = req.body?.returnUrl || `${req.protocol}://${req.get('host')}`;
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card', 'promptpay'],
+      mode: 'payment',
+      line_items: [
+        {
+          price_data: {
+            currency: 'thb',
+            product_data: {
+              name: `แพ็กเกจเครดิต Sala AI (${pkg.credits.toLocaleString()} เครดิต)`,
+              description: `เติม ${pkg.credits.toLocaleString()} เครดิตสำหรับสร้างภาพและวิดีโอในศาลาเอไอ`
+            },
+            unit_amount: pkg.priceThb * 100
+          },
+          quantity: 1
+        }
+      ],
+      client_reference_id: uid,
+      customer_email: auth.user.email || undefined,
+      metadata: {
+        uid,
+        credits: String(pkg.credits),
+        packageId,
+        priceThb: String(pkg.priceThb)
+      },
+      payment_intent_data: {
+        metadata: {
+          uid,
+          credits: String(pkg.credits),
+          packageId,
+          priceThb: String(pkg.priceThb)
+        }
+      },
+      success_url: `${baseReturnUrl}/pricing?payment_success=true&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${baseReturnUrl}/pricing?canceled=true`
     });
-
-    console.log(`[Stripe Simulator] Created sandbox checkout session ${mockSessionId} for ${numCredits} credits`);
 
     return res.json({
       success: true,
-      url: `${baseReturnUrl}/pricing?payment_success=true&session_id=${mockSessionId}&credits=${numCredits}&simulated=true`,
-      sessionId: mockSessionId,
-      isSimulator: true,
-      message: 'จำลองการชำระเงินในโหมด Sandbox (ระบุ STRIPE_SECRET_KEY เพื่อใช้งานเกตเวย์จริง)'
+      url: session.url,
+      sessionId: session.id,
+      isSimulator: false
     });
   } catch (err: any) {
     console.error('[Stripe create-checkout-session Error]:', err);
     res.status(500).json({
       success: false,
+      isSimulator: false,
       error: err.message || 'ไม่สามารถสร้าง Stripe Checkout Session ได้'
     });
   }
 });
 
-// 2. Stripe Webhook Endpoint (เติมเครดิตเฉพาะหลังตรวจสอบ Stripe-Signature และสถานะชำระเงินสำเร็จจริง)
+function catalogGrantFromMetadata(metadata: Stripe.Metadata | null | undefined, amountTotal: number | null): { credits: number; priceThb: number } | null {
+  const packageId = String(metadata?.packageId || '');
+  const pkg = CREDIT_CATALOG[packageId];
+  if (!pkg) return null;
+  if (String(metadata?.credits || '') !== String(pkg.credits)) return null;
+  if (String(metadata?.priceThb || '') !== String(pkg.priceThb)) return null;
+  if (amountTotal != null && amountTotal !== pkg.priceThb * 100) return null;
+  return pkg;
+}
+
+async function grantPaidStripeCredits(uid: string, credits: number, description: string, idempotencyIds: string[]) {
+  const result = await creditPaidUserInFirestore(uid, credits, description, idempotencyIds);
+  rememberUserBalance(uid, result.remainingCredits, result.already ? undefined : {
+    id: idempotencyIds.find(Boolean) || `tx_stripe_${Date.now()}`,
+    amount: credits,
+    description: `${description} (+${credits} เครดิต)`,
+    type: 'topup'
+  });
+  for (const id of idempotencyIds) {
+    if (id) markTransactionProcessed(id);
+  }
+  return result;
+}
+
+// 2. Stripe Webhook — the only path that grants purchased credits
 app.post('/api/stripe/webhook', async (req: any, res) => {
   const sig = req.headers['stripe-signature'];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   const stripe = getStripe();
 
-  // Requirement 5: Stripe Webhook ต้องตรวจ Stripe-Signature ด้วย webhook secret ก่อนประมวลผล
   if (!webhookSecret) {
     console.error('[Stripe Webhook] STRIPE_WEBHOOK_SECRET is not configured on server.');
     return res.status(400).send('Webhook Secret is not configured on the server.');
   }
-
   if (!sig || !req.rawBody) {
     console.error('[Stripe Webhook] Missing stripe-signature header or raw body.');
     return res.status(400).send('Stripe-Signature header and raw body are required.');
   }
-
   if (!stripe) {
     console.error('[Stripe Webhook] Stripe client not initialized (STRIPE_SECRET_KEY missing).');
     return res.status(500).send('Stripe client not initialized.');
@@ -5256,232 +5406,206 @@ app.post('/api/stripe/webhook', async (req: any, res) => {
 
   console.log(`[Stripe Webhook] Received verified event: ${event.type} (ID: ${event.id})`);
 
-  // Event 1: Checkout Session (Completed or Async Payment Succeeded)
-  if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
-    const session = event.data?.object as Stripe.Checkout.Session;
-    const sessionId = session?.id;
-    const paymentIntentId = typeof session.payment_intent === 'string' ? session.payment_intent : null;
-    const primaryId = paymentIntentId || sessionId;
-
-    // Requirement 3: ถ้าใช้ Checkout Session ให้ตรวจ payment_status = paid
-    // Requirement 7: ถ้าผู้ใช้ยกเลิก จ่ายไม่สำเร็จ หรือ payment pending ห้ามเพิ่มเครดิต
-    if (session.payment_status !== 'paid') {
-      console.warn(`[Stripe Webhook] Checkout session ${sessionId} payment_status is "${session.payment_status}" (not "paid"). Skipping credit.`);
-      return res.json({ received: true, status: session.payment_status });
+  try {
+    if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.async_payment_succeeded') {
+      const session = event.data?.object as Stripe.Checkout.Session;
+      const sessionId = session?.id;
+      const paymentIntentId = typeof session.payment_intent === 'string' ? session.payment_intent : '';
+      if (session.payment_status !== 'paid') {
+        console.warn(`[Stripe Webhook] Checkout session ${sessionId} payment_status is "${session.payment_status}" (not "paid"). Skipping credit.`);
+        return res.json({ received: true, credited: false, status: session.payment_status });
+      }
+      const ids = [paymentIntentId, sessionId].filter(Boolean);
+      if (ids.some(id => isTransactionProcessed(id))) {
+        return res.json({ received: true, idempotent: true, credited: false });
+      }
+      const pkg = catalogGrantFromMetadata(session.metadata, typeof session.amount_total === 'number' ? session.amount_total : null);
+      const uid = String(session.metadata?.uid || '');
+      if (!pkg || !isRealCreditUid(uid) || session.client_reference_id !== uid) {
+        console.error('[Stripe Webhook] Refusing credit: catalog, amount, or uid mismatch', sessionId);
+        return res.json({ received: true, credited: false, reason: 'not_granted' });
+      }
+      await grantPaidStripeCredits(uid, pkg.credits, `เติมเครดิต Stripe Webhook (${String(sessionId).slice(0, 10)}...)`, ids);
+      return res.json({ received: true, credited: true });
     }
 
-    // Requirement 6: ป้องกันการเพิ่มเครดิตซ้ำด้วย paymentIntentId / checkoutSessionId / transaction ID แบบ idempotent
-    if (isTransactionProcessed(sessionId) || (paymentIntentId && isTransactionProcessed(paymentIntentId))) {
-      console.log(`[Stripe Webhook] Transaction ${primaryId} already processed. Skipping duplicate credit.`);
-      return res.json({ received: true, idempotent: true });
+    if (event.type === 'payment_intent.succeeded') {
+      const pi = event.data?.object as Stripe.PaymentIntent;
+      const piId = pi?.id;
+      if (pi.status !== 'succeeded') {
+        return res.json({ received: true, credited: false, status: pi.status });
+      }
+      if (piId && isTransactionProcessed(piId)) {
+        return res.json({ received: true, idempotent: true, credited: false });
+      }
+      const amount = typeof pi.amount_received === 'number' ? pi.amount_received : (typeof pi.amount === 'number' ? pi.amount : null);
+      const pkg = catalogGrantFromMetadata(pi.metadata, amount);
+      const uid = String(pi.metadata?.uid || '');
+      if (!pkg || !isRealCreditUid(uid) || !piId) {
+        return res.json({ received: true, credited: false, reason: 'not_granted' });
+      }
+      await grantPaidStripeCredits(uid, pkg.credits, `เติมเครดิต Stripe PaymentIntent (${piId.slice(0, 10)}...)`, [piId]);
+      return res.json({ received: true, credited: true });
     }
 
-    if (sessionId) markTransactionProcessed(sessionId);
-    if (paymentIntentId) markTransactionProcessed(paymentIntentId);
-
-    const uid = session.metadata?.uid || session.client_reference_id || '';
-    const credits = Number(session.metadata?.credits) || 0;
-
-    console.log(`[Stripe Webhook] Checkout session ${sessionId} verified paid. Crediting UID: ${uid}, Amount: +${credits}`);
-    if (uid && credits > 0) {
-      await creditUserInFirestore(uid, credits, `เติมเครดิต Stripe Webhook (${sessionId.slice(0, 10)}...)`, primaryId);
+    if (event.type === 'payment_intent.payment_failed' || event.type === 'checkout.session.expired') {
+      console.log(`[Stripe Webhook] Non-successful event ${event.type} received - no credits added.`);
     }
+    return res.json({ received: true, credited: false });
+  } catch (err: any) {
+    console.error('[Stripe Webhook] Credit was not saved:', err?.message || err);
+    return res.status(err?.status && err.status < 500 ? err.status : 500).json({
+      received: false,
+      credited: false,
+      error: err?.message || MISSING_FIRESTORE_CREDENTIAL_MESSAGE
+    });
   }
-
-  // Event 2: Payment Intent Succeeded
-  else if (event.type === 'payment_intent.succeeded') {
-    const pi = event.data?.object as Stripe.PaymentIntent;
-    const piId = pi?.id;
-
-    // Requirement 4: ถ้าใช้ PaymentIntent ให้ตรวจ status = succeeded
-    // Requirement 7: ถ้าผู้ใช้ยกเลิก จ่ายไม่สำเร็จ หรือ payment pending ห้ามเพิ่มเครดิต
-    if (pi.status !== 'succeeded') {
-      console.warn(`[Stripe Webhook] PaymentIntent ${piId} status is "${pi.status}" (not "succeeded"). Skipping credit.`);
-      return res.json({ received: true, status: pi.status });
-    }
-
-    // Requirement 6: ป้องกันการเพิ่มเครดิตซ้ำด้วย paymentIntentId แบบ idempotent
-    if (isTransactionProcessed(piId)) {
-      console.log(`[Stripe Webhook] PaymentIntent ${piId} already processed. Skipping duplicate credit.`);
-      return res.json({ received: true, idempotent: true });
-    }
-
-    markTransactionProcessed(piId);
-
-    const uid = pi.metadata?.uid || '';
-    const credits = Number(pi.metadata?.credits) || 0;
-
-    console.log(`[Stripe Webhook] PaymentIntent ${piId} verified succeeded. Crediting UID: ${uid}, Amount: +${credits}`);
-    if (uid && credits > 0) {
-      await creditUserInFirestore(uid, credits, `เติมเครดิต Stripe PaymentIntent (${piId.slice(0, 10)}...)`, piId);
-    }
-  }
-
-  // Event 3: Payment Failed / Canceled / Expired - ห้ามเพิ่มเครดิตเด็ดขาด
-  else if (event.type === 'payment_intent.payment_failed' || event.type === 'checkout.session.expired') {
-    console.log(`[Stripe Webhook] Non-successful event ${event.type} received - no credits added.`);
-  }
-
-  return res.json({ received: true });
 });
 
-// 3. Verify Payment Session on Return (Client callback verification)
+// 3. Report Checkout status only. This route never grants credits.
 app.get('/api/stripe/verify-session', async (req: any, res) => {
   try {
     const sessionId = String(req.query.sessionId || '').trim();
     if (!sessionId) {
-      return res.status(400).json({ success: false, error: 'ต้องระบุ sessionId' });
+      return res.status(400).json({ success: false, creditsAdded: 0, creditsGranted: false, error: 'ต้องระบุ sessionId' });
     }
-
-    // Check if it's a simulated sandbox session (Only when live Stripe keys are not set)
-    if (mockCheckoutSessions.has(sessionId)) {
-      const mockSession = mockCheckoutSessions.get(sessionId)!;
-      if (isTransactionProcessed(sessionId)) {
-        const acc = creditAccountsStore.get(mockSession.uid) || currentUserAccount;
-        return res.json({
-          success: true,
-          alreadyProcessed: true,
-          creditsAdded: 0,
-          remainingCredits: acc.remainingCredits,
-          message: 'รายการนี้ได้รับการเพิ่มเครดิตเรียบร้อยแล้ว'
-        });
-      }
-
-      markTransactionProcessed(sessionId);
-      mockSession.status = 'completed';
-      await creditUserInFirestore(mockSession.uid, mockSession.credits, 'เติมเครดิต Stripe (Sandbox Simulator)', sessionId);
-
-      const acc = creditAccountsStore.get(mockSession.uid) || currentUserAccount;
-      return res.json({
-        success: true,
-        creditsAdded: mockSession.credits,
-        remainingCredits: acc.remainingCredits,
-        message: `เติมเครดิต +${mockSession.credits.toLocaleString()} เครดิต สำเร็จเรียบร้อยแล้ว`
-      });
-    }
-
-    const stripe = getStripe();
-    if (!stripe) {
+    if (sessionId.startsWith('sim_') || sessionId.startsWith('cs_test_sim')) {
       return res.status(400).json({
         success: false,
-        error: 'Stripe Secret Key ยังไม่ได้กำหนดในระบบ ไม่สามารถตรวจสอบการชำระเงินจริงได้'
+        creditsAdded: 0,
+        creditsGranted: false,
+        error: 'ไม่รองรับรายการจำลอง และไม่ได้เติมเครดิต'
       });
     }
-
+    const stripe = getStripe();
+    if (!stripe) {
+      return res.status(503).json({
+        success: false,
+        creditsAdded: 0,
+        creditsGranted: false,
+        error: MISSING_STRIPE_SECRET_MESSAGE
+      });
+    }
     const session = await stripe.checkout.sessions.retrieve(sessionId);
-
-    // Requirement 3: ถ้าใช้ Checkout Session ให้ตรวจ payment_status = paid
-    // Requirement 7: ถ้าผู้ใช้ยกเลิก จ่ายไม่สำเร็จ หรือ payment pending ห้ามเพิ่มเครดิต
     if (session.payment_status !== 'paid') {
       return res.json({
         success: false,
         payment_status: session.payment_status,
-        message: `การชำระเงินยังไม่สำเร็จ (สถานะ: ${session.payment_status})`
-      });
-    }
-
-    const paymentIntentId = typeof session.payment_intent === 'string' ? session.payment_intent : null;
-    const primaryId = paymentIntentId || sessionId;
-
-    // Requirement 6: ป้องกันการเพิ่มเครดิตซ้ำด้วย idempotent key
-    if (isTransactionProcessed(sessionId) || (paymentIntentId && isTransactionProcessed(paymentIntentId))) {
-      const uid = session.metadata?.uid || session.client_reference_id || '';
-      const acc = creditAccountsStore.get(uid) || currentUserAccount;
-      return res.json({
-        success: true,
-        alreadyProcessed: true,
         creditsAdded: 0,
-        remainingCredits: acc.remainingCredits,
-        message: 'รายการชำระเงินนี้ได้รับการเพิ่มเครดิตเรียบร้อยแล้ว'
+        creditsGranted: false,
+        message: `การชำระเงินยังไม่สำเร็จ (สถานะ: ${session.payment_status}) จึงไม่เติมเครดิต`
       });
     }
-
-    if (sessionId) markTransactionProcessed(sessionId);
-    if (paymentIntentId) markTransactionProcessed(paymentIntentId);
-
-    const uid = session.metadata?.uid || session.client_reference_id || '';
-    const credits = Number(session.metadata?.credits) || 0;
-
-    if (uid && credits > 0) {
-      await creditUserInFirestore(uid, credits, `เติมเครดิต Stripe Checkout (${sessionId.slice(0, 10)}...)`, primaryId);
+    const paymentIntentId = typeof session.payment_intent === 'string' ? session.payment_intent : '';
+    const uid = String(session.metadata?.uid || '');
+    let creditsGranted = false;
+    let remainingCredits: number | null = null;
+    let persistError = '';
+    try {
+      creditsGranted = await paymentAlreadyRecorded([paymentIntentId, sessionId]);
+      const auth = await getAuthenticatedUser(req);
+      if (creditsGranted && auth && isRealCreditUid(auth.user.id) && auth.user.id === uid) {
+        remainingCredits = await readFirestoreCreditBalance(uid);
+        if (typeof remainingCredits === 'number') rememberUserBalance(uid, remainingCredits);
+      }
+    } catch (err: any) {
+      creditsGranted = false;
+      persistError = err?.message || MISSING_FIRESTORE_CREDENTIAL_MESSAGE;
     }
-
-    const acc = creditAccountsStore.get(uid) || currentUserAccount;
     return res.json({
-      success: true,
-      creditsAdded: credits,
-      remainingCredits: acc.remainingCredits,
-      message: `ชำระเงินสำเร็จ เติม +${credits.toLocaleString()} เครดิต เข้าสู่บัญชีของคุณเรียบร้อยแล้ว!`
+      success: creditsGranted,
+      payment_status: session.payment_status,
+      creditsAdded: 0,
+      creditsGranted,
+      remainingCredits,
+      message: creditsGranted
+        ? 'การชำระเงินนี้ถูกบันทึกเครดิตแล้วจาก webhook หน้านี้ไม่ได้เติมซ้ำ'
+        : (persistError || 'รับการชำระเงินจาก Stripe แล้ว แต่ยังไม่ยืนยันว่าเครดิตถูกบันทึกลง Firestore หน้านี้ไม่เติมเครดิต')
     });
   } catch (err: any) {
     console.error('[Verify Session Error]:', err);
-    res.status(500).json({ success: false, error: err.message || 'เกิดข้อผิดพลาดในการตรวจสอบ Session' });
+    res.status(500).json({ success: false, creditsAdded: 0, creditsGranted: false, error: err.message || 'เกิดข้อผิดพลาดในการตรวจสอบ Session' });
   }
 });
 
-// 3.1 Verify PaymentIntent on Return (Client callback verification for PaymentIntent)
+// 3.1 Report PaymentIntent status only. This route never grants credits.
 app.get('/api/stripe/verify-payment-intent', async (req: any, res) => {
   try {
     const paymentIntentId = String(req.query.paymentIntentId || '').trim();
     if (!paymentIntentId) {
-      return res.status(400).json({ success: false, error: 'ต้องระบุ paymentIntentId' });
+      return res.status(400).json({ success: false, creditsAdded: 0, creditsGranted: false, error: 'ต้องระบุ paymentIntentId' });
     }
-
     const stripe = getStripe();
     if (!stripe) {
-      return res.status(400).json({
+      return res.status(503).json({
         success: false,
-        error: 'Stripe Secret Key ยังไม่ได้กำหนดในระบบ ไม่สามารถตรวจสอบการชำระเงินจริงได้'
+        creditsAdded: 0,
+        creditsGranted: false,
+        error: MISSING_STRIPE_SECRET_MESSAGE
       });
     }
-
     const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
-
-    // Requirement 4: ถ้าใช้ PaymentIntent ให้ตรวจ status = succeeded
-    // Requirement 7: ถ้าผู้ใช้ยกเลิก จ่ายไม่สำเร็จ หรือ payment pending ห้ามเพิ่มเครดิต
     if (pi.status !== 'succeeded') {
       return res.json({
         success: false,
         status: pi.status,
-        message: `การชำระเงินยังไม่สำเร็จ (สถานะ: ${pi.status})`
-      });
-    }
-
-    // Requirement 6: ป้องกันการเพิ่มเครดิตซ้ำด้วย idempotent key
-    if (isTransactionProcessed(paymentIntentId)) {
-      const uid = pi.metadata?.uid || '';
-      const acc = creditAccountsStore.get(uid) || currentUserAccount;
-      return res.json({
-        success: true,
-        alreadyProcessed: true,
         creditsAdded: 0,
-        remainingCredits: acc.remainingCredits,
-        message: 'รายการชำระเงินนี้ได้รับการเพิ่มเครดิตเรียบร้อยแล้ว'
+        creditsGranted: false,
+        message: `การชำระเงินยังไม่สำเร็จ (สถานะ: ${pi.status}) จึงไม่เติมเครดิต`
       });
     }
-
-    markTransactionProcessed(paymentIntentId);
-
-    const uid = pi.metadata?.uid || '';
-    const credits = Number(pi.metadata?.credits) || 0;
-
-    if (uid && credits > 0) {
-      await creditUserInFirestore(uid, credits, `เติมเครดิต Stripe PaymentIntent (${paymentIntentId.slice(0, 10)}...)`, paymentIntentId);
+    const uid = String(pi.metadata?.uid || '');
+    let creditsGranted = false;
+    let remainingCredits: number | null = null;
+    let persistError = '';
+    try {
+      creditsGranted = await paymentAlreadyRecorded([paymentIntentId]);
+      const auth = await getAuthenticatedUser(req);
+      if (creditsGranted && auth && isRealCreditUid(auth.user.id) && auth.user.id === uid) {
+        remainingCredits = await readFirestoreCreditBalance(uid);
+        if (typeof remainingCredits === 'number') rememberUserBalance(uid, remainingCredits);
+      }
+    } catch (err: any) {
+      creditsGranted = false;
+      persistError = err?.message || MISSING_FIRESTORE_CREDENTIAL_MESSAGE;
     }
-
-    const acc = creditAccountsStore.get(uid) || currentUserAccount;
     return res.json({
-      success: true,
-      creditsAdded: credits,
-      remainingCredits: acc.remainingCredits,
-      message: `ชำระเงินสำเร็จ เติม +${credits.toLocaleString()} เครดิต เข้าสู่บัญชีของคุณเรียบร้อยแล้ว!`
+      success: creditsGranted,
+      status: pi.status,
+      creditsAdded: 0,
+      creditsGranted,
+      remainingCredits,
+      message: creditsGranted
+        ? 'การชำระเงินนี้ถูกบันทึกเครดิตแล้วจาก webhook หน้านี้ไม่ได้เติมซ้ำ'
+        : (persistError || 'รับการชำระเงินจาก Stripe แล้ว แต่ยังไม่ยืนยันว่าเครดิตถูกบันทึกลง Firestore หน้านี้ไม่เติมเครดิต')
     });
   } catch (err: any) {
     console.error('[Verify PaymentIntent Error]:', err);
-    res.status(500).json({ success: false, error: err.message || 'เกิดข้อผิดพลาดในการตรวจสอบ PaymentIntent' });
+    res.status(500).json({ success: false, creditsAdded: 0, creditsGranted: false, error: err.message || 'เกิดข้อผิดพลาดในการตรวจสอบ PaymentIntent' });
   }
 });
-app.get('/api/admin/stats', requireAdmin, (req: any, res) => {
+
+app.get('/api/auth/role', async (req, res) => {
+  const auth = await getAuthenticatedUser(req);
+  if (!auth) return res.status(401).json({ success: false, role: 'user' });
+  const isAdmin = auth.identity.via === 'firebase' && isAdminIdentity(auth.identity.firebase, readAdminEmails());
+  res.json({ success: true, role: isAdmin ? 'admin' : 'user' });
+});
+
+app.get('/api/admin/admins', requireAdmin, (_req, res) => {
+  res.json({ success: true, emails: readAdminEmails() });
+});
+
+app.post('/api/admin/admins', requireAdmin, (req, res) => {
+  try {
+    const emails = addAdminEmail(String(req.body?.email || ''));
+    res.json({ success: true, emails });
+  } catch (err: any) {
+    res.status(err?.status || 400).json({ success: false, message: err?.message || 'เพิ่มผู้ดูแลไม่สำเร็จ' });
+  }
+});
+
+app.get('/api/admin/stats', requireAdmin, async (req: any, res) => {
   const allJobs = Array.from(jobsStore.values());
   let creditsSpentTotal = 0;
   for (const acc of creditAccountsStore.values()) {
@@ -5490,8 +5614,12 @@ app.get('/api/admin/stats', requireAdmin, (req: any, res) => {
 
   const allAccounts = Array.from(creditAccountsStore.values());
 
+  let totalAdminShareCredits: number | null = null;
+  try { totalAdminShareCredits = await readPlatformAdminShare(); } catch { totalAdminShareCredits = null; }
+
   const stats = {
     totalUsers: usersStore.size,
+    totalAdminShareCredits,
     totalGenerations: allJobs.length,
     totalImagesGenerated: allJobs.filter(j => j.type === 'image').length,
     totalVideosGenerated: allJobs.filter(j => j.type === 'video').length,
@@ -5538,26 +5666,21 @@ app.get('/api/admin/stats', requireAdmin, (req: any, res) => {
   res.json({ success: true, stats });
 });
 
-app.post('/api/admin/grant-credits', requireAdmin, (req: any, res) => {
-  const { userId, amount } = req.body;
-  const num = Number(amount) || 50;
-  const targetId = userId || 'user_sala_001';
-  let targetAccount = creditAccountsStore.get(targetId);
-  if (!targetAccount) {
-    return res.status(404).json({ success: false, message: 'ไม่พบบัญชีผู้ใช้ที่ต้องการเพิ่มเครดิต' });
+app.post('/api/admin/grant-credits', requireAdmin, async (req: any, res) => {
+  const { userId, amount } = req.body || {};
+  const num = Math.trunc(Number(amount));
+  try {
+    const next = await adjustFirestoreCredits(String(userId || ''), num, 'แอดมินมอบเครดิต');
+    rememberUserBalance(String(userId), next, {
+      id: `tx_admin_${Date.now()}`,
+      amount: num,
+      description: `แอดมินมอบเครดิตพิเศษ (+${num} เครดิต)`,
+      type: 'bonus'
+    });
+    res.json({ success: true, remainingCredits: next, message: `บันทึก ${num} เครดิตใน Firestore users/${userId} แล้ว คงเหลือ ${next}` });
+  } catch (err: any) {
+    res.status(err?.status || 503).json({ success: false, message: err?.message || MISSING_FIRESTORE_CREDENTIAL_MESSAGE });
   }
-
-  targetAccount.remainingCredits += num;
-  targetAccount.transactions.unshift({
-    id: `tx_admin_${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    amount: num,
-    type: 'bonus',
-    description: `แอดมินมอบเครดิตพิเศษ (+${num} เครดิต)`,
-    balanceAfter: targetAccount.remainingCredits
-  });
-
-  res.json({ success: true, remainingCredits: targetAccount.remainingCredits, message: `เพิ่ม ${num} เครดิตเรียบร้อยแล้ว` });
 });
 
 app.post('/api/admin/reset-limits', requireAdmin, (req: any, res) => {
@@ -5619,28 +5742,19 @@ app.post('/api/auth/register', (req, res) => {
 
   usersStore.set(newUserId, newUser);
 
-  // Initialize Credit Account for the new user (100 free credits)
+  // New accounts start at 0. Credits are added only by an admin grant.
   const newAccount: CreditAccount = {
     userId: newUserId,
     userName: `${firstName || username} (สมาชิก)`,
     userRole: 'user',
-    remainingCredits: 100,
+    remainingCredits: 0,
     totalUsedCredits: 0,
     dailyUsedCredits: 0,
     dailyLimit: 100,
     monthlyUsedCredits: 0,
     monthlyLimit: 1000,
     perGenerationLimit: 30,
-    transactions: [
-      {
-        id: `tx_welcome_${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        amount: 100,
-        type: 'bonus',
-        description: 'โบนัสต้อนรับสมาชิกใหม่ฟรี 100 Sala AI Credits!',
-        balanceAfter: 100
-      }
-    ]
+    transactions: []
   };
 
   creditAccountsStore.set(newUserId, newAccount);
@@ -5700,7 +5814,20 @@ app.post('/api/auth/login', (req, res) => {
 
   let account = creditAccountsStore.get(user.id);
   if (!account) {
-    account = currentUserAccount;
+    account = {
+      userId: user.id,
+      userName: `${user.firstName || user.username} (สมาชิก)`,
+      userRole: user.role,
+      remainingCredits: 0,
+      totalUsedCredits: 0,
+      dailyUsedCredits: 0,
+      dailyLimit: user.role === 'admin' ? 10000 : 250,
+      monthlyUsedCredits: 0,
+      monthlyLimit: user.role === 'admin' ? 50000 : 2000,
+      perGenerationLimit: user.role === 'admin' ? 500 : 50,
+      transactions: []
+    };
+    creditAccountsStore.set(user.id, account);
   }
 
   res.json({
@@ -5890,7 +6017,8 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 
   usersStore.set(newUserId, newUser);
 
-  const creds = Number(initialCredits) || 100;
+  const parsedCredits = Number(initialCredits);
+  const creds = Number.isFinite(parsedCredits) && parsedCredits > 0 ? Math.floor(parsedCredits) : 0;
   const newAccount: CreditAccount = {
     userId: newUserId,
     userName: `${firstName || username} (ผู้ใช้ใหม่โดย Admin)`,
@@ -5902,7 +6030,7 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
     monthlyUsedCredits: 0,
     monthlyLimit: 2000,
     perGenerationLimit: 50,
-    transactions: [
+    transactions: creds > 0 ? [
       {
         id: `tx_admin_created_${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -5911,7 +6039,7 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
         description: `แอดมินสร้างบัญชีพร้อมมอบเครดิตเริ่มต้น ${creds} เครดิต`,
         balanceAfter: creds
       }
-    ]
+    ] : []
   };
 
   creditAccountsStore.set(newUserId, newAccount);
@@ -5920,78 +6048,27 @@ app.post('/api/admin/users', requireAdmin, (req, res) => {
 });
 
 // Adjust User Credits (Add or Deduct with Reason)
-app.post('/api/admin/adjust-credits', requireAdmin, (req, res) => {
-  const { userId, amount, reason } = req.body;
-  const num = Number(amount);
-
-  if (!userId || isNaN(num) || num === 0) {
-    return res.status(400).json({ success: false, message: 'กรุณาระบุผู้ใช้และจำนวนเครดิตที่ถูกต้อง' });
+app.post('/api/admin/adjust-credits', requireAdmin, async (req, res) => {
+  const { userId, amount, reason } = req.body || {};
+  const num = Math.trunc(Number(amount));
+  try {
+    const next = await adjustFirestoreCredits(String(userId || ''), num, String(reason || 'การจัดการระบบ'));
+    rememberUserBalance(String(userId), next, {
+      id: `tx_adjust_${Date.now()}`,
+      amount: num,
+      description: `แอดมินปรับเครดิต (${num > 0 ? `+${num}` : num}): ${reason || 'การจัดการระบบ'}`,
+      type: num > 0 ? 'topup' : 'usage'
+    });
+    res.json({
+      success: true,
+      remainingCredits: next,
+      message: `บันทึกยอดใน Firestore users/${userId} แล้ว (${num > 0 ? `+${num}` : num} เครดิต) คงเหลือ ${next}`
+    });
+  } catch (err: any) {
+    res.status(err?.status || 503).json({ success: false, message: err?.message || MISSING_FIRESTORE_CREDENTIAL_MESSAGE });
   }
-
-  let account = creditAccountsStore.get(userId);
-  if (!account && userId === 'user_sala_001') {
-    account = currentUserAccount;
-  }
-
-  if (!account) {
-    account = {
-      userId,
-      userName: `ผู้ใช้ (${userId.slice(0, 8)})`,
-      userRole: 'user',
-      remainingCredits: 500,
-      totalUsedCredits: 0,
-      dailyUsedCredits: 0,
-      dailyLimit: 250,
-      monthlyUsedCredits: 0,
-      monthlyLimit: 2000,
-      perGenerationLimit: 50,
-      transactions: []
-    };
-    creditAccountsStore.set(userId, account);
-  }
-
-  account.remainingCredits += num;
-  if (account.remainingCredits < 0) account.remainingCredits = 0;
-
-  const txType = num > 0 ? 'topup' : 'usage';
-  account.transactions.unshift({
-    id: `tx_adjust_${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    amount: num,
-    type: txType,
-    description: `แอดมินปรับเครดิต (${num > 0 ? `+${num}` : num}): ${reason || 'การจัดการระบบ'}`,
-    balanceAfter: account.remainingCredits
-  });
-
-  // Sync to Firestore users/{userId} doc server-side
-  if (!isServerQuotaExhausted()) {
-    try {
-      const db = getServerFirestore();
-      if (db && userId) {
-        const userRef = docServer(db, 'users', userId);
-        setDocServer(userRef, {
-          credits: account.remainingCredits,
-          remainingCredits: account.remainingCredits,
-          updatedAt: new Date().toISOString(),
-          lastTopupAt: new Date().toISOString(),
-          lastTopupAmount: num
-        }, { merge: true }).catch((err: any) => {
-          handleServerFirestoreError(err, 'Admin adjust-credits async sync');
-        });
-      }
-    } catch (err: any) {
-      handleServerFirestoreError(err, 'Admin adjust-credits init');
-    }
-  }
-
-  res.json({
-    success: true,
-    remainingCredits: account.remainingCredits,
-    message: `ปรับเครดิตสำเร็จ (${num > 0 ? `+${num}` : num} เครดิต) คงเหลือ ${account.remainingCredits}`
-  });
 });
 
-// Toggle User Status (Suspend/Activate)
 app.post('/api/admin/toggle-user-status', requireAdmin, (req, res) => {
   const { userId } = req.body;
   const user = usersStore.get(userId);
@@ -6065,44 +6142,12 @@ app.delete('/api/admin/redeem-codes/:id', requireAdmin, (req, res) => {
   res.status(404).json({ success: false, message: 'ไม่พบโค้ดที่ต้องการลบ' });
 });
 
-// User Redeem Code
-app.post('/api/redeem-code', (req, res) => {
-  const { code } = req.body;
-  if (!code) {
-    return res.status(400).json({ success: false, message: 'กรุณากรอกรหัส Redeem Code' });
-  }
-
-  const cleanCode = code.trim().toUpperCase();
-  const redeem = redeemCodesStore.get(cleanCode);
-
-  if (!redeem) {
-    return res.status(404).json({ success: false, message: 'ไม่พบรหัส Redeem Code นี้ หรือโค้ดไม่ถูกต้อง' });
-  }
-
-  if (redeem.isExpired) {
-    return res.status(400).json({ success: false, message: 'รหัส Redeem Code นี้หมดอายุแล้ว' });
-  }
-
-  if (redeem.usedCount >= redeem.maxUses) {
-    return res.status(400).json({ success: false, message: 'รหัส Redeem Code นี้ถูกใช้งานครบตามสิทธิ์แล้ว' });
-  }
-
-  redeem.usedCount += 1;
-  currentUserAccount.remainingCredits += redeem.creditAmount;
-  currentUserAccount.transactions.unshift({
-    id: `tx_redeem_${Date.now()}`,
-    timestamp: new Date().toISOString(),
-    amount: redeem.creditAmount,
-    type: 'bonus',
-    description: `แลกรหัสโปรโมชั่น (${cleanCode}): รับเครดิตฟรี +${redeem.creditAmount} Sala AI Credits`,
-    balanceAfter: currentUserAccount.remainingCredits
-  });
-
-  res.json({
-    success: true,
-    addedCredits: redeem.creditAmount,
-    remainingCredits: currentUserAccount.remainingCredits,
-    message: `ยินดีด้วย! คุณได้รับ +${redeem.creditAmount} Sala AI Credits เรียบร้อยแล้ว`
+// Free redeem is disabled. It used to add credits to the shared demo wallet with no auth.
+app.post('/api/redeem-code', (_req, res) => {
+  return res.status(410).json({
+    success: false,
+    addedCredits: 0,
+    message: 'ปิดการแลกโค้ดรับเครดิตฟรีแล้ว ระบบไม่เพิ่มเครดิตให้บัญชีสาธิต'
   });
 });
 
@@ -6272,42 +6317,60 @@ app.post('/api/director/continuity-check', (req, res) => {
 // ==========================================
 // 6.13 EMERGENCY STOP & BATCH CANCELLATION
 // ==========================================
-const emergencyStopHandler = (req: express.Request, res: express.Response) => {
-  const { jobIds } = req.body;
-  let cancelledCount = 0;
-  let refundedCredits = 0;
-
+const emergencyStopHandler = async (req: express.Request, res: express.Response) => {
+  const auth = await getAuthenticatedUser(req);
+  if (!auth) {
+    return res.status(401).json({ success: false, message: 'กรุณาเข้าสู่ระบบก่อนหยุดงาน' });
+  }
+  const { jobIds } = req.body || {};
+  const owned: GenerationJob[] = [];
   if (Array.isArray(jobIds)) {
     for (const id of jobIds) {
       const job = jobsStore.get(id);
-      if (job && (job.status === 'queued' || job.status === 'processing')) {
-        job.status = 'cancelled';
-        job.stage = 'ยกเลิกฉุกเฉิน (Emergency Stopped)';
-        jobsStore.set(id, job);
-        cancelledCount += 1;
-        refundedCredits += job.costCredits;
+      if (job && job.userId === auth.user.id && (job.status === 'queued' || job.status === 'processing')) {
+        owned.push(job);
       }
     }
   }
-
-  if (refundedCredits > 0) {
-    currentUserAccount.remainingCredits += refundedCredits;
-    currentUserAccount.transactions.unshift({
-      id: `tx_emergency_refund_${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      amount: refundedCredits,
-      type: 'refund',
-      description: `คืนเครดิตจากการกดหยุดฉุกเฉิน (Emergency Stop) จำนวน ${cancelledCount} งาน (+${refundedCredits} เครดิต)`,
-      balanceAfter: currentUserAccount.remainingCredits
-    });
+  const refundTotal = owned.reduce((sum, job) => sum + (Number(job.costCredits) || 0), 0);
+  let refundedCredits = 0;
+  let remainingCredits: number | null = null;
+  if (refundTotal > 0) {
+    if (!isRealCreditUid(auth.user.id)) {
+      refundedCredits = 0;
+    } else {
+      try {
+        remainingCredits = await adjustFirestoreCredits(auth.user.id, refundTotal, 'คืนเครดิตจากการหยุดฉุกเฉิน');
+        rememberUserBalance(auth.user.id, remainingCredits, {
+          id: `tx_emergency_refund_${Date.now()}`,
+          amount: refundTotal,
+          description: `คืนเครดิตจากการกดหยุดฉุกเฉิน จำนวน ${owned.length} งาน (+${refundTotal} เครดิต)`,
+          type: 'refund'
+        });
+        refundedCredits = refundTotal;
+      } catch (err: any) {
+        return res.status(err?.status || 503).json({
+          success: false,
+          cancelledCount: 0,
+          refundedCredits: 0,
+          message: err?.message || 'ยกเลิกงานไม่สำเร็จ เพราะบันทึกการคืนเครดิตลง Firestore ไม่ได้ และไม่ได้เติมเข้าบัญชีสาธิต'
+        });
+      }
+    }
   }
-
-  res.json({
+  for (const job of owned) {
+    job.status = 'cancelled';
+    job.stage = 'ยกเลิกฉุกเฉิน (Emergency Stopped)';
+    jobsStore.set(job.id, job);
+  }
+  return res.json({
     success: true,
-    cancelledCount,
+    cancelledCount: owned.length,
     refundedCredits,
-    remainingCredits: currentUserAccount.remainingCredits,
-    message: `หยุดการสร้างงานฉุกเฉินสำเร็จ ยกเลิก ${cancelledCount} คลิป และคืนเครดิต +${refundedCredits} Sala AI Credits เรียบร้อยแล้ว`
+    remainingCredits,
+    message: refundedCredits > 0
+      ? `หยุดงานสำเร็จ ยกเลิก ${owned.length} งาน และบันทึกคืนเครดิต +${refundedCredits} ลง Firestore แล้ว`
+      : `หยุดงานสำเร็จ ยกเลิก ${owned.length} งาน โดยไม่ได้เติมเครดิตเข้าบัญชีสาธิต`
   });
 };
 
@@ -6357,59 +6420,245 @@ EXTERNAL PIPELINE GUIDE:
 });
 
 // ==========================================
-// 6.15 VIDEO TO SCRIPT (INGESTION & SCENE SPLIT)
+// 6.15 VIDEO TO SCRIPT (speech transcript only)
 // ==========================================
-app.post('/api/video-to-script/analyze', async (req, res) => {
-  const { videoUrl, videoName, sampleId } = req.body;
+const VIDEO_TO_SCRIPT_MAX_BYTES = 20 * 1024 * 1024;
 
-  // Curated high-fidelity scene breakdowns
-  const sampleBreakdown = {
-    id: `v2s_${Date.now()}`,
-    originalVideoName: videoName || 'วิดีโอตัวอย่างการสำรวจ.mp4',
-    durationSeconds: 30,
-    storyOverview: 'บันทึกการสำรวจโบราณสถาน ค้นพบกลไกโบราณและทางลับใต้ดิน',
-    detectedCharacters: ['นักสำรวจ', 'ผู้บรรยาย'],
-    scenes: [
-      {
-        sceneNumber: 1,
-        startTime: '00:00',
-        endTime: '00:10',
-        action: 'นักสำรวจถือคบเพลิงก้าวเข้าสู่โถงวิหาร แสงไฟส่องกระทบผนังหินแกะสลัก',
-        dialogue: 'นี่มัน... จารึกโบราณจริงด้วย',
-        speaker: 'นักสำรวจ',
-        location: 'โถงวิหารโบราณ',
-        emotion: 'ตื่นเต้นและทึ่ง',
-        camera: 'Tracking shot ด้านข้างกึ่งกลางเฟรม',
-        audio: 'เสียงคบเพลิงลุกไหม้เบาๆ, ดนตรีแอมเบียนต์ลึกลับ'
-      },
-      {
-        sceneNumber: 2,
-        startTime: '00:10',
-        endTime: '00:20',
-        action: 'นักสำรวจยกอุปกรณ์สำรวจขึ้นส่อง จู่ๆ กลไกหินโบราณเริ่มเลื่อนและเปล่งแสงเรืองรอง',
-        dialogue: 'รหัสกลไกเริ่มทำงานแล้ว!',
-        speaker: 'นักสำรวจ',
-        location: 'แท่นจารึกใจกลางวิหาร',
-        emotion: 'ระมัดระวัง ตื่นตระหนก',
-        camera: 'Dolly In ซูมเข้าใบหน้านักสำรวจแล้วแพนลงพื้นหิน',
-        audio: 'เสียงหินโบราณเสียดสีกัน, เสียงความถี่ต่ำเรืองแสง'
-      },
-      {
-        sceneNumber: 3,
-        startTime: '00:20',
-        endTime: '00:30',
-        action: 'พื้นศิลาเปิดออกเป็นบันไดวนสู่ห้องลับใต้ดิน นักสำรวจตัดสินใจก้าวขาลงไปค้นหาความจริง',
-        dialogue: 'ไม่ว่าอะไรจะอยู่ข้างล่าง เราต้องไปต่อ',
-        speaker: 'นักสำรวจ',
-        location: 'ปากทางเข้าบันไดลับใต้ดิน',
-        emotion: 'มุ่งมั่นเด็ดเดี่ยว',
-        camera: 'มุมมองด้านหลัง (Over-the-shoulder) ก้มมองลงสู่บันไดลึก',
-        audio: 'เสียงลมพัดจากใต้ดิน, ดนตรีเร่งจังหวะส่งต่อสู่บทถัดไป'
+function readBodyLimited(req: express.Request, maxBytes: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const fail = (error: Error) => {
+      req.removeListener('data', onData);
+      req.removeListener('end', onEnd);
+      req.removeListener('error', onError);
+      reject(error);
+    };
+    const onData = (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        const error: any = new Error('ไฟล์วิดีโอใหญ่เกิน 20MB');
+        error.code = 'TOO_BIG';
+        req.destroy();
+        fail(error);
+        return;
       }
-    ]
-  };
+      chunks.push(chunk);
+    };
+    const onEnd = () => resolve(Buffer.concat(chunks));
+    const onError = (error: Error) => fail(error);
+    req.on('data', onData);
+    req.on('end', onEnd);
+    req.on('error', onError);
+  });
+}
 
-  res.json({ success: true, result: sampleBreakdown });
+function extractMultipartFile(body: Buffer, contentType: string): { filename: string; mime: string; data: Buffer } | null {
+  const match = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(contentType || '');
+  if (!match) return null;
+  const boundary = Buffer.from(`--${(match[1] || match[2]).trim()}`);
+  let cursor = body.indexOf(boundary);
+  while (cursor !== -1) {
+    let partStart = cursor + boundary.length;
+    const marker = body.subarray(partStart, partStart + 2).toString('utf8');
+    if (marker === '--') break;
+    if (marker === '\r\n') partStart += 2;
+    const headerEnd = body.indexOf(Buffer.from('\r\n\r\n'), partStart);
+    if (headerEnd < 0) break;
+    const next = body.indexOf(boundary, headerEnd + 4);
+    if (next < 0) break;
+    const headers = body.subarray(partStart, headerEnd).toString('utf8');
+    if (/filename=/i.test(headers)) {
+      const nameMatch = /filename="([^"]*)"/i.exec(headers) || /filename=([^;\r\n]+)/i.exec(headers);
+      const mimeMatch = /Content-Type:\s*([^\r\n]+)/i.exec(headers);
+      let dataEnd = next;
+      if (body.subarray(dataEnd - 2, dataEnd).toString('utf8') === '\r\n') dataEnd -= 2;
+      return {
+        filename: (nameMatch?.[1] || 'video').trim() || 'video',
+        mime: (mimeMatch?.[1] || 'application/octet-stream').trim(),
+        data: body.subarray(headerEnd + 4, dataEnd)
+      };
+    }
+    cursor = next;
+  }
+  return null;
+}
+
+function runFfmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile('/usr/bin/ffmpeg', args, { timeout: 120000, maxBuffer: 2 * 1024 * 1024 }, (error, _stdout, stderr) => {
+      if (!error) {
+        resolve();
+        return;
+      }
+      const detail = String(stderr || error.message || '');
+      const noAudio = /does not contain any stream|Output file is empty|matches no streams/i.test(detail);
+      const wrapped: any = new Error(noAudio ? 'วิดีโอนี้ไม่มีแทร็กเสียง' : 'ดึงเสียงจากวิดีโอไม่สำเร็จ');
+      wrapped.ffmpeg = detail.slice(0, 500);
+      reject(wrapped);
+    });
+  });
+}
+
+function speechTextFromPart(transcription: any): string {
+  if (!transcription || typeof transcription !== 'object') return '';
+  if (typeof transcription.text === 'string' && transcription.text.trim()) return transcription.text.trim();
+  if (!Array.isArray(transcription.words)) return '';
+  return transcription.words.map((word: any) => String(word?.word || '').trim()).filter(Boolean).join(' ').trim();
+}
+
+function speakerScriptLabel(raw: string): string {
+  const match = /(?:spk[:_\s]*)(\d+)/i.exec(raw);
+  if (!match) return raw;
+  return `ผู้พูด ${Number(match[1]) + 1}`;
+}
+
+/** Gemini 3.5 Transcribe puts the spoken words on audioTranscription, not response.text. */
+function speechTranscriptFromResponse(response: any): string {
+  const lines: string[] = [];
+  const candidates = Array.isArray(response?.candidates) ? response.candidates : [];
+  for (const candidate of candidates) {
+    const parts = candidate?.content?.parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      const spoken = speechTextFromPart(part?.audioTranscription);
+      if (spoken) {
+        const speaker = typeof part.audioTranscription?.speakerLabel === 'string'
+          ? part.audioTranscription.speakerLabel.trim()
+          : '';
+        lines.push(speaker ? `${speakerScriptLabel(speaker)}: ${spoken}` : spoken);
+        continue;
+      }
+      if (typeof part?.text === 'string' && part.text.trim() && !part.thought) {
+        lines.push(part.text.trim());
+      }
+    }
+  }
+  return lines.join('\n').trim();
+}
+
+async function uploadWavForTranscription(ai: any, wavPath: string): Promise<{ name: string; uri: string; mimeType: string }> {
+  let current = await ai.files.upload({
+    file: wavPath,
+    config: { mimeType: 'audio/wav' }
+  });
+  const name = String(current?.name || '');
+  if (!name) {
+    throw new Error('ส่งเสียงไปถอดบทไม่สำเร็จ');
+  }
+  for (let attempt = 0; attempt < 30 && String(current?.state || '') === 'PROCESSING'; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    current = await ai.files.get({ name });
+  }
+  const uri = String(current?.uri || '');
+  if (!uri || String(current?.state || '') === 'FAILED') {
+    throw new Error('ส่งเสียงไปถอดบทไม่สำเร็จ');
+  }
+  return {
+    name,
+    uri,
+    mimeType: String(current?.mimeType || 'audio/wav')
+  };
+}
+
+app.post('/api/video-to-script/analyze', async (req, res) => {
+  const contentType = String(req.headers['content-type'] || '');
+  if (!contentType.toLowerCase().includes('multipart/form-data')) {
+    return res.status(400).json({ success: false, message: 'ต้องอัปโหลดไฟล์วิดีโอ' });
+  }
+
+  let body: Buffer;
+  try {
+    body = await readBodyLimited(req, VIDEO_TO_SCRIPT_MAX_BYTES + 256 * 1024);
+  } catch (err: any) {
+    if (err?.code === 'TOO_BIG' || res.headersSent) {
+      if (!res.headersSent) {
+        return res.status(400).json({ success: false, message: 'ไฟล์วิดีโอใหญ่เกิน 20MB' });
+      }
+      return;
+    }
+    return res.status(400).json({ success: false, message: 'อ่านไฟล์วิดีโอไม่สำเร็จ' });
+  }
+
+  const file = extractMultipartFile(body, contentType);
+  if (!file || file.data.length === 0) {
+    return res.status(400).json({ success: false, message: 'ต้องอัปโหลดไฟล์วิดีโอ' });
+  }
+  if (file.data.length > VIDEO_TO_SCRIPT_MAX_BYTES) {
+    return res.status(400).json({ success: false, message: 'ไฟล์วิดีโอใหญ่เกิน 20MB' });
+  }
+
+  // Server key only. A key stored in the app must not be used for transcription.
+  const ai = getGeminiClient();
+  if (!ai) {
+    return res.status(400).json({
+      success: false,
+      code: 'GEMINI_KEY_MISSING',
+      message: 'ยังไม่ได้ตั้งค่า Gemini API Key'
+    });
+  }
+
+  const stamp = crypto.randomBytes(8).toString('hex');
+  const inputPath = path.join('/tmp', `sala-v2s-${stamp}.bin`);
+  const wavPath = path.join('/tmp', `sala-v2s-${stamp}.wav`);
+  let uploadedName = '';
+  try {
+    await fs.promises.writeFile(inputPath, file.data);
+    await runFfmpeg(['-y', '-i', inputPath, '-vn', '-ac', '1', '-ar', '16000', '-f', 'wav', wavPath]);
+    const wavStat = await fs.promises.stat(wavPath).catch(() => null);
+    if (!wavStat || wavStat.size < 44) {
+      return res.status(400).json({ success: false, message: 'ดึงเสียงจากวิดีโอไม่สำเร็จ' });
+    }
+
+    const uploaded = await uploadWavForTranscription(ai, wavPath);
+    uploadedName = uploaded.name;
+    let billed: { response: any } | null = null;
+    try {
+      billed = await callBillableGemini(req, res, ai, {
+        model: 'gemini-3.5-transcribe',
+        contents: [{
+          role: 'user',
+          parts: [{ fileData: { fileUri: uploaded.uri, mimeType: uploaded.mimeType } }]
+        }],
+        config: {
+          audioTranscriptionConfig: {
+            diarization: true,
+            mode: 'VERBATIM'
+          }
+        }
+      }, 'video to script');
+    } catch (geminiErr: any) {
+      if (res.headersSent) return;
+      return res.status(400).json({
+        success: false,
+        code: 'GEMINI_API_ERROR',
+        message: formatGenAIError(geminiErr)
+      });
+    }
+    if (!billed) return;
+
+    const transcript = speechTranscriptFromResponse(billed.response);
+    if (!transcript) {
+      return res.status(502).json({ success: false, message: 'ไม่พบเสียงพูดในวิดีโอนี้' });
+    }
+    return res.json({ success: true, transcript });
+  } catch (err: any) {
+    if (res.headersSent) return;
+    console.error('video-to-script analyze failed:', err?.ffmpeg || err?.message || err);
+    const known = err?.message === 'วิดีโอนี้ไม่มีแทร็กเสียง'
+      || err?.message === 'ดึงเสียงจากวิดีโอไม่สำเร็จ'
+      || err?.message === 'ส่งเสียงไปถอดบทไม่สำเร็จ';
+    return res.status(400).json({
+      success: false,
+      message: known ? err.message : 'ถอดเสียงจากวิดีโอไม่สำเร็จ'
+    });
+  } finally {
+    if (uploadedName) {
+      await ai.files.delete({ name: uploadedName }).catch(() => {});
+    }
+    await fs.promises.unlink(inputPath).catch(() => {});
+    await fs.promises.unlink(wavPath).catch(() => {});
+  }
 });
 
 // ==========================================
@@ -6454,65 +6703,12 @@ app.post('/api/script/replace-characters', (req, res) => {
 // 6.17 AI SOCIAL POST ASSISTANT
 // ==========================================
 app.post('/api/social/generate-posts', async (req, res) => {
-  const { scriptText, characterName, tone } = req.body;
-
-  const toneLabel = tone || 'ไวรัล ชวนติดตาม';
-  const char = characterName ? ` ${characterName}` : '';
-
-  const recommendations = [
-    {
-      platform: 'tiktok',
-      tone: toneLabel,
-      titles: [
-        `ความลับที่ซ่อนไว้ 700 ปี ถูกเปิดเผยแล้ว! 😱🔥`,
-        `อย่ากะพริบตา! วินาทีที่${char} ค้นพบห้องลับใต้ดิน 🏛️✨`,
-        `ทำหนังสั้น AI ต่อเนื่อง 3 คลิปด้วย Sala AI สวยขนาดนี้เลยหรอ?! 🎬`
-      ],
-      captions: [
-        `เมื่อภารกิจโบราณคดีพามาพบกับกลไกที่ไม่ควรมีอยู่บนโลก... ดูให้จบแล้วคุณจะขนลุก! สร้างด้วย Sala AI Multi-Clip Continuity Director ล็อคหน้าและแสงเป๊ะทุกคลิป #หนังไทย #หนังสั้นAI #ไซไฟไทย #SalaAI #ภาพยนตร์AI #เบื้องหลัง`,
-        `ความต่อเนื่องระดับภาพยนตร์ 35mm ไม่มั่วหน้า ไม่เปลี่ยนชุด ลองสร้างเองได้แล้ววันนี้! #AIวิดีโอ #เทคโนโลยี #TikTokการละคร #สร้างคลิป`
-      ],
-      hashtags: ['#SalaAI', '#หนังไทย', '#หนังสั้นAI', '#ไซไฟไทย', '#TikTokการละคร', '#VeoVideo', '#AIครีเอเตอร์']
-    },
-    {
-      platform: 'reels',
-      tone: toneLabel,
-      titles: [
-        `Cinematic Thai Sci-Fi: The Forgotten Sanctuary 🎬`,
-        `เมื่อตำนานโบราณผสานกับพลัง AI แห่งอนาคต ✨`
-      ],
-      captions: [
-        `ก้าวแรกสู่ความลึกลับของวิหารโบราณ แสงคบเพลิง Chiaroscuro กับความต่อเนื่อง 10 มิติที่ไม่สะดุดแม้แต่วินาทีเดียว กำกับและสร้างด้วยศาลาเอไอ (Sala AI) 🇹🇭✨`,
-        `ทดสอบพลัง Master Continuity Lock: หน้าเดิม ชุดเดิม แสงเดิม ตลอดทั้งเรื่อง! กดเซฟไว้ทำตามได้เลย`
-      ],
-      hashtags: ['#SalaAI', '#CinematicAI', '#ThaiHeritage', '#Filmmaking', '#GenerativeAI', '#ReelsVideo']
-    },
-    {
-      platform: 'youtube',
-      tone: toneLabel,
-      titles: [
-        `[หนังสั้น AI 4K] ความลับใต้ดิน - The Lost Inscription (ตอนที่ 1)`,
-        `สร้างหนังสั้นด้วย AI หลายคลิปต่อกันแบบมืออาชีพ ทำอย่างไร? (เจาะลึก Sala AI)`
-      ],
-      captions: [
-        `ภาพยนตร์สั้นความยาว 30 วินาที สร้างด้วยเทคโนโลยี Multi-Clip Continuity Director บนศาลาเอไอ (Sala AI) เชื่อมต่อโมเดลสร้างภาพและวิดีโอระดับโลก ล็อคความต่อเนื่องตัวละคร บทพูด และเสียงประกอบสมบูรณ์แบบ\n\nชมเบื้องหลังและวิธีสร้างได้ในวิดีโอนี้!`
-      ],
-      hashtags: ['#SalaAI', '#AIFilm', '#YouTubeShorts', '#Veo', '#หนังสั้น']
-    },
-    {
-      platform: 'facebook',
-      tone: toneLabel,
-      titles: [
-        `จากบทละครตัวหนังสือ สู่ภาพยนตร์สั้น AI หลายคลิปต่อเนื่องในไม่กี่นาที`,
-        `เบื้องหลังการสร้างหนังไทยไซไฟด้วยเครื่องมือผู้กำกับ AI สัญชาติไทย`
-      ],
-      captions: [
-        `วันนี้ขอพาทุกคนมาชมผลงานภาพยนตร์สั้นที่ทดลองสร้างผ่านระบบ "Multi-Clip Continuity Director" ของศาลาเอไอ (Sala AI)\n\nปัญหาใหญ่ของคนทำวิดีโอ AI คือ หน้าตัวละครเพี้ยน แสงเปลี่ยน ชุดไม่ตรง แต่ระบบนี้มี Master Continuity Lock ล็อคทั้งหน้า พร็อพ และโมเมนตัมของมุมกล้องจากคลิปหนึ่งไปอีกคลิปหนึ่งได้อย่างราบรื่นมากครับ ใครกำลังทำคอนเทนต์วิดีโอต้องลอง!`,
-      ],
-      hashtags: ['#ศาลาเอไอ', '#SalaAI', '#ปัญญาประดิษฐ์', '#สร้างวิดีโอ', '#ภาพยนตร์สั้น']
-    }
-  ];
-
+  const { scriptText, characterName, tone } = req.body || {};
+  const story = typeof scriptText === 'string' ? scriptText.trim() : '';
+  if (!story) {
+    return res.status(400).json({ success: false, message: 'ยังไม่มีเนื้อเรื่องปัจจุบัน', recommendations: [] });
+  }
+  const recommendations = buildSocialPostsFromStory(story, characterName, tone);
   res.json({ success: true, recommendations });
 });
 
@@ -6550,9 +6746,12 @@ app.post('/api/project-templates', (req, res) => {
 });
 
 // Create Project Version Snapshot
-app.post('/api/projects/:id/version', (req, res) => {
+app.post('/api/projects/:id/version', requireAuth, (req: any, res) => {
   const { note } = req.body;
   const project = projectsStore.find(p => p.id === req.params.id);
+  if (project && project.userId !== req.user.id) {
+    return res.status(403).json({ success: false, message: 'คุณไม่มีสิทธิ์เข้าถึงโปรเจ็กต์ของผู้ใช้อื่น' });
+  }
 
   if (!project) {
     return res.status(404).json({ success: false, message: 'ไม่พบโปรเจ็กต์' });
@@ -6577,9 +6776,12 @@ app.post('/api/projects/:id/version', (req, res) => {
 });
 
 // Restore Project Version Snapshot
-app.post('/api/projects/:id/restore-version', (req, res) => {
+app.post('/api/projects/:id/restore-version', requireAuth, (req: any, res) => {
   const { versionId } = req.body;
   const project = projectsStore.find(p => p.id === req.params.id);
+  if (project && project.userId !== req.user.id) {
+    return res.status(403).json({ success: false, message: 'คุณไม่มีสิทธิ์เข้าถึงโปรเจ็กต์ของผู้ใช้อื่น' });
+  }
 
   if (!project || !project.versions) {
     return res.status(404).json({ success: false, message: 'ไม่พบโปรเจ็กต์หรือประวัติเวอร์ชัน' });
@@ -6598,6 +6800,42 @@ app.post('/api/projects/:id/restore-version', (req, res) => {
   project.updatedAt = new Date().toISOString();
 
   res.json({ success: true, project, message: `ย้อนกลับโปรเจ็กต์สู่เวอร์ชันที่ ${targetVer.versionNumber} เรียบร้อยแล้ว` });
+});
+
+registerTransferRoutes(app, getGeminiClient);
+
+
+app.post('/api/ai/chat', requireAuth, async (req: any, res) => {
+  const history = Array.isArray(req.body?.history) ? req.body.history : [];
+  const turns = history
+    .filter((turn: any) => turn && (turn.role === 'user' || turn.role === 'assistant') && typeof turn.text === 'string' && turn.text.trim())
+    .slice(-20)
+    .map((turn: any) => ({
+      role: turn.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: String(turn.text).slice(0, 4000) }]
+    }));
+  if (!turns.length || turns[turns.length - 1].role !== 'user') {
+    return res.status(400).json({ success: false, message: 'พิมพ์ข้อความก่อน' });
+  }
+  const ai = getGeminiClient();
+  if (!ai) {
+    return res.status(503).json({ success: false, message: 'เซิร์ฟเวอร์ยังไม่ได้ตั้งค่า Gemini' });
+  }
+  try {
+    const billed = await callBillableGemini(req, res, ai, {
+      model: 'gemini-3.1-flash-lite',
+      contents: turns,
+      config: {
+        systemInstruction: 'คุณคือ Sala AI ในห้องแชท ตอบเป็นภาษาไทยเหมือนคุยกับคน ถ้าผู้ใช้ขอขอบทหรือบทละคร ให้เขียนบทละครกลับไปเลย ห้ามตอบเป็นแบบฟอร์มว่าง'
+      }
+    }, 'ai chat');
+    if (!billed) return;
+    const text = billed.response?.text ? String(billed.response.text).trim() : '';
+    if (!text) return res.status(502).json({ success: false, message: 'เอไอยังไม่ตอบ' });
+    return res.json({ success: true, text });
+  } catch (err: any) {
+    return res.status(502).json({ success: false, message: formatGenAIError(err) });
+  }
 });
 
 // Explicit 404 for unhandled API routes so they never fall through to Vite HTML

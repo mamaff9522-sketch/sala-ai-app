@@ -166,7 +166,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <p className="text-xs text-slate-400">ศาลาเอไอ (Sala AI Identity & Security)</p>
             </div>
           </div>
-          <button
+          <button aria-label="ปิด" title="ปิด"
             onClick={onClose}
             className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800/60 transition-all"
           >
@@ -188,7 +188,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       {currentUser.firstName} {currentUser.lastName}
                     </span>
                     <span
-                      className={`text-[10px] px-2 py-0.5 rounded-full font-mono uppercase font-bold ${
+                      className={`text-xs px-2 py-0.5 rounded-full font-mono uppercase font-bold ${
                         currentUser.role === 'admin'
                           ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                           : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
@@ -267,7 +267,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-300">ชื่อผู้ใช้ หรือ อีเมล</label>
               <div className="relative">
-                <User className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="text"
                   required
@@ -285,13 +285,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setTab('forgot_password')}
-                  className="text-[11px] text-indigo-400 hover:underline"
+                  className="text-xs text-indigo-400 hover:underline"
                 >
                   ลืมรหัสผ่าน?
                 </button>
               </div>
               <div className="relative">
-                <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="password"
                   required
@@ -314,7 +314,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
             {/* Quick Demo Access Buttons */}
             <div className="pt-3 border-t border-slate-800 space-y-2">
-              <span className="text-[11px] text-slate-400 block text-center">ทางลัดบัญชีทดสอบระบบ:</span>
+              <span className="text-xs text-slate-400 block text-center">ทางลัดบัญชีทดสอบระบบ:</span>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -322,7 +322,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     setUsernameOrEmail('admin');
                     setPassword('admin1234');
                   }}
-                  className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[11px] rounded-lg font-medium transition-all"
+                  className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs rounded-lg font-medium transition-all"
                 >
                   แอดมิน (admin)
                 </button>
@@ -332,7 +332,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     setUsernameOrEmail('creator');
                     setPassword('user1234');
                   }}
-                  className="px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-[11px] rounded-lg font-medium transition-all"
+                  className="px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-xs rounded-lg font-medium transition-all"
                 >
                   ครีเอเตอร์ (creator)
                 </button>
@@ -371,7 +371,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-300">ชื่อผู้ใช้ (Username)</label>
               <div className="relative">
-                <User className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="text"
                   required
@@ -386,7 +386,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-300">อีเมล</label>
               <div className="relative">
-                <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="email"
                   required
@@ -401,7 +401,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-300">รหัสผ่าน (เข้ารหัส Salted PBKDF2 บนเซิร์ฟเวอร์)</label>
               <div className="relative">
-                <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="password"
                   required
@@ -413,9 +413,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
             </div>
 
-            <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-[11px] text-indigo-300 flex items-center gap-2">
+            <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-xs text-indigo-300 flex items-center gap-2">
               <Sparkles className="w-4 h-4 shrink-0 text-indigo-400" />
-              <span>รับโบนัสเริ่มต้นฟรีทันที 100 Sala AI Credits เมื่อสมัครสมาชิก</span>
+              <span>บัญชีใหม่เริ่มที่ 0 เครดิต แอดมินเป็นคนเติมให้เท่านั้น</span>
             </div>
 
             <button
@@ -423,7 +423,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               disabled={isLoading}
               className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-indigo-600/20 active:scale-[0.98] disabled:opacity-50"
             >
-              {isLoading ? 'กำลังสร้างบัญชี...' : 'สมัครสมาชิกและรับ 100 เครดิต'}
+              {isLoading ? 'กำลังสร้างบัญชี...' : 'สมัครสมาชิก'}
             </button>
           </form>
         )}
@@ -479,7 +479,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
             <form onSubmit={handleForgotPassword} className="space-y-3">
               <div className="relative">
-                <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-3" />
+                <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
                 <input
                   type="email"
                   required

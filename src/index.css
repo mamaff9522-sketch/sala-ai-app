@@ -1,12 +1,68 @@
 @import "tailwindcss";
 
 @layer base {
+  html {
+    font-size: 16px;
+  }
   body {
+    font-size: 16px;
     font-family: 'Plus Jakarta Sans', 'Prompt', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background-color: #05070f;
+    background-color: #050816;
     color: #e2e8f0;
     overflow-x: hidden;
   }
+}
+
+/* Shared page sky: deep navy + vertical gradient + three soft glows. No texture, no stars. */
+.app-sky {
+  /* Android WebView renders background-attachment: fixed as black when an
+     opaque child layer (overflow-hidden / backdrop-blur) is stacked on top.
+     Paint the sky once on a fixed pseudo layer behind the content instead. */
+  position: relative;
+  isolation: isolate;
+  background-color: transparent;
+}
+.app-sky::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: #050816;
+  background-image:
+    radial-gradient(ellipse 72% 58% at 0% 0%, rgba(0, 216, 255, 0.16), transparent 60%),
+    radial-gradient(ellipse 68% 52% at 100% 0%, rgba(123, 44, 255, 0.18), transparent 62%),
+    radial-gradient(ellipse 78% 42% at 50% 100%, rgba(255, 53, 212, 0.07), transparent 64%),
+    linear-gradient(180deg, #081428 0%, #050816 50%, #07061c 100%);
+  background-repeat: no-repeat;
+}
+/* A nested page inside the app shell must not paint a second sky over the first. */
+.app-sky .app-sky::before { content: none; }
+
+/* One ring for every home menu card: thin cyan-to-purple rim + soft outer glow. */
+.home-menu-neon {
+  box-shadow:
+    0 0 12px rgba(0, 216, 255, 0.38),
+    0 0 22px rgba(123, 44, 255, 0.32),
+    0 0 34px rgba(255, 53, 212, 0.16);
+}
+.home-menu-neon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: linear-gradient(135deg, #00D8FF 0%, #4EDBFF 34%, #7B2CFF 68%, #FF35D4 100%);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 2;
 }
 
 /* Night mode glowing effects & animations */

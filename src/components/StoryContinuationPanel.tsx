@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   BookOpen,
   FastForward,
@@ -33,7 +33,9 @@ import {
   analyzeStoryLocationSegments,
   getStoryFlowState,
   saveStoryFlowState,
-  LocationSceneSegment
+  LocationSceneSegment,
+  storyLockChoices,
+  type StoryLockChoice
 } from '../services/salaStoryFlowEngine';
 
 const SAMPLE_ORIGINAL_STORIES = [
@@ -114,6 +116,7 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
   const [currentEpisode, setCurrentEpisode] = useState<number>(1);
   const [lastGeneratedScene, setLastGeneratedScene] = useState<StoryContinuedScene | null>(null);
   const [statusNotification, setStatusNotification] = useState<string | null>(null);
+  const [lockChoices, setLockChoices] = useState<StoryLockChoice[]>(() => storyLockChoices(''));
   const [isExpanded, setIsExpanded] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<'original' | 'scenes'>('original');
 
@@ -194,6 +197,10 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
       prevStoryRef.current = originalStory;
     }
   }, [originalStory, setScriptText, setClips]);
+
+  useEffect(() => {
+    setLockChoices(storyLockChoices(originalStory));
+  }, [originalStory]);
 
   // Helper to load sample story
   const handleSelectSampleStory = (sample: typeof SAMPLE_ORIGINAL_STORIES[0]) => {
@@ -316,7 +323,7 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
         originalStory,
         currentScriptText: (currentClips.length === 0 || episodeToGenerate === 1) ? '' : currentScriptText,
         episodeNumber: episodeToGenerate,
-        targetSceneCount: 5,
+        targetSceneCount: Math.max(storyLockChoices(originalStory).length, 1),
         existingScenes: existingScenesSummary,
         lastSceneState,
         // Library characters with face / hair / outfit / appearance for the Character Lock (no images)
@@ -375,7 +382,18 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
           ? lockTexts.join(' | ')
           : (libChar?.appearance || continuityLock.characterAppearance || '');
         // One Location Lock: the same lighting description for every clip at this location
-        const lighting = sc.locationLock?.lighting || continuityLock.lighting || '';
+        const choice = lockChoices.find(c => c.sceneNumber === sc.sceneNumber);
+        // This scene's own time and place only. A blank choice stays blank — never the previous scene.
+        const sceneLocation = choice ? choice.location : (sc.location && sc.location !== 'ไม่ระบุจากต้นฉบับ' ? sc.location : '');
+        const sceneTime = choice ? choice.timeOfDay : (sc.timeOfDay && sc.timeOfDay !== 'ไม่ระบุจากต้นฉบับ' ? sc.timeOfDay : '');
+        const lighting = sc.locationLock?.lighting || '';
+        let visualPrompt = sc.visualPrompt || '';
+        if (choice?.location && sc.location && choice.location !== sc.location) {
+          visualPrompt = visualPrompt.split(sc.location).join(choice.location);
+        }
+        if (choice?.timeOfDay && sc.timeOfDay && choice.timeOfDay !== sc.timeOfDay) {
+          visualPrompt = visualPrompt.split(sc.timeOfDay).join(choice.timeOfDay);
+        }
 
         const hasDiag = clipDialogues.length > 0;
         const isSilent = !hasDiag;
@@ -385,7 +403,7 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
         const negativePrompt = isSilent
           ? 'blurry, low resolution, duplicate characters, distorted faces, amateurish, morphing, speaking, talking, mouth moving, lips moving, opening mouth, mouthing words, voiceover, dialogue, speech, chatter, whispering'
           : 'blurry, low resolution, duplicate characters, distorted faces, amateurish, morphing';
-        const finalPrompt = sc.visualPrompt;
+        const finalPrompt = visualPrompt;
 
         return {
           clipNumber: sc.sceneNumber,
@@ -396,20 +414,20 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
           endAction: sc.endState || '',
           characterPositions: sc.characterPositions || '',
           dialogues: clipDialogues,
-          locationName: sc.location,
+          locationName: sceneLocation,
           continuityLock: {
             characterName: mainCharacter,
             characterNames: onScreen.length > 0 ? onScreen : (mainCharacter ? [mainCharacter] : []),
             characterAppearance: appearance,
-            location: sc.location,
-            timeOfDay: sc.timeOfDay,
+            location: sceneLocation,
+            timeOfDay: sceneTime,
             lighting
           },
           charactersPresent: onScreen,
           startPoses: sc.startPoses || [],
           endPoses: sc.endPoses || [],
           continuityWarnings: sc.continuityWarnings || [],
-          continuityLockSummary: [mainCharacter ? `Character: ${mainCharacter}` : '', `Location: ${sc.location}`, `Time: ${sc.timeOfDay}`, lighting ? `Lighting: ${lighting}` : ''].filter(Boolean).join(' | '),
+          continuityLockSummary: [mainCharacter ? `Character: ${mainCharacter}` : '', `Location: ${sceneLocation}`, `Time: ${sceneTime}`, lighting ? `Lighting: ${lighting}` : ''].filter(Boolean).join(' | '),
           audioDirectiveSummary,
           generatedPrompt: finalPrompt,
           negativePrompt,
@@ -457,7 +475,9 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
       // Check Location Transition (กฎข้อ 4 และข้อ 5)
       // วิเคราะห์การเปลี่ยนสถานที่: เมื่อหมดช่วงสถานที่เดิมและกำลังจะเปลี่ยนไปสถานที่ใหม่ ให้หยุดทันที
       const segments = analyzeStoryLocationSegments(originalStory);
-      if (segments.length > 1) {
+      const hasExplicitSceneHeadings = /(?:^|\n)\s*(?:#{1,6}\s*)?[*_\[【(]*\s*(?:ฉากที่|ฉาก|Scene|SCENE|scene)\s*\d+/m.test(originalStory);
+      // Header-less prose must not halt on fake ริม/ที่/ในห้อง splits. Halt only for real scene headings.
+      if (hasExplicitSceneHeadings && segments.length > 1) {
         // ตรวจสอบว่าในฉากใหม่นี้ มีการเปลี่ยนสถานที่ หรือจบช่วงสถานที่ปัจจุบันแล้วหรือไม่
         const currentLoc = generatedScenes[0]?.location || '';
         const hasLocationShift = generatedScenes.some(sc => sc.location && sc.location !== currentLoc);
@@ -614,7 +634,7 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
                   คืบหน้า {progressPercentage}%
                 </span>
               ) : (
-                <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30">
                   โหมดคุมความต่อเนื่อง
                 </span>
               )}
@@ -675,11 +695,48 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
             </div>
 
             {currentMilestone && (
-              <p className="text-[11px] text-slate-400 mt-2 truncate">
+              <p className="text-xs text-slate-400 mt-2 truncate">
                 <span className="text-indigo-400 font-medium">ฉากล่าสุด:</span> {currentMilestone}
               </p>
             )}
           </div>
+
+          {lockChoices.length > 0 && (
+            <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-3 overflow-x-auto">
+              <div className="grid grid-cols-[4.5rem_1fr_1fr] gap-2 min-w-[320px] items-center">
+                <p className="text-xs font-bold text-slate-200">ฉากที่</p>
+                <p className="text-xs font-bold text-slate-200">ล็อกเวลาจากบท</p>
+                <p className="text-xs font-bold text-slate-200">ล็อกสถานที่จากบท</p>
+                {lockChoices.map((choice, index) => (
+                  <React.Fragment key={`lock-${choice.sceneNumber}`}>
+                    <span className="text-xs font-mono text-slate-200">{choice.sceneNumber}</span>
+                    <select
+                      aria-label={`ล็อกเวลาจากบท ฉากที่ ${choice.sceneNumber}`}
+                      value={choice.timeOfDay}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setLockChoices(prev => prev.map((row, i) => i === index ? { ...row, timeOfDay: value } : row));
+                      }}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-xs text-slate-100"
+                    >
+                      <option value={choice.timeOfDay}>{choice.timeOfDay || 'ยังไม่ระบุ'}</option>
+                    </select>
+                    <select
+                      aria-label={`ล็อกสถานที่จากบท ฉากที่ ${choice.sceneNumber}`}
+                      value={choice.location}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setLockChoices(prev => prev.map((row, i) => i === index ? { ...row, location: value } : row));
+                      }}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-2 py-1.5 text-xs text-slate-100"
+                    >
+                      <option value={choice.location}>{choice.location || 'ยังไม่ระบุ'}</option>
+                    </select>
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Tab Switcher: Original Story vs Scenes Overview */}
           <div className="flex items-center justify-between border-b border-slate-800 pb-2">
@@ -735,7 +792,7 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
                   <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
                   <span>เนื้อเรื่องเต็ม (อ้างอิงจากช่องหน้าแรก):</span>
                 </span>
-                <span className="text-[11px] text-slate-400 font-mono">
+                <span className="text-xs text-slate-400 font-mono">
                   {originalStory.length.toLocaleString()} ตัวอักษร
                 </span>
               </div>
@@ -745,10 +802,10 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
                   readOnly
                   rows={5}
                   placeholder="ยังไม่มีเนื้อเรื่องเต็มในระบบ กรุณาไปที่หน้าแรก เพื่อวางบทตั้งแต่ต้นจนจบลงในช่อง 'เนื้อเรื่องเต็ม' แล้วกดบันทึก"
-                  className="w-full bg-slate-950/70 border border-slate-700/80 rounded-2xl p-3.5 text-xs text-slate-300 placeholder:text-slate-500 leading-relaxed resize-none font-sans cursor-default select-text"
+                  className="w-full bg-slate-950/70 border border-slate-700/80 rounded-2xl p-3.5 text-xs text-slate-300 placeholder:text-slate-400 leading-relaxed resize-none font-sans cursor-default select-text"
                 />
               </div>
-              <p className="text-[11px] text-slate-500 flex items-center gap-1">
+              <p className="text-xs text-slate-400 flex items-center gap-1">
                 <Info className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                 <span>ช่องสำหรับวางบทและแก้ไขเนื้อเรื่องเต็มอยู่ที่ <strong>หน้าแรก</strong> เท่านั้น เพื่อความเป็นระเบียบและเป็นศูนย์กลางข้อมูลของทั้งเรื่อง</span>
               </p>
@@ -770,13 +827,13 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
                   >
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-white">{clip.title}</span>
-                      <span className="text-[11px] text-slate-400 font-mono">
+                      <span className="text-xs text-slate-400 font-mono">
                         {clip.durationSeconds}s
                       </span>
                     </div>
                     <p className="text-slate-300 line-clamp-1">{clip.startAction}</p>
                     {clip.dialogues && clip.dialogues.length > 0 && (
-                      <p className="text-indigo-300/80 text-[11px] italic line-clamp-1">
+                      <p className="text-indigo-300/80 text-xs italic line-clamp-1">
                         บทพูด: {clip.dialogues[0].speaker}: "{clip.dialogues[0].line}"
                       </p>
                     )}
@@ -832,7 +889,7 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
                 <p className="whitespace-pre-line break-words">{errorMessage}</p>
                 {!useOfflineEngine && (
                   <p className="text-rose-300/80">
-                    ตรวจสอบ Gemini API Key แล้วลองใหม่ หรือเปิด “โหมดออฟไลน์” ด้านล่างเพื่อแบ่งฉากจากต้นฉบับโดยไม่ใช้ AI
+                    ลองใหม่อีกครั้ง หรือเปิด “โหมดออฟไลน์” ด้านล่างเพื่อแบ่งฉากจากต้นฉบับโดยไม่ใช้ AI
                   </p>
                 )}
               </div>
@@ -843,7 +900,7 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
           )}
 
           {/* Explicit offline-mode choice (never used silently) */}
-          <label className="flex items-center gap-2 text-[11px] text-slate-400 cursor-pointer select-none">
+          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={useOfflineEngine}
@@ -963,23 +1020,25 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
             )}
           </div>
 
-          {/* Rule note */}
-          <div className="flex flex-col gap-2 text-[11px] text-slate-400 pt-1 border-t border-slate-800/80">
+          {/* Rule note. Hidden from the screen only. Copy stays in this file. */}
+          {false && (
+          <div className="flex flex-col gap-2 text-xs text-slate-400 pt-1 border-t border-slate-800/80">
             <div className="flex items-center gap-2 text-teal-300 font-semibold">
               <ShieldCheck className="w-3.5 h-3.5 text-teal-400 shrink-0" />
               <span>ACTION & NARRATION LOCK: อ่านบทบนลงล่าง • [ACT_TRIGGER]...[ACTION_END] • เงียบ 100% ถ้าไม่มี Dialogue</span>
             </div>
-            <p className="text-slate-400 leading-relaxed pl-5 text-[11px]">
+            <p className="text-slate-400 leading-relaxed pl-5 text-xs">
               รักษาตำแหน่ง Action/Narration ไว้ตำแหน่งเดิมก่อนหรือหลังบทพูด เมื่อไม่มีบทพูดตัวละครจะเงียบ 100% (ไม่มีเสียงพูด/ปากขยับ) มีเฉพาะการกระทำ อารมณ์ และเสียงบรรยากาศตามบท
             </p>
             <div className="flex items-center gap-2 text-purple-300 font-semibold pt-1 border-t border-slate-800/40">
               <Scissors className="w-3.5 h-3.5 text-purple-400 shrink-0" />
               <span>DIALOGUE 20-WORD SPLIT: บทพูดยาวเกิน 20 คำ แยกไปต่อคลิปถัดไปอัตโนมัติ</span>
             </div>
-            <p className="text-slate-400 leading-relaxed pl-5 text-[11px]">
+            <p className="text-slate-400 leading-relaxed pl-5 text-xs">
               ห้ามตัดคำกลางประโยคแบบเสียความหมาย ห้ามแก้/ย่อ/แต่งเพิ่ม รักษาผู้พูดคนเดิม Action/Narration คงตำแหน่งเดิม คลิปถัดไปต่อเนื่องจาก END คลิปก่อนหน้า (ท่าทาง ตำแหน่ง สีหน้า กล้อง ฉาก เวลา เสียง) และทำซ้ำจนกว่าบทพูดจะครบ
             </p>
           </div>
+          )}
         </div>
       )}
     </div>

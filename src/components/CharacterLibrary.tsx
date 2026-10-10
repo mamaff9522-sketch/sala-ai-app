@@ -159,6 +159,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
   const [triggerTag, setTriggerTag] = useState('');
   const [consistencyStrength, setConsistencyStrength] = useState(0.85);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const [previewBroken, setPreviewBroken] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
@@ -377,9 +378,10 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
       setIsConfirmedByUser(false);
 
       if (analysis.referenceImageUrl) {
+        // Remember the stored URL, but do not swap it into the preview.
+        // Analysis returns /uploads/... which 404s when the file is not on this
+        // host, and that replacement made the picture the user just picked disappear.
         setReferenceImageUrl(analysis.referenceImageUrl);
-        const refUrl = analysis.referenceImageUrl;
-        setReferenceImages(prev => [refUrl, ...prev.slice(1)]);
       }
       if (analysis.referenceImageId) {
         setReferenceImageId(analysis.referenceImageId);
@@ -610,6 +612,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
         loadedCount++;
         if (loadedCount === fileList.length) {
           const combined = [...referenceImages, ...newImages];
+          setPreviewBroken(false);
           setReferenceImages(combined);
           
           // Calculate image hash for caching
@@ -897,11 +900,11 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <UserCheck className="w-5 h-5 text-indigo-400" />
-            <h2 className="text-lg font-bold text-white">
+            <h2 className="text-[20px] sm:text-[22px] font-bold text-white">
               ไลบรารีตัวละคร (Character Consistency Library)
             </h2>
           </div>
-          <p className="text-xs text-slate-400">
+          <p className="text-[16px] text-slate-400">
             สร้างและบันทึกตัวละครของตนเอง พร้อมอัปโหลดหลายมุมมองเพื่อล็อกโครงหน้า ทรงผม และชุดในทุกฉาก
           </p>
         </div>
@@ -909,7 +912,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
         <button
           onClick={onOpenModal}
           id="btn-open-create-char"
-          className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs sm:text-sm px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-indigo-600/30 active:scale-95 shrink-0"
+          className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[16px] sm:text-[16px] px-4 py-2.5 rounded-xl transition-all shadow-lg shadow-indigo-600/30 active:scale-95 shrink-0"
         >
           <Plus className="w-4 h-4" />
           <span>สร้างตัวละครใหม่</span>
@@ -925,15 +928,15 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
+                <h3 className="text-[16px] sm:text-[16px] font-bold text-white flex items-center gap-1.5">
                   <span>สถานะการบันทึกข้อมูลตัวละคร (Firestore & LocalStorage)</span>
                 </h3>
-                <span className="inline-flex items-center gap-1 text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-medium">
+                <span className="inline-flex items-center gap-1 text-[16px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-medium">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                   Firestore Active
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[16px] text-slate-400">
                 ระบบสำรองข้อมูลตัวละครขึ้นคลาวด์ Firestore อัตโนมัติ ป้องกันข้อมูลสูญหายเมื่อรีเฟรชหรือเปลี่ยนเครื่อง
               </p>
             </div>
@@ -945,7 +948,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
               onClick={handleCheckFirestoreAndSync}
               disabled={isCheckingSync || isMigrating}
               id="btn-sync-firestore"
-              className="flex items-center gap-1.5 text-xs font-medium px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 rounded-xl transition-all disabled:opacity-50"
+              className="flex items-center gap-1.5 text-[16px] font-medium px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 rounded-xl transition-all disabled:opacity-50"
               title="ตรวจสอบตัวละครใน Firestore และดึงกลับมาแสดง"
             >
               {isCheckingSync ? (
@@ -961,7 +964,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
               onClick={handleMigrateToFirestore}
               disabled={isCheckingSync || isMigrating}
               id="btn-migrate-local-firestore"
-              className="flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white rounded-xl transition-all shadow-md shadow-indigo-600/20 disabled:opacity-50"
+              className="flex items-center gap-1.5 text-[16px] font-semibold px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white rounded-xl transition-all shadow-md shadow-indigo-600/20 disabled:opacity-50"
               title="สแกนตัวละครใน LocalStorage ในเครื่องนี้แล้วอัปโหลดขึ้น Firestore"
             >
               {isMigrating ? (
@@ -977,7 +980,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
         {/* Audit Status Message */}
         {syncAuditInfo && (
           <div
-            className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 transition-all ${
+            className={`p-3 rounded-xl border text-[16px] flex items-start gap-2.5 transition-all ${
               syncAuditInfo.type === 'success'
                 ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
                 : syncAuditInfo.type === 'warning'
@@ -994,7 +997,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
             )}
             <div className="flex-1 space-y-1">
               <div className="font-semibold">{syncAuditInfo.message}</div>
-              <div className="text-[11px] opacity-85 flex flex-wrap items-center gap-3 pt-0.5">
+              <div className="text-[16px] opacity-85 flex flex-wrap items-center gap-3 pt-0.5">
                 <span className="flex items-center gap-1">
                   <Database className="w-3 h-3 text-indigo-400" />
                   <span>Firestore Cloud: {syncAuditInfo.firestoreCount} ตัว</span>
@@ -1017,194 +1020,56 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
             <UserCheck className="w-8 h-8" />
           </div>
           <div className="space-y-1">
-            <h3 className="text-base font-bold text-white">ยังไม่มีตัวละครในคลัง</h3>
-            <p className="text-xs text-slate-400 max-w-md mx-auto leading-relaxed">
+            <h3 className="text-[20px] sm:text-[22px] font-bold text-white">ยังไม่มีตัวละครในคลัง</h3>
+            <p className="text-[16px] text-slate-400 max-w-md mx-auto leading-relaxed">
               สร้างตัวละครใหม่เพื่อล็อกโครงหน้า อัตลักษณ์ เสื้อผ้า และความสม่ำเสมอในทุกฉากด้วย AI
             </p>
           </div>
           <button
             onClick={onOpenModal}
             id="btn-empty-create-char"
-            className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-5 py-2.5 rounded-xl transition-all shadow-lg shadow-indigo-600/30 active:scale-95"
+            className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[16px] px-5 py-2.5 rounded-xl transition-all shadow-lg shadow-indigo-600/30 active:scale-95"
           >
             <Plus className="w-4 h-4" />
             <span>สร้างตัวละครแรกของคุณ</span>
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-4 gap-x-2 gap-y-3 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10">
           {characters.map((char) => (
-            <div
+            <button
               key={char.id}
+              type="button"
               id={`character-card-${char.id}`}
-              className="bg-[#0e1424] border border-slate-800/90 rounded-2xl overflow-hidden shadow-xl flex flex-col justify-between hover:border-slate-700 transition-all group"
+              onClick={() => setInspectedCharacter(char)}
+              className="flex flex-col items-center gap-1.5 min-w-0 text-center group"
+              title={char.name}
             >
-              <div>
-                {/* Photo Banner with consistency badge */}
-                <div 
-                  onClick={() => setInspectedCharacter(char)}
-                  className="relative h-56 bg-slate-900 overflow-hidden cursor-pointer"
-                  title="คลิกเพื่อดูรายละเอียดอัตลักษณ์ 4 มิติ และรูปอ้างอิง"
-                >
-                  <img
-                    src={char.referenceImageUrl || char.visualProfile?.referenceImageUrl || char.visualProfile?.referenceImage || char.avatarUrl || (char.referenceImages && char.referenceImages[0])}
-                    alt={char.name}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                    referrerPolicy="no-referrer"
-                    onError={e => { const b = char.referenceImageBackup; if (b && e.currentTarget.src !== b) e.currentTarget.src = b; }}
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-[#0e1424] via-transparent to-black/40" />
-
-                  <div className="absolute top-3 left-3 flex flex-wrap items-center gap-1.5 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] text-white font-mono border border-white/10 max-w-[85%]">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>Lock {Math.round(char.consistencyStrength * 100)}%</span>
-                    {char.lockStatus === 'LOCKED' || char.isVerifiedByUser || char.imageAnalysisStatus === 'USER_CONFIRMED' ? (
-                      <>
-                        <span className="text-slate-400">|</span>
-                        <span className="text-emerald-300 flex items-center gap-0.5 font-sans font-semibold">
-                          <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                          <span>LOCKED</span>
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="text-slate-400">|</span>
-                        <span className="text-amber-300 flex items-center gap-0.5 font-sans">
-                          <FileText className="w-3 h-3 text-amber-400" />
-                          <span>DRAFT</span>
-                        </span>
-                      </>
-                    )}
-                    {(char.visualProfileImageHash || char.referenceMetadata?.imageHash) && (
-                      <>
-                        <span className="text-slate-400">|</span>
-                        <span className="text-indigo-300 font-mono">
-                          #{(char.visualProfileImageHash || char.referenceMetadata?.imageHash || '').slice(0, 8)}
-                        </span>
-                      </>
-                    )}
-                    {char.referenceMetadata?.detectedName && (
-                      <>
-                        <span className="text-slate-400">|</span>
-                        <span className="text-cyan-300 font-sans">
-                          OCR: {char.referenceMetadata.detectedName}
-                        </span>
-                      </>
-                    )}
-                    <span className="text-slate-400">|</span>
-                    <span className="text-indigo-300 flex items-center gap-1 font-sans">
-                      <Cloud className="w-3 h-3 text-indigo-400" />
-                      <span>Firestore</span>
-                    </span>
-                  </div>
-
-                  <button
-                    onClick={() => handleDeleteCharacter(char.id, char.name)}
-                    className="absolute top-3 right-3 p-1.5 bg-black/60 hover:bg-rose-600 text-slate-300 hover:text-white rounded-lg transition-colors"
-                    title="ลบตัวละคร"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-
-                  <div className="absolute bottom-3 left-4 right-4">
-                    <div className="flex items-baseline gap-2">
-                      <h3 className="text-base font-bold text-white drop-shadow-md">{char.name}</h3>
-                      <span className="text-xs text-slate-300 drop-shadow-md">{char.gender} • {char.age}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Character Details & Specs */}
-                <div className="p-4 space-y-3">
-                  <p className="text-xs text-slate-300 line-clamp-2 leading-relaxed">
-                    {char.description}
-                  </p>
-
-                  {char.outfitDescription && (
-                    <div className="text-[11px] text-slate-400 bg-slate-900/80 p-2 rounded-xl border border-slate-800">
-                      <span className="text-slate-300 font-medium">ชุดประจำตัว:</span> {char.outfitDescription}
-                    </div>
-                  )}
-
-                  {char.storyProfile?.role && (
-                    <div className="text-[11px] text-indigo-300 bg-indigo-950/40 p-2 rounded-xl border border-indigo-500/20">
-                      <span className="font-semibold text-indigo-200">บทละคร:</span> {char.storyProfile.role}
-                      {char.storyProfile.personality && ` • นิสัย: ${char.storyProfile.personality}`}
-                    </div>
-                  )}
-
-                  {/* Reference thumbnails gallery */}
-                  {char.referenceImages && char.referenceImages.length > 1 && (
-                    <div className="space-y-1">
-                      <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                        มุมมองอ้างอิง ({char.referenceImages.length} รูป):
-                      </span>
-                      <div className="flex gap-1.5 overflow-x-auto pb-1">
-                        {char.referenceImages.map((img, i) => (
-                          <img
-                            key={i}
-                            src={img}
-                            alt="ref"
-                            className="w-9 h-9 rounded-lg object-cover border border-slate-700 shrink-0"
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Trigger Tag Copy Box */}
-                  <div className="flex items-center justify-between bg-slate-950/60 p-2 rounded-xl border border-slate-800/80 text-[11px] font-mono text-indigo-400">
-                    <span className="truncate max-w-[200px]">{char.triggerTag}</span>
-                    <button
-                      onClick={() => copyToClipboard(char.triggerTag, char.id)}
-                      className="p-1 hover:text-white text-slate-400 transition-colors"
-                      title="คัดลอก Tag"
-                    >
-                      {copiedId === char.id ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                    </button>
-                  </div>
+              <div className="relative w-full aspect-square rounded-xl overflow-hidden bg-white border-2 border-cyan-300 shadow-md group-active:scale-95 transition-transform">
+                <img
+                  src={char.referenceImageBackup || char.referenceImageUrl || char.visualProfile?.referenceImageUrl || char.visualProfile?.referenceImage || char.avatarUrl || (char.referenceImages && char.referenceImages[0])}
+                  alt={char.name}
+                  className="w-full h-full object-contain bg-white"
+                  referrerPolicy="no-referrer"
+                  onError={e => {
+                    const el = e.currentTarget;
+                    const b = char.referenceImageBackup;
+                    const fallbacks = [b, char.referenceImageUrl, char.visualProfile?.referenceImageUrl, char.visualProfile?.referenceImage, char.avatarUrl, char.referenceImages && char.referenceImages[0]].filter(Boolean) as string[];
+                    const next = fallbacks.find(u => u && u !== el.src && !el.src.endsWith(u));
+                    if (next) { el.src = next; return; }
+                    el.style.display = 'none';
+                    const note = el.parentElement?.querySelector('[data-photo-missing]') as HTMLElement | null;
+                    if (note) note.style.display = 'flex';
+                  }}
+                />
+                <div data-photo-missing style={{ display: 'none' }} className="absolute inset-0 items-center justify-center bg-white text-slate-900 text-[11px] font-semibold text-center px-1 leading-tight">
+                  {char.name || 'ไม่มีรูป'}
                 </div>
               </div>
-
-              {/* Bottom Actions: Inspect Profile & Load to MultiClip Director */}
-              <div className="p-4 pt-0 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setInspectedCharacter(char)}
-                  id={`btn-inspect-char-${char.id}`}
-                  className="p-2.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center transition-all active:scale-95 cursor-pointer shrink-0"
-                  title="ดูอัตลักษณ์และข้อมูลเชิงลึก"
-                >
-                  <Eye className="w-3.5 h-3.5 text-indigo-400" />
-                </button>
-                {isCharacterOwner(char) && (
-                  <button
-                    type="button"
-                    onClick={() => setEditTarget(char)}
-                    id={`btn-edit-char-${char.id}`}
-                    className="px-3 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold flex items-center justify-center gap-1 transition-all active:scale-95 cursor-pointer shrink-0"
-                    title="แก้ไขรูปลักษณ์ / ทรงผม / ชุด / รองเท้า และอัปโหลดรูปอ้างอิงใหม่ (เฉพาะเจ้าของ)"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-amber-300" />
-                    <span>แก้ไข (Edit)</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => onUseCharacterInStudio(char.id)}
-                  id={`btn-use-char-${char.id}`}
-                  className="flex-1 bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 text-white font-semibold py-2.5 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-md shadow-indigo-600/20 transition-all active:scale-95 cursor-pointer"
-                  title="นำตัวละครไปกำกับหลายคลิปและสร้างงานต่อเนื่อง"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                  <span>กำกับหลายคลิป</span>
-                </button>
-              </div>
-            </div>
+              <span className="w-full text-[13px] leading-tight font-semibold text-slate-100 line-clamp-2 break-words">
+                {char.name}
+              </span>
+            </button>
           ))}
         </div>
       )}
@@ -1224,9 +1089,9 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <UserCheck className="w-5 h-5 text-indigo-400" />
-                <h3 className="text-base font-bold text-white">รายละเอียดอัตลักษณ์ตัวละคร (4-Layer Character Lock)</h3>
+                <h3 className="text-[20px] sm:text-[22px] font-bold text-white">รายละเอียดอัตลักษณ์ตัวละคร (4-Layer Character Lock)</h3>
                 {(inspectedCharacter.lockStatus === 'LOCKED' || inspectedCharacter.isVerifiedByUser || inspectedCharacter.imageAnalysisStatus === 'USER_CONFIRMED') && (
-                  <span className="text-[10px] bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 px-2 py-0.5 rounded-full font-semibold">
+                  <span className="text-[16px] bg-emerald-950/80 border border-emerald-500/40 text-emerald-300 px-2 py-0.5 rounded-full font-semibold">
                     LOCKED
                   </span>
                 )}
@@ -1243,15 +1108,26 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
             <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
               {/* Top: Reference Image Banner + Basic Info */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-slate-950/70 p-4 rounded-2xl border border-slate-800">
-                <div className="relative h-44 sm:h-auto rounded-xl overflow-hidden border border-slate-700 bg-slate-900">
+                <div className="relative h-[220px] rounded-xl overflow-hidden border-2 border-cyan-300 bg-white">
                   <img
-                    src={inspectedCharacter.referenceImageUrl || inspectedCharacter.visualProfile?.referenceImageUrl || inspectedCharacter.visualProfile?.referenceImage || inspectedCharacter.avatarUrl || (inspectedCharacter.referenceImages && inspectedCharacter.referenceImages[0])}
+                    src={inspectedCharacter.referenceImageBackup || inspectedCharacter.referenceImageUrl || inspectedCharacter.visualProfile?.referenceImageUrl || inspectedCharacter.visualProfile?.referenceImage || inspectedCharacter.avatarUrl || (inspectedCharacter.referenceImages && inspectedCharacter.referenceImages[0])}
                     alt={inspectedCharacter.name}
-                    className="w-full h-full object-cover"
+                    className="w-full h-[220px] object-contain bg-white"
                     referrerPolicy="no-referrer"
+                    onError={e => {
+                      const el = e.currentTarget;
+                      const b = inspectedCharacter.referenceImageBackup;
+                      if (b && el.src !== b) { el.src = b; return; }
+                      el.style.display = 'none';
+                      const note = el.parentElement?.querySelector('[data-photo-missing]') as HTMLElement | null;
+                      if (note) note.style.display = 'flex';
+                    }}
                   />
+                  <div data-photo-missing style={{ display: 'none' }} className="absolute inset-0 items-center justify-center bg-white text-slate-900 text-[16px] font-semibold text-center px-3">
+                    {inspectedCharacter.name}
+                  </div>
                   {(inspectedCharacter.imageHash || inspectedCharacter.visualProfileImageHash || inspectedCharacter.referenceMetadata?.imageHash) && (
-                    <div className="absolute bottom-1.5 left-1.5 bg-black/80 backdrop-blur-md px-2 py-0.5 rounded text-[10px] font-mono text-indigo-300 border border-indigo-500/30">
+                    <div className="absolute bottom-1.5 left-1.5 bg-black/80 backdrop-blur-md px-2 py-0.5 rounded text-[16px] font-mono text-indigo-300 border border-indigo-500/30">
                       #{(inspectedCharacter.imageHash || inspectedCharacter.visualProfileImageHash || inspectedCharacter.referenceMetadata?.imageHash || '').slice(0, 8)}
                     </div>
                   )}
@@ -1259,17 +1135,17 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
                 <div className="sm:col-span-2 space-y-2.5">
                   <div>
-                    <h4 className="text-lg font-bold text-white">{inspectedCharacter.name}</h4>
-                    <p className="text-xs text-slate-400">{inspectedCharacter.gender} • {inspectedCharacter.age}</p>
+                    <h4 className="text-[20px] sm:text-[22px] font-bold text-white">{inspectedCharacter.name}</h4>
+                    <p className="text-[16px] text-slate-400">{inspectedCharacter.gender} • {inspectedCharacter.age}</p>
                   </div>
 
-                  <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 text-[11px] font-mono text-indigo-400">
+                  <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 text-[16px] font-mono text-indigo-400">
                     <span className="text-slate-400 mr-1">Trigger Tag:</span>
                     <span className="text-white font-semibold">{inspectedCharacter.triggerTag}</span>
                   </div>
 
                   {inspectedCharacter.referenceImageUrl && (
-                    <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800/80 text-[10px] font-mono text-emerald-400 flex items-center gap-1.5">
+                    <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800/80 text-[16px] font-mono text-emerald-400 flex items-center gap-1.5">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                       <span className="truncate">รูปอ้างอิงถาวร: {inspectedCharacter.referenceImageUrl}</span>
                     </div>
@@ -1277,7 +1153,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
                   {inspectedCharacter.referenceImages && inspectedCharacter.referenceImages.length > 1 && (
                     <div className="space-y-1">
-                      <span className="text-[10px] text-slate-400">มุมมองอ้างอิงทั้งหมด ({inspectedCharacter.referenceImages.length} รูป):</span>
+                      <span className="text-[16px] text-slate-400">มุมมองอ้างอิงทั้งหมด ({inspectedCharacter.referenceImages.length} รูป):</span>
                       <div className="flex gap-1.5 overflow-x-auto pb-1">
                         {inspectedCharacter.referenceImages.map((img, i) => (
                           <img
@@ -1296,32 +1172,32 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
               {/* Layer 1: CharacterIdentity */}
               <div className="bg-slate-900/50 border border-slate-800 p-3.5 rounded-2xl space-y-1.5">
-                <div className="flex items-center justify-between text-xs font-semibold text-slate-300">
+                <div className="flex items-center justify-between text-[16px] font-semibold text-slate-300">
                   <span className="flex items-center gap-1.5 text-indigo-300">
                     <UserCheck className="w-3.5 h-3.5" />
                     <span>Layer 1: CharacterIdentity (อัตลักษณ์ประจำตัว)</span>
                   </span>
-                  <span className="text-[10px] text-slate-400 font-mono">ID: {inspectedCharacter.id}</span>
+                  <span className="text-[16px] text-slate-400 font-mono">ID: {inspectedCharacter.id}</span>
                 </div>
-                <p className="text-xs text-slate-300">
+                <p className="text-[16px] text-slate-300">
                   ชื่อ: <strong>{inspectedCharacter.name}</strong> • เพศ: {inspectedCharacter.gender} • อายุ: {inspectedCharacter.age}
                 </p>
               </div>
 
               {/* Layer 2: CharacterReferenceMetadata */}
               <div className="bg-cyan-950/20 border border-cyan-500/20 p-3.5 rounded-2xl space-y-1.5">
-                <div className="flex items-center justify-between text-xs font-semibold text-cyan-300">
+                <div className="flex items-center justify-between text-[16px] font-semibold text-cyan-300">
                   <span className="flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
                     <span>Layer 2: CharacterReferenceMetadata (ข้อมูลเทคนิคภาพอ้างอิง)</span>
                   </span>
                   {inspectedCharacter.imageHash && (
-                    <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded-full border border-cyan-700">
+                    <span className="text-[16px] font-mono text-cyan-400 bg-cyan-950/60 px-2 py-0.5 rounded-full border border-cyan-700">
                       Hash: {inspectedCharacter.imageHash.slice(0, 12)}...
                     </span>
                   )}
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px] text-slate-300">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[16px] text-slate-300">
                   <div>
                     <span className="text-slate-400">Reference ID:</span> {inspectedCharacter.referenceImageId || inspectedCharacter.referenceMetadata?.referenceImageId || 'ref_primary'}
                   </div>
@@ -1345,17 +1221,17 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
               {/* Layer 3: CharacterVisualProfile */}
               <div className="bg-indigo-950/20 border border-indigo-500/20 p-3.5 rounded-2xl space-y-2">
-                <div className="flex items-center justify-between text-xs font-semibold text-indigo-300">
+                <div className="flex items-center justify-between text-[16px] font-semibold text-indigo-300">
                   <span className="flex items-center gap-1.5">
                     <Camera className="w-3.5 h-3.5 text-indigo-400" />
                     <span>Layer 3: CharacterVisualProfile (ลักษณะทางกายภาพที่สังเกตได้จริง)</span>
                   </span>
-                  <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full font-sans">
+                  <span className="text-[16px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full font-sans">
                     {inspectedCharacter.imageAnalysisStatus || 'USER_CONFIRMED'}
                   </span>
                 </div>
 
-                <div className="space-y-1.5 text-xs text-slate-300">
+                <div className="space-y-1.5 text-[16px] text-slate-300">
                   {inspectedCharacter.description && (
                     <p><strong className="text-slate-400">กายภาพ/ใบหน้า:</strong> {inspectedCharacter.description}</p>
                   )}
@@ -1383,14 +1259,14 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
               {/* Layer 4: CharacterStoryProfile */}
               {inspectedCharacter.storyProfile && (inspectedCharacter.storyProfile.role || inspectedCharacter.storyProfile.personality || inspectedCharacter.storyProfile.occupation || inspectedCharacter.storyProfile.background) && (
                 <div className="bg-amber-950/20 border border-amber-500/20 p-3.5 rounded-2xl space-y-1.5">
-                  <div className="flex items-center justify-between text-xs font-semibold text-amber-300">
+                  <div className="flex items-center justify-between text-[16px] font-semibold text-amber-300">
                     <span className="flex items-center gap-1.5">
                       <FileText className="w-3.5 h-3.5 text-amber-400" />
                       <span>Layer 4: CharacterStoryProfile (ข้อมูลเชิงบทละคร & เรื่องราว)</span>
                     </span>
-                    <span className="text-[10px] text-amber-400/80 font-mono">Layer C</span>
+                    <span className="text-[16px] text-amber-400/80 font-mono">Layer C</span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-300">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[16px] text-slate-300">
                     {inspectedCharacter.storyProfile.role && (
                       <p><strong className="text-slate-400">บทบาท:</strong> {inspectedCharacter.storyProfile.role}</p>
                     )}
@@ -1408,11 +1284,35 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => handleDeleteCharacter(inspectedCharacter.id, inspectedCharacter.name)}
+                className="mr-auto px-3 py-2 bg-slate-900 hover:bg-rose-600 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-[16px] font-semibold flex items-center gap-1.5 transition-colors"
+                title="ลบตัวละคร"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>ลบ</span>
+              </button>
+              {isCharacterOwner(inspectedCharacter) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditTarget(inspectedCharacter);
+                    setInspectedCharacter(null);
+                  }}
+                  id={`btn-edit-char-${inspectedCharacter.id}`}
+                  className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700 rounded-xl text-[16px] font-semibold flex items-center gap-1.5 transition-colors"
+                  title="แก้ไขรูปลักษณ์ / ทรงผม / ชุด / รองเท้า และอัปโหลดรูปอ้างอิงใหม่ (เฉพาะเจ้าของ)"
+                >
+                  <FileText className="w-3.5 h-3.5 text-amber-300" />
+                  <span>แก้ไข</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setInspectedCharacter(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition-colors"
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-[16px] font-semibold transition-colors"
               >
                 ปิด
               </button>
@@ -1422,7 +1322,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                   onUseCharacterInStudio(inspectedCharacter.id);
                   setInspectedCharacter(null);
                 }}
-                className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-lg shadow-indigo-600/30 cursor-pointer"
+                className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-emerald-600 hover:from-indigo-500 hover:to-emerald-500 text-white rounded-xl text-[16px] font-semibold flex items-center gap-1.5 transition-colors shadow-lg shadow-indigo-600/30 cursor-pointer"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-300" />
                 <span>นำไปกำกับหลายคลิปทันที</span>
@@ -1434,17 +1334,17 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
       {/* Modal: Create New Character */}
       {isOpenModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
           <div className="bg-[#0e1424] border border-slate-700 w-full max-w-lg rounded-3xl p-5 sm:p-6 shadow-2xl space-y-4 my-8">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <UserCheck className="w-5 h-5 text-indigo-400" />
-                <h3 className="text-base font-bold text-white">สร้างตัวละครใหม่ (New Character)</h3>
-                <span className="hidden sm:inline-flex items-center gap-1 text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full font-medium">
+                <h3 className="text-[20px] sm:text-[22px] font-bold text-white">สร้างตัวละครใหม่ (New Character)</h3>
+                <span className="hidden sm:inline-flex items-center gap-1 text-[16px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full font-medium">
                   <Sparkles className="w-3 h-3 text-amber-400" /> Auto-Fill ด้วย Gemini Flash
                 </span>
               </div>
-              <button
+              <button aria-label="ปิด" title="ปิด"
                 onClick={onCloseModal}
                 className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
               >
@@ -1453,19 +1353,164 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
             </div>
 
             <form onSubmit={handleSaveCharacter} className="space-y-4">
+              {/* Character Basic Info */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="text-[16px] font-medium text-slate-300 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <span>ชื่อตัวละคร *</span>
+                      {fieldSources['name'] === 'USER_CONFIRMED' && (
+                        <span className="text-[16px] text-emerald-300 bg-emerald-950/80 border border-emerald-500/40 px-1.5 py-0.2 rounded font-sans font-medium">
+                          ผู้ใช้กำหนด ✍️
+                        </span>
+                      )}
+                      {fieldSources['name'] === 'REFERENCE_TEXT' && (
+                        <span className="text-[16px] text-cyan-300 bg-cyan-950/80 border border-cyan-500/40 px-1.5 py-0.2 rounded font-sans font-medium">
+                          จากภาพ (OCR)
+                        </span>
+                      )}
+                    </span>
+                    {isAnalyzingImage && <span className="text-[16px] text-indigo-400 animate-pulse">กำลังดึงชื่อ...</span>}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={name}
+                    onChange={(e) => handleNameChange(e.target.value)}
+                    placeholder="เช่น วายุ, ฟ้าใส, ไอดอลสาว"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-[16px] text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[16px] font-medium text-slate-300 flex items-center justify-between">
+                    <span>เพศ</span>
+                    {fieldSources['gender'] === 'USER_CONFIRMED' && (
+                      <span className="text-[16px] text-emerald-400">✍️</span>
+                    )}
+                  </label>
+                  <select
+                    value={gender}
+                    onChange={(e) => handleGenderChange(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2 py-2 text-[16px] text-white outline-none focus:border-indigo-500"
+                  >
+                    <option value="หญิง">หญิง</option>
+                    <option value="ชาย">ชาย</option>
+                    <option value="ไม่ระบุ">ไม่ระบุ</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[16px] font-medium text-slate-300 flex items-center justify-between">
+                    <span>อายุ</span>
+                    {fieldSources['age'] === 'REFERENCE_TEXT' && referenceMetadata?.detectedAge && (
+                      <span className="text-[16px] text-cyan-300 bg-cyan-950/80 border border-cyan-500/40 px-1 rounded font-sans">
+                        OCR: {referenceMetadata.detectedAge}
+                      </span>
+                    )}
+                    {fieldSources['age'] === 'USER_CONFIRMED' && (
+                      <span className="text-[16px] text-emerald-400">✍️</span>
+                    )}
+                  </label>
+                  <input
+                    type="text"
+                    value={age}
+                    onChange={(e) => handleAgeChange(e.target.value)}
+                    placeholder="เช่น 24 ปี"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-[16px] text-white outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Story Profile Section (Layer C: narrative and script context) */}
+              <div className="bg-slate-900/60 border border-indigo-950/80 rounded-2xl p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-indigo-400" />
+                    <span className="text-[16px] font-semibold text-indigo-200">
+                      Story Profile (ข้อมูลเชิงเรื่องราว & บทละคร)
+                    </span>
+                  </div>
+                  <span className="text-[16px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full font-mono">
+                    Layer C • แยกเด็ดขาดจากรูปภาพ
+                  </span>
+                </div>
+                <p className="text-[16px] text-slate-400">
+                  ระบุบทบาทและนิสัยของตัวละครในบทละคร โดยข้อมูลส่วนนี้จะไม่ถูกนำไปปนกับรูปลักษณ์ทางกายภาพจากภาพถ่าย
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[16px] font-medium text-slate-300">บทบาทในเรื่อง (Role)</label>
+                    <input
+                      type="text"
+                      value={role}
+                      onChange={(e) => setRole(e.target.value)}
+                      placeholder="เช่น พระเอก, ผู้ช่วยสารวัตร, ตัวร้าย"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[16px] font-medium text-slate-300">นิสัย / บุคลิก (Personality)</label>
+                    <input
+                      type="text"
+                      value={personality}
+                      onChange={(e) => setPersonality(e.target.value)}
+                      placeholder="เช่น สุขุม รอบคอบ อ่อนโยนแต่เด็ดขาด"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[16px] font-medium text-slate-300">อาชีพ (Occupation)</label>
+                    <input
+                      type="text"
+                      value={occupation}
+                      onChange={(e) => setOccupation(e.target.value)}
+                      placeholder="เช่น นักสืบ, จอมยุทธ์, แพทย์"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                  <div className="sm:col-span-3 space-y-1">
+                    <label className="text-[16px] font-medium text-slate-300">ปูมหลังย่อ (Background Story)</label>
+                    <input
+                      type="text"
+                      value={background}
+                      onChange={(e) => setBackground(e.target.value)}
+                      placeholder="เช่น เดินทางมาจากแดนไกลเพื่อตามหาความจริงเกี่ยวกับเหตุการณ์ในอดีต..."
+                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
               {/* Reference Photos Upload (Multiple) */}
               <div className="space-y-2">
-                <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                <label className="text-[16px] font-semibold text-slate-300 flex items-center justify-between">
                   <span className="flex items-center gap-1.5">
                     <span>รูปภาพอ้างอิงของตัวละคร (อัปโหลดรูป ระบบจะวิเคราะห์ให้อัตโนมัติ) *</span>
                   </span>
-                  <span className="text-[11px] text-slate-500">{referenceImages.length} รูป</span>
+                  <span className="text-[16px] text-slate-400">{referenceImages.length} รูป</span>
                 </label>
+
+                {referenceImages[0] && (
+                  <div className="rounded-2xl border-2 border-cyan-300 bg-white p-2 shadow-[0_0_0_4px_rgba(8,12,24,0.35)]">
+                    {previewBroken ? (
+                      <div className="w-full h-[220px] rounded-xl bg-white text-slate-900 text-[16px] font-semibold flex items-center justify-center text-center px-4">
+                        โหลดรูปไม่สำเร็จ ลองเลือกไฟล์ JPG หรือ PNG อีกครั้ง
+                      </div>
+                    ) : (
+                      <img
+                        src={referenceImages[0]}
+                        alt="รูปอ้างอิงตัวละครที่อัปโหลด"
+                        className="w-full h-[220px] object-contain bg-white rounded-xl"
+                        onError={() => setPreviewBroken(true)}
+                      />
+                    )}
+                    <p className="text-[16px] font-semibold text-slate-900 px-1 pt-2">รูปที่อัปโหลดแล้ว</p>
+                  </div>
+                )}
 
                 <div className="flex flex-wrap gap-2">
                   {referenceImages.map((img, idx) => (
-                    <div key={idx} className="relative w-16 h-16 rounded-xl border border-slate-700 overflow-hidden">
-                      <img src={img} alt="ref" className="w-full h-full object-cover" />
+                    <div key={idx} className="relative w-[96px] h-[96px] rounded-xl border-2 border-cyan-300 bg-white overflow-hidden">
+                      <img src={img} alt={`รูปอ้างอิง ${idx + 1}`} className="w-full h-[96px] object-contain bg-white" />
                       <button
                         type="button"
                         onClick={() => removeImage(idx)}
@@ -1479,10 +1524,10 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="w-16 h-16 rounded-xl border-2 border-dashed border-slate-700 hover:border-indigo-500 bg-slate-900/60 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-400 transition-colors"
+                    className="w-[96px] h-[96px] rounded-xl border-2 border-dashed border-cyan-300 hover:border-cyan-200 bg-white flex flex-col items-center justify-center text-slate-900 hover:text-cyan-700 transition-colors"
                   >
                     <UploadCloud className="w-5 h-5" />
-                    <span className="text-[9px] mt-0.5 font-medium">+ เพิ่มรูป</span>
+                    <span className="text-[16px] mt-0.5 font-semibold">+ เพิ่มรูป</span>
                   </button>
                   <input
                     ref={fileInputRef}
@@ -1496,7 +1541,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
                 {/* Gemini Flash Analysis Status Banner */}
                 {isAnalyzingImage && (
-                  <div className="bg-indigo-950/70 border border-indigo-500/40 rounded-2xl p-3 flex items-center gap-3 text-xs text-indigo-200 shadow-md animate-pulse">
+                  <div className="bg-indigo-950/70 border border-indigo-500/40 rounded-2xl p-3 flex items-center gap-3 text-[16px] text-indigo-200 shadow-md animate-pulse">
                     <div className="w-7 h-7 rounded-xl bg-indigo-600/30 border border-indigo-400/30 flex items-center justify-center shrink-0">
                       <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
                     </div>
@@ -1504,7 +1549,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                       <div className="font-semibold text-white flex items-center gap-1.5">
                         <span>Gemini Flash กำลังวิเคราะห์รูปภาพตัวละคร (Multi-image)...</span>
                       </div>
-                      <p className="text-[11px] text-indigo-300">
+                      <p className="text-[16px] text-indigo-300">
                         วิเคราะห์โครงหน้า สีผิว ทรงผม เสื้อผ้า และจุดเด่นเฉพาะจากภาพจริง โดยห้ามเดาหรือแต่งเติม
                       </p>
                     </div>
@@ -1517,22 +1562,22 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                     {/* Status Badges & Hash Indicators */}
                     <div className="flex flex-wrap items-center gap-1.5">
                       {isConfirmedByUser || analysisStatus === 'USER_CONFIRMED' ? (
-                        <div className="flex items-center gap-1.5 bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 px-2.5 py-1 rounded-full text-xs font-semibold">
+                        <div className="flex items-center gap-1.5 bg-emerald-950/60 border border-emerald-500/40 text-emerald-300 px-2.5 py-1 rounded-full text-[16px] font-semibold">
                           <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
                           <span>สถานะ: ล็อกอัตลักษณ์แล้ว (USER_CONFIRMED)</span>
                         </div>
                       ) : isDraftActive || analysisStatus === 'AI_DRAFT' ? (
-                        <div className="flex items-center gap-1.5 bg-amber-950/60 border border-amber-500/40 text-amber-300 px-2.5 py-1 rounded-full text-xs font-semibold">
+                        <div className="flex items-center gap-1.5 bg-amber-950/60 border border-amber-500/40 text-amber-300 px-2.5 py-1 rounded-full text-[16px] font-semibold">
                           <FileText className="w-3.5 h-3.5 text-amber-400" />
                           <span>สถานะ: แบบร่าง AI (AI_DRAFT)</span>
                         </div>
                       ) : isAnalyzingImage ? (
-                        <div className="flex items-center gap-1.5 bg-indigo-950/60 border border-indigo-500/40 text-indigo-300 px-2.5 py-1 rounded-full text-xs font-medium">
+                        <div className="flex items-center gap-1.5 bg-indigo-950/60 border border-indigo-500/40 text-indigo-300 px-2.5 py-1 rounded-full text-[16px] font-medium">
                           <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
                           <span>สถานะ: กำลังวิเคราะห์...</span>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700 text-slate-300 px-2.5 py-1 rounded-full text-xs font-medium">
+                        <div className="flex items-center gap-1.5 bg-slate-800/80 border border-slate-700 text-slate-300 px-2.5 py-1 rounded-full text-[16px] font-medium">
                           <span>สถานะ: รอวิเคราะห์รูปภาพ</span>
                         </div>
                       )}
@@ -1540,7 +1585,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                       {/* Image Hash Indicator */}
                       {currentReferenceImageHash && (
                         <div
-                          className="flex items-center gap-1 bg-slate-950/80 border border-slate-700 text-slate-300 px-2 py-0.5 rounded-full font-mono text-[10px]"
+                          className="flex items-center gap-1 bg-slate-950/80 border border-slate-700 text-slate-300 px-2 py-0.5 rounded-full font-mono text-[16px]"
                           title={`SHA-256 Image Hash: ${currentReferenceImageHash}`}
                         >
                           <Hash className="w-3 h-3 text-indigo-400" />
@@ -1550,7 +1595,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
                       {/* Cache Hit Badge */}
                       {isCacheHit && (
-                        <div className="flex items-center gap-1 bg-sky-950/80 border border-sky-500/40 text-sky-300 px-2 py-0.5 rounded-full font-sans text-[10px] font-semibold">
+                        <div className="flex items-center gap-1 bg-sky-950/80 border border-sky-500/40 text-sky-300 px-2 py-0.5 rounded-full font-sans text-[16px] font-semibold">
                           <Zap className="w-3 h-3 text-amber-400" />
                           <span>แคชตรงกัน (0 tokens)</span>
                         </div>
@@ -1558,7 +1603,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
                       {draftAnalysis?.confidence && (
                         <div
-                          className={`text-xs px-2 py-0.5 rounded-full font-mono font-bold border ${
+                          className={`text-[16px] px-2 py-0.5 rounded-full font-mono font-bold border ${
                             draftAnalysis.confidence >= 70
                               ? 'bg-indigo-950/70 text-indigo-300 border-indigo-500/30'
                               : 'bg-amber-950/70 text-amber-300 border-amber-500/40'
@@ -1577,7 +1622,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                         id="btn-analyze-char-img"
                         onClick={() => runImageAnalysis(referenceImages, true)}
                         disabled={isAnalyzingImage || referenceImages.length === 0}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold transition-all shadow-sm"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-[16px] font-semibold transition-all shadow-sm"
                         title="สั่งวิเคราะห์รูปภาพด้วย Gemini Flash อีกครั้ง (บังคับสร้างใหม่)"
                       >
                         <Sparkles className="w-3.5 h-3.5 text-amber-300" />
@@ -1589,7 +1634,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                           type="button"
                           id="btn-apply-draft"
                           onClick={handleApplyAsDraft}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-200 border border-indigo-500/30 text-xs font-medium transition-all"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-200 border border-indigo-500/30 text-[16px] font-medium transition-all"
                           title="นำผลวิเคราะห์ AI มาเติมลงฟอร์มเป็นแบบร่าง"
                         >
                           <FileText className="w-3.5 h-3.5" />
@@ -1601,7 +1646,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                         type="button"
                         id="btn-reset-char-form"
                         onClick={handleResetDraftAndForm}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border border-slate-700 hover:border-rose-500/40 text-xs font-medium transition-all"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-rose-950/40 text-slate-300 hover:text-rose-300 border border-slate-700 hover:border-rose-500/40 text-[16px] font-medium transition-all"
                         title="ล้างข้อมูลและเริ่มต้นใหม่"
                       >
                         <RotateCcw className="w-3.5 h-3.5" />
@@ -1613,7 +1658,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                           type="button"
                           id="btn-confirm-char-data"
                           onClick={handleConfirmCharacterData}
-                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-all shadow-sm"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-[16px] font-semibold transition-all shadow-sm"
                           title="ตรวจสอบและยืนยันข้อมูลตัวละคร เพื่อป้องกัน AI เขียนทับ (Priority 1)"
                         >
                           <ShieldCheck className="w-3.5 h-3.5" />
@@ -1625,7 +1670,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
                   {/* Confidence Warning if < 70 */}
                   {draftAnalysis?.confidence && draftAnalysis.confidence < 70 && (
-                    <div className="bg-amber-950/70 border border-amber-500/40 rounded-xl p-2.5 flex items-start gap-2 text-xs text-amber-200">
+                    <div className="bg-amber-950/70 border border-amber-500/40 rounded-xl p-2.5 flex items-start gap-2 text-[16px] text-amber-200">
                       <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                       <div>
                         <span className="font-bold">ภาพอาจเห็นรายละเอียดไม่ชัดเจน (ความมั่นใจ {draftAnalysis.confidence}%): </span>
@@ -1635,7 +1680,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                   )}
 
                   {analysisSuccessMsg && !isAnalyzingImage && (
-                    <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-2 flex items-center justify-between text-xs text-emerald-300">
+                    <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-2 flex items-center justify-between text-[16px] text-emerald-300">
                       <div className="flex items-center gap-1.5">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                         <span>{analysisSuccessMsg}</span>
@@ -1653,19 +1698,19 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
                 {/* Layer 2: Detected Reference Text (OCR) Banner */}
                 {referenceMetadata && (referenceMetadata.detectedName || referenceMetadata.detectedAge || referenceMetadata.detectedHeight || (referenceMetadata.availableViews && referenceMetadata.availableViews.length > 1)) && (
-                  <div className="bg-cyan-950/40 border border-cyan-500/30 rounded-2xl p-3 space-y-1.5 text-xs text-cyan-200 shadow-sm">
+                  <div className="bg-cyan-950/40 border border-cyan-500/30 rounded-2xl p-3 space-y-1.5 text-[16px] text-cyan-200 shadow-sm">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 font-semibold text-cyan-300">
                         <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
                         <span>ตรวจพบข้อความในภาพอ้างอิงจริง (REFERENCE_TEXT - Priority 2)</span>
                       </div>
                       {referenceMetadata.imageHash && (
-                        <span className="font-mono text-[10px] text-cyan-400/90 bg-cyan-950/90 px-2 py-0.5 rounded-full border border-cyan-800">
+                        <span className="font-mono text-[16px] text-cyan-400/90 bg-cyan-950/90 px-2 py-0.5 rounded-full border border-cyan-800">
                           #{referenceMetadata.imageHash.slice(0, 8)}
                         </span>
                       )}
                     </div>
-                    <div className="flex flex-wrap gap-2 text-[11px] pt-0.5">
+                    <div className="flex flex-wrap gap-2 text-[16px] pt-0.5">
                       {referenceMetadata.detectedName && (
                         <div className="bg-cyan-900/40 px-2.5 py-1 rounded-lg border border-cyan-700/50">
                           ชื่อในภาพ: <strong className="text-white ml-1">{referenceMetadata.detectedName}</strong>
@@ -1691,160 +1736,33 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                 )}
               </div>
 
-              {/* Character Basic Info */}
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                <div className="sm:col-span-2 space-y-1">
-                  <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5">
-                      <span>ชื่อตัวละคร *</span>
-                      {fieldSources['name'] === 'USER_CONFIRMED' && (
-                        <span className="text-[10px] text-emerald-300 bg-emerald-950/80 border border-emerald-500/40 px-1.5 py-0.2 rounded font-sans font-medium">
-                          ผู้ใช้กำหนด ✍️
-                        </span>
-                      )}
-                      {fieldSources['name'] === 'REFERENCE_TEXT' && (
-                        <span className="text-[10px] text-cyan-300 bg-cyan-950/80 border border-cyan-500/40 px-1.5 py-0.2 rounded font-sans font-medium">
-                          จากภาพ (OCR)
-                        </span>
-                      )}
-                    </span>
-                    {isAnalyzingImage && <span className="text-[10px] text-indigo-400 animate-pulse">กำลังดึงชื่อ...</span>}
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => handleNameChange(e.target.value)}
-                    placeholder="เช่น วายุ, ฟ้าใส, ไอดอลสาว"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
-                    <span>เพศ</span>
-                    {fieldSources['gender'] === 'USER_CONFIRMED' && (
-                      <span className="text-[10px] text-emerald-400">✍️</span>
-                    )}
-                  </label>
-                  <select
-                    value={gender}
-                    onChange={(e) => handleGenderChange(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2 py-2 text-xs text-white outline-none focus:border-indigo-500"
-                  >
-                    <option value="หญิง">หญิง</option>
-                    <option value="ชาย">ชาย</option>
-                    <option value="ไม่ระบุ">ไม่ระบุ</option>
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
-                    <span>อายุ</span>
-                    {fieldSources['age'] === 'REFERENCE_TEXT' && referenceMetadata?.detectedAge && (
-                      <span className="text-[10px] text-cyan-300 bg-cyan-950/80 border border-cyan-500/40 px-1 rounded font-sans">
-                        OCR: {referenceMetadata.detectedAge}
-                      </span>
-                    )}
-                    {fieldSources['age'] === 'USER_CONFIRMED' && (
-                      <span className="text-[10px] text-emerald-400">✍️</span>
-                    )}
-                  </label>
-                  <input
-                    type="text"
-                    value={age}
-                    onChange={(e) => handleAgeChange(e.target.value)}
-                    placeholder="เช่น 24 ปี"
-                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-white outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              {/* Story Profile Section (Layer C: narrative and script context) */}
-              <div className="bg-slate-900/60 border border-indigo-950/80 rounded-2xl p-3.5 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-indigo-400" />
-                    <span className="text-xs font-semibold text-indigo-200">
-                      Story Profile (ข้อมูลเชิงเรื่องราว & บทละคร)
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full font-mono">
-                    Layer C • แยกเด็ดขาดจากรูปภาพ
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-400">
-                  ระบุบทบาทและนิสัยของตัวละครในบทละคร โดยข้อมูลส่วนนี้จะไม่ถูกนำไปปนกับรูปลักษณ์ทางกายภาพจากภาพถ่าย
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-medium text-slate-300">บทบาทในเรื่อง (Role)</label>
-                    <input
-                      type="text"
-                      value={role}
-                      onChange={(e) => setRole(e.target.value)}
-                      placeholder="เช่น พระเอก, ผู้ช่วยสารวัตร, ตัวร้าย"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-medium text-slate-300">นิสัย / บุคลิก (Personality)</label>
-                    <input
-                      type="text"
-                      value={personality}
-                      onChange={(e) => setPersonality(e.target.value)}
-                      placeholder="เช่น สุขุม รอบคอบ อ่อนโยนแต่เด็ดขาด"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-medium text-slate-300">อาชีพ (Occupation)</label>
-                    <input
-                      type="text"
-                      value={occupation}
-                      onChange={(e) => setOccupation(e.target.value)}
-                      placeholder="เช่น นักสืบ, จอมยุทธ์, แพทย์"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div className="sm:col-span-3 space-y-1">
-                    <label className="text-[11px] font-medium text-slate-300">ปูมหลังย่อ (Background Story)</label>
-                    <input
-                      type="text"
-                      value={background}
-                      onChange={(e) => setBackground(e.target.value)}
-                      placeholder="เช่น เดินทางมาจากแดนไกลเพื่อตามหาความจริงเกี่ยวกับเหตุการณ์ในอดีต..."
-                      className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                </div>
-              </div>
-
               {/* Visual Description */}
               <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
+                <label className="text-[16px] font-medium text-slate-300 flex items-center justify-between">
                   <span>ลักษณะเด่นทางกายภาพ (ผิว, ผม, ตา, รูปลักษณ์ใบหน้า - จากภาพอ้างอิง)</span>
-                  {isAnalyzingImage && <span className="text-[10px] text-indigo-400 animate-pulse">กำลังเติมให้อัตโนมัติ...</span>}
+                  {isAnalyzingImage && <span className="text-[16px] text-indigo-400 animate-pulse">กำลังเติมให้อัตโนมัติ...</span>}
                 </label>
                 <textarea
                   rows={3}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="เช่น anthropomorphic animal ตัวละครสัตว์คล้ายคน ขนสีส้มอิฐ แผงคอสีขาว ตาสีเหลือง หรือ หญิงสาว ผิวสองสี ตาสีดำ ผมสั้นสีดำ..."
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white outline-none focus:border-indigo-500 resize-none"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-[16px] text-white outline-none focus:border-indigo-500 resize-none"
                 />
               </div>
 
               {/* Default Outfit & Accessories */}
               <div className="space-y-1">
-                <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
+                <label className="text-[16px] font-medium text-slate-300 flex items-center justify-between">
                   <span>ชุดประจำตัว เสื้อผ้า และอุปกรณ์</span>
-                  {isAnalyzingImage && <span className="text-[10px] text-indigo-400 animate-pulse">กำลังเติมให้อัตโนมัติ...</span>}
+                  {isAnalyzingImage && <span className="text-[16px] text-indigo-400 animate-pulse">กำลังเติมให้อัตโนมัติ...</span>}
                 </label>
                 <input
                   type="text"
                   value={outfitDescription}
                   onChange={(e) => handleOutfitChange(e.target.value)}
                   placeholder="เช่น เสื้อเชิ้ตผ้าลินินสีครีมมินิมอล กางเกงผ้าขากระบอกสีเบจ • อุปกรณ์: สร้อยคอเงินและนาฬิกาข้อมือสายหนัง"
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-indigo-500"
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-[16px] text-white outline-none focus:border-indigo-500"
                 />
               </div>
 
@@ -1857,12 +1775,12 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                 >
                   <div className="flex items-center gap-2">
                     <Edit3 className="w-4 h-4 text-indigo-400" />
-                    <span className="text-xs font-semibold text-slate-200">
+                    <span className="text-[16px] font-semibold text-slate-200">
                       ตรวจดูและปรับแต่งรายละเอียดโครงสร้าง (Structured Visual Attributes)
                     </span>
                   </div>
-                  <div className="flex items-center gap-1.5 text-xs text-slate-400">
-                    <span className="text-[10px] text-slate-500">
+                  <div className="flex items-center gap-1.5 text-[16px] text-slate-400">
+                    <span className="text-[16px] text-slate-400">
                       {showStructuredDetails ? 'ย่อรายละเอียด' : 'ดูรายละเอียดเชิงลึก'}
                     </span>
                     {showStructuredDetails ? (
@@ -1875,17 +1793,17 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
                 {showStructuredDetails && (
                   <div className="p-3.5 pt-1 border-t border-slate-800 space-y-3 bg-slate-950/40">
-                    <p className="text-[11px] text-slate-400">
+                    <p className="text-[16px] text-slate-400">
                       รายละเอียดทางกายภาพและเสื้อผ้าที่ถอดรหัสจากภาพอ้างอิงจริง หากต้องการปรับแต่ง สามารถพิมพ์แก้ไขได้ทันทีโดย AI จะไม่เขียนทับ
                     </p>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[16px]">
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">ประเภทสิ่งมีชีวิต (Creature Type)</label>
+                        <label className="text-[16px] font-medium text-slate-300">ประเภทสิ่งมีชีวิต (Creature Type)</label>
                         <select
                           value={structuredFeatures.creatureType || 'human'}
                           onChange={(e) => handleStructuredChange('creatureType', e.target.value)}
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         >
                           <option value="human">มนุษย์ (human)</option>
                           <option value="anthropomorphic reptile">สัตว์เลื้อยคลานร่างมนุษย์ (anthropomorphic reptile)</option>
@@ -1896,135 +1814,135 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">สายพันธุ์ที่มองเห็น (Species)</label>
+                        <label className="text-[16px] font-medium text-slate-300">สายพันธุ์ที่มองเห็น (Species)</label>
                         <input
                           type="text"
                           value={structuredFeatures.species || ''}
                           onChange={(e) => handleStructuredChange('species', e.target.value)}
                           placeholder="เช่น anthropomorphic reptile, กิ้งก่า, มนุษย์"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         >
                         </input>
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">สีผิว / ผิวพรรณ / เกล็ด (Skin Tone)</label>
+                        <label className="text-[16px] font-medium text-slate-300">สีผิว / ผิวพรรณ / เกล็ด (Skin Tone)</label>
                         <input
                           type="text"
                           value={structuredFeatures.skinTone}
                           onChange={(e) => handleStructuredChange('skinTone', e.target.value)}
                           placeholder="เช่น ผิวขาวอมชมพู, ผิวสีแทนเนียนละเอียด"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">รูปหน้า (Face Shape)</label>
+                        <label className="text-[16px] font-medium text-slate-300">รูปหน้า (Face Shape)</label>
                         <input
                           type="text"
                           value={structuredFeatures.faceShape}
                           onChange={(e) => handleStructuredChange('faceShape', e.target.value)}
                           placeholder="เช่น รูปไข่ คางเรียว สันกรามชัด"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">ทรงผม (Hair Style)</label>
+                        <label className="text-[16px] font-medium text-slate-300">ทรงผม (Hair Style)</label>
                         <input
                           type="text"
                           value={structuredFeatures.hairStyle}
                           onChange={(e) => handleStructuredChange('hairStyle', e.target.value)}
                           placeholder="เช่น ผมสั้นประบ่า แสกข้าง มีหน้าม้าปัด"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">สีผม (Hair Color)</label>
+                        <label className="text-[16px] font-medium text-slate-300">สีผม (Hair Color)</label>
                         <input
                           type="text"
                           value={structuredFeatures.hairColor}
                           onChange={(e) => handleStructuredChange('hairColor', e.target.value)}
                           placeholder="เช่น สีดำธรรมชาติ หรือ สีน้ำตาลคาราเมล"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">ลักษณะดวงตา (Eyes)</label>
+                        <label className="text-[16px] font-medium text-slate-300">ลักษณะดวงตา (Eyes)</label>
                         <input
                           type="text"
                           value={structuredFeatures.eyeDescription}
                           onChange={(e) => handleStructuredChange('eyeDescription', e.target.value)}
                           placeholder="เช่น ตากลมโต สีน้ำตาลเข้ม คิ้วได้รูป"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">รูปร่าง / สรีระ (Body Type)</label>
+                        <label className="text-[16px] font-medium text-slate-300">รูปร่าง / สรีระ (Body Type)</label>
                         <input
                           type="text"
                           value={structuredFeatures.bodyType}
                           onChange={(e) => handleStructuredChange('bodyType', e.target.value)}
                           placeholder="เช่น รูปร่างสมส่วน สูงโปร่ง ไหล่กว้าง"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">เสื้อผ้าท่อนบน (Top Clothing)</label>
+                        <label className="text-[16px] font-medium text-slate-300">เสื้อผ้าท่อนบน (Top Clothing)</label>
                         <input
                           type="text"
                           value={structuredFeatures.topClothing}
                           onChange={(e) => handleStructuredChange('topClothing', e.target.value)}
                           placeholder="เช่น เสื้อเชิ้ตโอเวอร์ไซส์สีขาวคอปก"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">เสื้อผ้าท่อนล่าง (Bottom Clothing)</label>
+                        <label className="text-[16px] font-medium text-slate-300">เสื้อผ้าท่อนล่าง (Bottom Clothing)</label>
                         <input
                           type="text"
                           value={structuredFeatures.bottomClothing}
                           onChange={(e) => handleStructuredChange('bottomClothing', e.target.value)}
                           placeholder="เช่น กางเกงยีนส์ขากระบอกสีน้ำเงินเข้ม"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">รองเท้า (Footwear)</label>
+                        <label className="text-[16px] font-medium text-slate-300">รองเท้า (Footwear)</label>
                         <input
                           type="text"
                           value={structuredFeatures.footwear}
                           onChange={(e) => handleStructuredChange('footwear', e.target.value)}
                           placeholder="เช่น รองเท้าผ้าใบสนีกเกอร์สีขาว"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">อุปกรณ์ & เครื่องประดับ (Accessories)</label>
+                        <label className="text-[16px] font-medium text-slate-300">อุปกรณ์ & เครื่องประดับ (Accessories)</label>
                         <input
                           type="text"
                           value={structuredFeatures.accessories}
                           onChange={(e) => handleStructuredChange('accessories', e.target.value)}
                           placeholder="เช่น นาฬิกาข้อมือสายหนัง สร้อยคอเงิน"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         />
                       </div>
 
                       <div className="sm:col-span-2 space-y-1">
-                        <label className="text-[11px] font-medium text-slate-300">จุดเด่นเฉพาะตัว (Distinct Features)</label>
+                        <label className="text-[16px] font-medium text-slate-300">จุดเด่นเฉพาะตัว (Distinct Features)</label>
                         <input
                           type="text"
                           value={structuredFeatures.distinctFeatures}
                           onChange={(e) => handleStructuredChange('distinctFeatures', e.target.value)}
                           placeholder="เช่น ไฝใต้ตาข้างขวา, ลักยิ้ม, รอยยิ้มสดใส"
-                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500"
+                          className="w-full bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5 text-[16px] text-white outline-none focus:border-indigo-500"
                         />
                       </div>
                     </div>
@@ -2034,7 +1952,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
               {/* Consistency Strength Slider */}
               <div className="space-y-1 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-                <div className="flex justify-between text-xs">
+                <div className="flex justify-between text-[16px]">
                   <span className="text-slate-300 font-medium">ความเข้มข้นของการล็อกตัวละคร:</span>
                   <span className="font-mono font-bold text-indigo-400">{Math.round(consistencyStrength * 100)}%</span>
                 </div>
@@ -2051,7 +1969,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
 
               {/* Error Message */}
               {errorMsg && (
-                <p className="text-xs text-rose-400 bg-rose-500/10 p-2.5 rounded-xl border border-rose-500/30">
+                <p className="text-[16px] text-rose-400 bg-rose-500/10 p-2.5 rounded-xl border border-rose-500/30">
                   {errorMsg}
                 </p>
               )}
@@ -2061,7 +1979,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                 <button
                   type="button"
                   onClick={onCloseModal}
-                  className="px-4 py-2 rounded-xl text-xs text-slate-400 hover:text-white"
+                  className="px-4 py-2 rounded-xl text-[16px] text-slate-400 hover:text-white"
                 >
                   ยกเลิก
                 </button>
@@ -2069,7 +1987,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                   type="submit"
                   disabled={isSaving}
                   id="btn-save-character"
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs px-6 py-2.5 rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-1.5"
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[16px] px-6 py-2.5 rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-1.5"
                 >
                   <Check className="w-4 h-4" />
                   <span>{isSaving ? 'กำลังบันทึก...' : 'บันทึกตัวละคร'}</span>
@@ -2095,10 +2013,10 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                 <Trash2 className="w-6 h-6" />
               </div>
               <div className="space-y-1">
-                <h3 className="text-base font-bold text-white">
+                <h3 className="text-[20px] sm:text-[22px] font-bold text-white">
                   ยืนยันการลบตัวละคร
                 </h3>
-                <p className="text-xs text-slate-300 leading-relaxed">
+                <p className="text-[16px] text-slate-300 leading-relaxed">
                   คุณต้องการลบตัวละคร <span className="font-semibold text-white">"{deleteTarget.name}"</span> หรือไม่? ข้อมูลจะถูกลบออกจากระบบและคลังตัวละครถาวร
                 </p>
               </div>
@@ -2110,7 +2028,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                 id="btn-cancel-delete"
                 onClick={handleCancelDelete}
                 disabled={isDeleting}
-                className="px-4 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                className="px-4 py-2 rounded-xl text-[16px] font-medium text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
               >
                 ยกเลิก
               </button>
@@ -2119,7 +2037,7 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                 id="btn-confirm-delete"
                 onClick={handleConfirmDelete}
                 disabled={isDeleting}
-                className="bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-semibold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-1.5"
+                className="bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-semibold text-[16px] px-5 py-2.5 rounded-xl transition-all shadow-md active:scale-95 flex items-center gap-1.5"
               >
                 {isDeleting ? (
                   <>

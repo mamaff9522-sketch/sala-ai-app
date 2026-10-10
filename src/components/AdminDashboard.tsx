@@ -166,7 +166,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
         email: newEmail,
         password: newPassword,
         role: newRole,
-        initialCredits: 100
+        initialCredits: 0
       });
       setActionMessage(`สร้างบัญชีผู้ใช้ "${newUsername}" สำเร็จแล้ว`);
       setIsCreatingUser(false);
@@ -339,7 +339,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
                 <Users className="w-4 h-4 text-indigo-400" />
               </div>
               <p className="text-2xl font-extrabold text-white font-mono">{stats?.totalUsers || usersList.length || 142}</p>
-              <span className="text-[10px] text-emerald-400">Active Creators</span>
+              <span className="text-xs text-emerald-400">Active Creators</span>
             </div>
 
             <div className="bg-[#0e1424] border border-slate-800/90 rounded-2xl p-4 shadow-lg space-y-1">
@@ -348,7 +348,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
                 <Sparkles className="w-4 h-4 text-emerald-400" />
               </div>
               <p className="text-2xl font-extrabold text-white font-mono">{stats?.totalGenerations || 412}</p>
-              <span className="text-[10px] text-slate-400">
+              <span className="text-xs text-slate-400">
                 {stats?.totalImagesGenerated || 310} ภาพ • {stats?.totalVideosGenerated || 102} คลิป
               </span>
             </div>
@@ -359,7 +359,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
                 <Clock className="w-4 h-4 text-amber-400" />
               </div>
               <p className="text-2xl font-extrabold text-white font-mono">{stats?.activeJobsCount ?? 0}</p>
-              <span className="text-[10px] text-slate-400">Background Jobs Polling</span>
+              <span className="text-xs text-slate-400">Background Jobs Polling</span>
             </div>
 
             <div className="bg-[#0e1424] border border-slate-800/90 rounded-2xl p-4 shadow-lg space-y-1">
@@ -368,7 +368,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
                 <Coins className="w-4 h-4 text-amber-400" />
               </div>
               <p className="text-2xl font-extrabold text-amber-300 font-mono">{stats?.creditsSpentTotal || 3530}</p>
-              <span className="text-[10px] text-slate-400">Credits Consumed</span>
+              <span className="text-xs text-slate-400">Credits Consumed</span>
             </div>
           </div>
 
@@ -392,13 +392,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
                     {prov.hasKey ? (
                       <span className="w-2 h-2 rounded-full bg-emerald-400" />
                     ) : (
-                      <span className="text-[10px] text-amber-400 font-mono bg-amber-400/10 px-1 rounded">
+                      <span className="text-xs text-amber-400 font-mono bg-amber-400/10 px-1 rounded">
                         Mock
                       </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-slate-400">{prov.statusText}</p>
-                  <div className="flex justify-between items-center text-[10px] text-slate-500 pt-1 border-t border-slate-800">
+                  <p className="text-xs text-slate-400">{prov.statusText}</p>
+                  <div className="flex justify-between items-center text-xs text-slate-400 pt-1 border-t border-slate-800">
                     <span>Active Calls:</span>
                     <span className="font-mono text-slate-300">{prov.activeCalls}</span>
                   </div>
@@ -498,7 +498,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
                       <tr key={user.userId || user.id} className="hover:bg-slate-900/40">
                         <td className="py-2.5 px-3 font-medium text-white">{user.userName || user.username}</td>
                         <td className="py-2.5 px-3">
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-800 text-indigo-400 font-mono">
+                          <span className="px-2 py-0.5 rounded text-xs font-bold uppercase bg-slate-800 text-indigo-400 font-mono">
                             {user.userRole || user.role}
                           </span>
                         </td>
@@ -506,7 +506,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
                           {user.remainingCredits ?? user.credits ?? 0}
                         </td>
                         <td className="py-2.5 px-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                          <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
                             user.status === 'suspended' ? 'bg-rose-500/20 text-rose-300' : 'bg-emerald-500/20 text-emerald-300'
                           }`}>
                             {user.status === 'suspended' ? 'ระงับการใช้งาน' : 'ปกติ (Active)'}
@@ -666,7 +666,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
                         <td className="py-3 px-3 font-semibold text-white">{user.userName || user.username}</td>
                         <td className="py-3 px-3 text-slate-400">{user.email || '-'}</td>
                         <td className="py-3 px-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase font-mono ${
+                          <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase font-mono ${
                             user.userRole === 'admin' || user.role === 'admin'
                               ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                               : 'bg-slate-800 text-slate-300'
@@ -678,7 +678,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
                           {user.remainingCredits ?? user.credits ?? 0}
                         </td>
                         <td className="py-3 px-3">
-                          <span className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1.5 w-fit ${
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 w-fit ${
                             isSuspended ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                           }`}>
                             {isSuspended ? (
@@ -734,7 +734,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
               <label className="text-xs font-bold text-slate-200">
                 ค่าคัดลอก Prompt หลายคลิป (Prompt Copy Fee - เครดิต)
               </label>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-xs text-slate-400">
                 ค่าธรรมเนียมเมื่อส่งออกชุด Prompt ไปยังเครื่องมือภายนอก (ปัจจุบันในโหมด Prompt ฟรี = 0 หรือกำหนดเป็นค่าบริการพิเศษ)
               </p>
               <input
@@ -749,7 +749,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
               <label className="text-xs font-bold text-slate-200">
                 ค่าบริการแพลตฟอร์มแบบเปอร์เซ็นต์ (Platform Service Fee %)
               </label>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-xs text-slate-400">
                 เปอร์เซ็นต์ค่าบริการที่ระบบคิดเพิ่มจากต้นทุน API จริง เช่น 15%
               </p>
               <input
@@ -764,7 +764,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
               <label className="text-xs font-bold text-slate-200">
                 ค่าบริการคงที่ต่อชุดงาน (Fixed Service Fee - เครดิต)
               </label>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-xs text-slate-400">
                 ค่าดูแลคิวประมวลผลและการจัดส่งแบบอัตโนมัติต่อ Job
               </p>
               <input
@@ -779,7 +779,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
               <label className="text-xs font-bold text-slate-200">
                 อัตราเรนเดอร์วิดีโอ Veo (เครดิต / วินาที)
               </label>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-xs text-slate-400">
                 เช่น 6 เครดิต ต่อ 1 วินาที (1 คลิป 10 วินาที = 60 เครดิต)
               </p>
               <input
@@ -886,7 +886,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onRefreshAll }) 
                 <tbody className="divide-y divide-slate-800/80">
                   {redeemCodes.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-6 text-center text-slate-500">
+                      <td colSpan={5} className="py-6 text-center text-slate-400">
                         ยังไม่มีโค้ดแลกเครดิตในระบบ
                       </td>
                     </tr>

@@ -238,9 +238,7 @@ export function getLocalStorageLocations(uid?: string): LocationItem[] {
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const filtered = currentUid !== 'guest_user' 
-            ? parsed.filter((loc: any) => !loc.userId || loc.userId === currentUid)
-            : parsed;
+          const filtered = parsed.filter((loc: any) => loc && loc.userId === currentUid);
           if (filtered.length > 0) {
             return filtered;
           }
@@ -265,7 +263,6 @@ export function saveLocationsToLocalStorage(locations: LocationItem[], uid?: str
   try {
     const userKey = `sala_locations_${currentUid}`;
     localStorage.setItem(userKey, JSON.stringify(locations));
-    localStorage.setItem('sala_locations', JSON.stringify(locations));
   } catch (e) {
     console.warn('Failed to save locations to local storage:', e);
   }

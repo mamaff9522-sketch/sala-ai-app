@@ -61,7 +61,23 @@ public final class SalaNavigation {
             return Decision.IN_APP;
         }
 
+        if (host != null && isLoginHost(host)) {
+            return Decision.IN_APP;
+        }
+
         return Decision.EXTERNAL;
+    }
+
+
+    private static boolean isLoginHost(String host) {
+        String h = host.toLowerCase();
+        return h.equals("accounts.google.com")
+            || h.equals("accounts.youtube.com")
+            || h.endsWith(".firebaseapp.com")
+            || h.endsWith(".googleapis.com")
+            || h.equals("googleapis.com")
+            || h.endsWith(".gstatic.com")
+            || h.equals("gstatic.com");
     }
 
     /**
