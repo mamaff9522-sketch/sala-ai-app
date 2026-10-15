@@ -2044,9 +2044,9 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
   // - กฎแบ่ง 20 คำให้ทำงานเฉพาะ “บทพูด” ที่เกิน 20 คำเท่านั้น (Action/Narration ห้ามนำไปนับหรือแตกด้วยกฎ 20 คำ)
   // - ไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป
   // ใช้ rawClips ตามเนื้อเรื่องจริง ห้ามสร้าง Action เพิ่มเองเพื่อยืดจำนวนคลิป
-  const processedRawClips: ParsedRawClip[] = (clipCount && rawClips.length > clipCount)
-    ? rawClips.slice(0, clipCount)
-    : [...rawClips];
+  // Every scene of the story is kept. clipCount is only a hint and never cuts the story short
+  // (a 4-scene story with clipCount 3 used to lose its ending without any warning).
+  const processedRawClips: ParsedRawClip[] = [...rawClips];
 
   // Extract clean continuity lock fields (NO placeholders)
   const charName = cleanFieldValue(continuityLock.characterName) ||
@@ -2797,6 +2797,30 @@ export function validateSalaMultiClipPrompts(
       }
     }
   });
+
+  // Rule 10: every line of the original script must be spoken in some clip (no dropped scenes / ending)
+  if (scriptQuotes && scriptQuotes.size > 0) {
+    const squash = (s: string) => normalizeDialogueLine(s).replace(/[\s"“”'‘’.,!?…]/g, '');
+    const spoken = clips.flatMap(c => (c.dialogues || []).map(d => squash(d.line))).join('|');
+    const lastClip = clips.length > 0 ? (clips[clips.length - 1].clipNumber || clips.length) : 1;
+    const missing = Array.from(scriptQuotes).filter(q => {
+      const key = squash(q);
+      return key.length > 1 && !spoken.includes(key);
+    });
+    missing.forEach((q, mIdx) => {
+      const msg = `บทพูดในต้นฉบับไม่ได้อยู่ในคลิปใดเลย: "${q}" — เนื้อเรื่องบางส่วนอาจหายไป / Script line not in any clip`;
+      warnings.push(msg);
+      issues.push({
+        id: `warn_dropped_dialogue_${mIdx}`,
+        clipNumber: lastClip,
+        type: 'dialogue',
+        severity: 'warning',
+        title: 'บทพูดหายไปจากคลิป',
+        description: msg,
+        suggestion: 'สร้าง Prompt ใหม่ หรือเพิ่มจำนวนคลิปให้ครอบคลุมทุกฉาก'
+      });
+    });
+  }
 
   return {
     isValid: errors.length === 0,

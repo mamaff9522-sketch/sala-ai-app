@@ -50,6 +50,7 @@ import { verifyFirebaseIdToken, createSessionToken, verifySessionToken, isAdminI
 import { addAdminEmail, readAdminEmails } from './adminAllowlist';
 import { CREDIT_CATALOG, MISSING_FIRESTORE_CREDENTIAL_MESSAGE, MISSING_STRIPE_SECRET_MESSAGE, adjustFirestoreCredits, assertFirestoreCredentialConfigured, chargeFromUsageMetadata, creditPaidUserInFirestore, creditsForTokens, deductUsableCredits, ensureCanCallFlashLite, isRealCreditUid, normalizeVideoResolution, paymentAlreadyRecorded, readFirestoreCreditBalance, readPlatformAdminShare, stripHiddenCreditFields } from './serverBilling';
 import { registerTransferRoutes } from './serverTransfer';
+import { loadVeoReferenceImages, resolveVeoReferenceModel, veoDurationSeconds } from './serverVeo';
 
 dotenv.config();
 
@@ -129,6 +130,8 @@ export interface GenerationParams {
   negativePrompt?: string;
   aspectRatio: AspectRatio;
   referenceImages?: string[];
+  /** 'asset' = character/location photos to keep identity (Veo reference images); default = first image is the start frame */
+  referenceMode?: 'asset' | 'start-frame';
   characterId?: string;
   characterName?: string;
   projectId?: string;
@@ -1472,9 +1475,13 @@ class GeminiProviderAdapter implements ProviderAdapter {
     // 1. Prepare Prompt & Reference Image
     const promptText = buildEnrichedPrompt(params);
 
-    // Extract reference image if provided (Image-to-Video)
+    // Character / location photos from the library (Veo "asset" reference images, up to 3)
+    const assetRefs = params.referenceMode === 'asset' ? loadVeoReferenceImages(params.referenceImages, UPLOADS_DIR) : [];
+    const referenceModel = assetRefs.length > 0 ? resolveVeoReferenceModel() : null;
+
+    // Extract reference image if provided (Image-to-Video start frame)
     let inputImage: { imageBytes: string; mimeType: string } | undefined;
-    if (params.referenceImages && params.referenceImages.length > 0) {
+    if (params.referenceMode !== 'asset' && params.referenceImages && params.referenceImages.length > 0) {
       const ref = params.referenceImages[0];
       if (ref.startsWith('data:')) {
         const match = ref.match(/^data:([^;]+);base64,(.+)$/);
@@ -1492,15 +1499,26 @@ class GeminiProviderAdapter implements ProviderAdapter {
     if (params.model && (params.model.includes('veo') || params.model.startsWith('veo-'))) {
       modelName = params.model;
     }
+    const useAssetRefs = assetRefs.length > 0 && !!referenceModel;
+    if (useAssetRefs) modelName = referenceModel as string;
 
     const targetAspectRatio: '16:9' | '9:16' = params.aspectRatio === '9:16' ? '9:16' : '16:9';
 
     const videoResolution = normalizeVideoResolution(params.resolution);
+    // Veo makes 4, 6 or 8 second clips; the chosen length is sent (it used to be left out)
+    const videoDuration = veoDurationSeconds(params.durationSeconds, { resolution: videoResolution, usesReferenceImages: useAssetRefs });
+    params.durationSeconds = videoDuration;
     const videoConfig: any = {
       numberOfVideos: 1,
       resolution: videoResolution,
       aspectRatio: targetAspectRatio,
+      durationSeconds: videoDuration,
     };
+    if (useAssetRefs) {
+      videoConfig.referenceImages = assetRefs.map(image => ({ image, referenceType: 'asset' }));
+    } else if (assetRefs.length > 0) {
+      console.warn('[veo] character reference photos skipped: VEO_REFERENCE_MODEL is off');
+    }
 
     const generatePayload: any = {
       model: modelName,
@@ -1512,7 +1530,7 @@ class GeminiProviderAdapter implements ProviderAdapter {
       generatePayload.image = inputImage;
     }
 
-    updateProgress(15, `กำลังเชื่อมต่อและส่งคำขอสร้างวิดีโอไปยัง Google Veo (${modelName})...`);
+    updateProgress(15, `กำลังเชื่อมต่อและส่งคำขอสร้างวิดีโอไปยัง Google Veo (${modelName}, ${videoDuration} วินาที${useAssetRefs ? `, รูปอ้างอิงตัวละคร ${assetRefs.length} รูป` : ''})...`);
 
     let operation: any;
     try {
@@ -1815,8 +1833,12 @@ function delay(ms: number) {
 function buildEnrichedPrompt(params: GenerationParams): string {
   let prompt = params.prompt;
 
+  const isVideo = params.type === 'video';
+  // Director prompts already carry the full Character Lock; adding the anchor again doubles it
+  const hasCharacterLock = /Character Lock:/i.test(prompt);
+
   // Add character consistency anchor if selected
-  if (params.characterId) {
+  if (params.characterId && !hasCharacterLock) {
     const char = charactersStore.find(c => c.id === params.characterId);
     if (char) {
       const parts: string[] = [];
@@ -1832,8 +1854,14 @@ function buildEnrichedPrompt(params: GenerationParams): string {
     }
   }
 
-  // Add aspect ratio instructions for Gemini
-  prompt += `. Aspect ratio: ${params.aspectRatio}. High quality, photographic composition, clean studio render.`;
+  // Aspect ratio goes in the Veo config; "clean studio render" is an image-only finish that
+  // fought against outdoor / night / location scenes in video prompts.
+  prompt = prompt.replace(/[\s.]+$/, '');
+  if (!isVideo) {
+    prompt += `. Aspect ratio: ${params.aspectRatio}. High quality, photographic composition, clean studio render.`;
+  } else {
+    prompt += '.';
+  }
   if (params.negativePrompt) {
     prompt += ` Avoid: ${params.negativePrompt}`;
   }
@@ -2067,8 +2095,13 @@ app.post('/api/director/generate-multi-clip-prompts', requireAuth, async (req: a
       });
     }
 
-    const count = Math.max(1, Math.min(10, Number(clipCount) || 3));
-    const duration = Math.max(3, Math.min(30, Number(clipDurationSeconds) || 10));
+    const requestedCount = Math.max(1, Math.min(10, Number(clipCount) || 3));
+    // Veo makes 4, 6 or 8 second clips, so dialogue is planned for at most 8 seconds
+    const duration = Math.max(3, Math.min(8, Number(clipDurationSeconds) || 8));
+    // Never plan fewer clips than the script has scenes, or the ending is lost
+    let scriptSceneCount = 0;
+    try { scriptSceneCount = parseSalaScript(scriptText, {}).clips.length; } catch { scriptSceneCount = 0; }
+    const count = Math.max(requestedCount, Math.min(30, scriptSceneCount));
     const sceneCredits = Math.round(count * 0.5 * 100) / 100;
     const creditUid = req.user?.id;
     if (isRealCreditUid(creditUid)) {
@@ -2148,7 +2181,7 @@ app.post('/api/director/generate-multi-clip-prompts', requireAuth, async (req: a
       try {
         {
           const promptInstruction = `You are the Lead Visual Director for high-end cinematic AI video continuity.
-Analyze the following script/scene in Thai, split it into exactly ${count} continuous, sequential video clips of ${duration} seconds each.
+Analyze the following script/scene in Thai and split it into continuous, sequential video clips of ${duration} seconds each (about ${count} clips, at least one per scene). Cover the WHOLE script: every scene, every action and every dialogue line must be in a clip, including the ending. Never drop or merge away any part of the story; add clips if needed.
 
 CRITICAL PROTOCOL & RESERVED KEYWORDS RULES:
 - The following words are RESERVED SYSTEM KEYWORDS: LOCK, CONT, FRAME, AUTO, RULE, NO, OUT, STORY, CHARACTERS, END, SALA_MULTI_CLIP
@@ -2234,7 +2267,7 @@ ${scriptText}
 """
 
 OUTPUT FORMAT:
-Respond ONLY with a JSON array containing exactly ${count} objects (no markdown blocks, no code formatting):
+Respond ONLY with a JSON array with one object per clip, covering the whole script (no markdown blocks, no code formatting):
 [
   {
     "clipNumber": 1,
@@ -2304,6 +2337,7 @@ Respond ONLY with a JSON array containing exactly ${count} objects (no markdown 
                 clipCount: count,
                 continuityLock,
                 dialogues: sanitizedDialogues,
+                characters: libraryChars,
                 locations: libraryLocs,
                 knownCharacters: lockedNames,
                 audioDirectives
@@ -4375,7 +4409,10 @@ app.post('/api/generate', requireAuth, async (req: any, res) => {
     aspectRatio: params.aspectRatio || '1:1',
     characterId: params.characterId,
     characterName: params.characterName,
-    referenceImages: params.referenceImages,
+    // Large data: URLs stay out of the job record (it is polled and listed); the generator reads params
+    referenceImages: Array.isArray(params.referenceImages)
+      ? params.referenceImages.filter((r: any) => typeof r === 'string' && !r.startsWith('data:'))
+      : params.referenceImages,
     projectId: params.projectId,
     sceneId: params.sceneId,
     sceneNumber: params.sceneNumber,

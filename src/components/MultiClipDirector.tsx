@@ -94,6 +94,7 @@ import {
   summarizeAutoSplit
 } from '../services/salaDirectorEngine';
 import { saveCurrentProject } from '../services/savedProjects';
+import { pickClipReferenceImages } from '../services/clipReferenceImages';
 
 interface MultiClipDirectorProps {
   characters: Character[];
@@ -150,7 +151,8 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
     }
     return '';
   });
-  const [clipDurationSeconds, setClipDurationSeconds] = useState<number>(10);
+  // Veo makes 4, 6 or 8 second clips
+  const [clipDurationSeconds, setClipDurationSeconds] = useState<number>(8);
   const [clipCount, setClipCount] = useState<number>(3);
 
   // Sync scriptText to localStorage so state is preserved across tab navigation and refresh
@@ -780,7 +782,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
         // Location Lock from the library is applied inside the builder (verbatim description + reference line)
         const localClips = buildSalaMultiClipPrompts({
           scriptText,
-          clipDurationSeconds: Math.max(3, Math.min(30, Number(clipDurationSeconds) || 10)),
+          clipDurationSeconds: Math.max(3, Math.min(8, Number(clipDurationSeconds) || 8)),
           clipCount: Math.max(1, Math.min(10, Number(clipCount) || 3)),
           continuityLock,
           dialogues: dialogues.filter(d => d && d.speaker && !isReservedSystemKeyword(d.speaker)),
@@ -1010,8 +1012,12 @@ ${c.negativePrompt}
     setBatchProgress({ current: 0, total: clips.length, message: 'กำลังเตรียมส่งคิวประมวลผล...' });
 
     try {
+      // Library photos of the characters in each clip go to Veo so faces and outfits stay the same
+      let libraryForRefs: any[] = [];
+      try { libraryForRefs = (await getLibraryLockPayloads()).payloads; } catch { libraryForRefs = []; }
       for (let i = 0; i < clips.length; i++) {
         const clip = clips[i];
+        const clipRefs = pickClipReferenceImages(clip, libraryForRefs);
         setBatchProgress({
           current: i + 1,
           total: clips.length,
@@ -1033,7 +1039,8 @@ ${c.negativePrompt}
           negativePrompt: clip.negativePrompt,
           aspectRatio: continuityLock.aspectRatio,
           durationSeconds: clip.durationSeconds,
-          characterId: continuityLock.characterId || undefined
+          characterId: continuityLock.characterId || undefined,
+          ...(clipRefs.length > 0 ? { referenceImages: clipRefs, referenceMode: 'asset' as const } : {})
         };
 
         let result: Awaited<ReturnType<typeof api.startGeneration>>;
@@ -1514,12 +1521,9 @@ ${c.negativePrompt}
                   onChange={(e) => setClipDurationSeconds(Number(e.target.value))}
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
                 >
-                  <option value={5}>5 วินาที / คลิป</option>
+                  <option value={4}>4 วินาที / คลิป</option>
                   <option value={6}>6 วินาที / คลิป</option>
-                  <option value={8}>8 วินาที / คลิป</option>
-                  <option value={10}>10 วินาที / คลิป (มาตรฐาน)</option>
-                  <option value={12}>12 วินาที / คลิป</option>
-                  <option value={15}>15 วินาที / คลิป</option>
+                  <option value={8}>8 วินาที / คลิป (มาตรฐาน)</option>
                 </select>
               </div>
 
