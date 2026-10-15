@@ -1,0 +1,43 @@
+# Automatic server deploy: a Cloud Build trigger on pushes to main runs this file.
+# It builds the Dockerfile and rolls the new image out to the existing Cloud Run service.
+# Only the image changes: env vars, secrets and other service settings stay as they are.
+substitutions:
+  _REGION: asia-southeast1
+  _SERVICE: sala-ai-cinematic-ai-video-short-drama-studio
+  _REPO: sala-ai
+
+steps:
+  # Image repository (created once; "already exists" is fine)
+  - id: repo
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        gcloud artifacts repositories describe ${_REPO} --location=${_REGION} >/dev/null 2>&1 \
+          || gcloud artifacts repositories create ${_REPO} --repository-format=docker --location=${_REGION}
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ['build', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/server:$SHORT_SHA', '.']
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/server:$SHORT_SHA']
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/server:$SHORT_SHA
+      - --region=${_REGION}
+
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/server:$SHORT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 1800s
