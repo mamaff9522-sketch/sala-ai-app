@@ -135,7 +135,14 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
     assert.ok(!/ท่าจบคลิป[^.]*เดิน/.test(b), 'no one is still walking at the hand-off');
   }
   const endOf = (b: string) => (b.match(/ท่าจบคลิป \(ค้างไว้ส่งต่อคลิปถัดไป\): ([^.]*)\./) || [])[1];
-  const startOf = (b: string) => (b.match(/ท่าเริ่มคลิป \(ต่อจากคลิปก่อน\): ([^.]*)\./) || [])[1];
+  const startOf = (b: string) => (b.match(/ท่าเริ่มคลิป \(ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ\): ([^.]*)\./) || [])[1];
   for (let i = 1; i < blocks.length; i++) assert.equal(startOf(blocks[i]), endOf(blocks[i - 1]), `clip ${i + 1} starts where clip ${i} ends`);
   console.log('  ✔ Meta AI prompts lock the set and hand the end pose to the next clip');
+  // A clip at a new place starts fresh: nothing carried from the previous clip
+  const { formatClipForMetaAi, metaContextFor } = await import('../src/services/metaAiPrompt');
+  const moved = [{ ...clips[0] }, { ...clips[1], locationName: 'ร้านหมูกระทะ', timeOfDay: 'กลางคืน' }];
+  const m = formatClipForMetaAi(moved[1], metaContextFor(moved as any, 1));
+  assert.ok(m.includes('ล็อกฉาก: สถานที่ ร้านหมูกระทะ เวลา กลางคืน'));
+  assert.ok(!m.includes('ต่อเนื่องจากคลิปก่อน'), 'no pose carried across a change of place');
+  console.log('  ✔ a change of place starts a new set-up, no carried pose');
 }

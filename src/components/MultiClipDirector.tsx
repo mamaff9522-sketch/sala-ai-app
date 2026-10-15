@@ -95,7 +95,7 @@ import {
 } from '../services/salaDirectorEngine';
 import { saveCurrentProject } from '../services/savedProjects';
 import { pickClipReferenceImages } from '../services/clipReferenceImages';
-import { formatClipForMetaAi, formatAllClipsForMetaAi, sceneOfClip } from '../services/metaAiPrompt';
+import { formatClipForMetaAi, formatAllClipsForMetaAi, metaContextFor } from '../services/metaAiPrompt';
 
 interface MultiClipDirectorProps {
   characters: Character[];
@@ -858,7 +858,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
 
   // Copy Single Clip
   const handleCopySingleClip = (clip: DirectedClipItem, index: number) => {
-    const text = copyFormat === 'meta' ? formatClipForMetaAi(clip, { ...metaOptions(), inheritedPlace: sceneOfClip(clips, index) }) : clip.generatedPrompt;
+    const text = copyFormat === 'meta' ? formatClipForMetaAi(clip, { ...metaOptions(), ...metaContextFor(clips, index) }) : clip.generatedPrompt;
     navigator.clipboard.writeText(text);
     setCopiedClipIndex(index);
     setTimeout(() => setCopiedClipIndex(null), 2500);

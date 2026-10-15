@@ -46,6 +46,21 @@ export interface MetaAiFormatOptions {
   knownCharacters?: string[];
   /** Place and time carried from earlier clips when this clip names none (see sceneOfClip) */
   inheritedPlace?: { location: string; timeOfDay: string };
+  /** The clip before this one, with ITS place: same place = continuous (start pose = its end pose) */
+  previous?: { clip: ClipForMeta; place: { location: string; timeOfDay: string } };
+}
+
+const samePlace = (a: string, b: string) => {
+  const n = (x: string) => String(x || '').replace(/\s|ต่อเนื่อง|ที่/g, '').toLowerCase();
+  return !!n(a) && !!n(b) && (n(a) === n(b) || n(a).includes(n(b)) || n(b).includes(n(a)));
+};
+
+/** Options for clip i of a list: carried place and the previous clip (for the pose hand-off). */
+export function metaContextFor(clips: ClipForMeta[], index: number): Pick<MetaAiFormatOptions, 'inheritedPlace' | 'previous'> {
+  return {
+    inheritedPlace: sceneOfClip(clips, index),
+    previous: index > 0 ? { clip: clips[index - 1], place: sceneOfClip(clips, index - 1) } : undefined
+  };
 }
 
 const BLANK_PLACE = /^(?:|ไม่ระบุ.*|unknown|n\/a|none|-)$/i;
@@ -166,10 +181,15 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   if (place.location || place.timeOfDay) {
     lockLines.push(`ล็อกฉาก: ${[place.location ? `สถานที่ ${place.location}` : '', place.timeOfDay ? `เวลา ${place.timeOfDay}` : ''].filter(Boolean).join(' ')} — ฉาก พื้นหลัง และแสงเหมือนเดิมทุกช็อต ห้ามเปลี่ยนสถานที่`);
   }
-  // Start / end lock: start where the previous clip ended, end on a pose the next clip picks up
-  const start = (clip.startPoses || []).map(p => poseText(p, !p.entering)).filter(Boolean).join(', ');
+  // Start / end lock. Continuous clip (same place as the clip before): it starts EXACTLY on the previous
+  // clip's end pose. New place: a new set-up, nothing is carried from the previous clip.
+  const prev = opts.previous;
+  const continuous = !!prev && (!place.location || !prev.place.location || samePlace(place.location, prev.place.location));
+  const carried = continuous && prev ? posesText(prev.clip.endPoses, true) : '';
+  const own = (clip.startPoses || []).map(p => poseText(p, !p.entering)).filter(Boolean).join(', ');
   const end = posesText(clip.endPoses, true);
-  if (start) lockLines.push(`ท่าเริ่มคลิป (ต่อจากคลิปก่อน): ${start}`);
+  if (carried) lockLines.push(`ท่าเริ่มคลิป (ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ): ${carried}`);
+  else if (own) lockLines.push(prev && !continuous ? `เปลี่ยนสถานที่ ท่าเริ่มคลิป: ${own}` : `ท่าเริ่มคลิป: ${own}`);
   if (end || clean(clip.endAction)) {
     lockLines.push(`ท่าจบคลิป (ค้างไว้ส่งต่อคลิปถัดไป): ${end || clean(clip.endAction)}`);
   }
@@ -191,6 +211,6 @@ export function formatAllClipsForMetaAi(clips: ClipForMeta[], opts: MetaAiFormat
   return clips.map((c, i) => {
     const names = charactersInClip(c, opts.knownCharacters || []);
     const photos = names.length > 0 ? `\n(อัปโหลดรูป: ${names.map((n, j) => `${j + 1}. ${n}`).join('  ')})` : '';
-    return `=== คลิป ${c.clipNumber || i + 1}/${clips.length} — ${c.title || ''} ===${photos}\n${formatClipForMetaAi(c, { ...opts, inheritedPlace: sceneOfClip(clips, i) })}`;
+    return `=== คลิป ${c.clipNumber || i + 1}/${clips.length} — ${c.title || ''} ===${photos}\n${formatClipForMetaAi(c, { ...opts, ...metaContextFor(clips, i) })}`;
   }).join('\n\n');
 }
