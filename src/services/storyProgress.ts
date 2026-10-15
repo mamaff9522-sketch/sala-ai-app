@@ -144,3 +144,48 @@ export function checkEpisodeOrder(scenes: any[], resume: ResumePoint): EpisodeOr
   for (let i = 0; i < total; i++) if (!written.has(i)) { allLinesCovered = false; break; }
   return { skippedLines, keepSceneCount, lastIndex, allLinesCovered };
 }
+
+/**
+ * Recovers an episode from a reply that was cut off mid-way (output length limit): keeps every
+ * complete scene object inside "scenes": [...] and the top-level fields written before it.
+ * Returns null when not even one complete scene is there.
+ */
+export function salvageEpisodeJson(raw: string): any | null {
+  const text = String(raw || '');
+  const key = text.search(/"scenes"\s*:\s*\[/);
+  if (key < 0) return null;
+  const arrStart = text.indexOf('[', key);
+  const scenes: any[] = [];
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let objStart = -1;
+  for (let i = arrStart + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{') { if (depth === 0) objStart = i; depth++; }
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0 && objStart >= 0) {
+        try { scenes.push(JSON.parse(text.slice(objStart, i + 1))); } catch { /* skip a broken one */ }
+        objStart = -1;
+      }
+    } else if (ch === ']' && depth === 0) break;
+  }
+  if (scenes.length === 0) return null;
+  const head: any = {};
+  const before = text.slice(0, key);
+  for (const m of before.matchAll(/"(isStoryFinished|sourceCovered)"\s*:\s*(true|false)/g)) head[m[1]] = m[2] === 'true';
+  for (const m of before.matchAll(/"(episodeTitle|finishMessage|currentMilestone|summaryOfEventsSoFar)"\s*:\s*"((?:[^"\\]|\\.)*)"/g)) {
+    try { head[m[1]] = JSON.parse(`"${m[2]}"`); } catch { /* ignore */ }
+  }
+  const num = before.match(/"progressPercentage"\s*:\s*(\d+(?:\.\d+)?)/);
+  if (num) head.progressPercentage = Number(num[1]);
+  return { ...head, scenes, sourceCovered: false, isStoryFinished: false, truncated: true };
+}

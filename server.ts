@@ -51,7 +51,7 @@ import { addAdminEmail, readAdminEmails } from './adminAllowlist';
 import { CREDIT_CATALOG, MISSING_FIRESTORE_CREDENTIAL_MESSAGE, MISSING_STRIPE_SECRET_MESSAGE, adjustFirestoreCredits, assertFirestoreCredentialConfigured, chargeFromUsageMetadata, creditPaidUserInFirestore, creditsForTokens, deductUsableCredits, ensureCanCallFlashLite, isRealCreditUid, normalizeVideoResolution, paymentAlreadyRecorded, readFirestoreCreditBalance, readPlatformAdminShare, stripHiddenCreditFields } from './serverBilling';
 import { registerTransferRoutes } from './serverTransfer';
 import { loadVeoReferenceImages, resolveVeoReferenceModel, veoDurationSeconds } from './serverVeo';
-import { findResumePoint, checkEpisodeOrder } from './src/services/storyProgress';
+import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson } from './src/services/storyProgress';
 
 dotenv.config();
 
@@ -2934,9 +2934,12 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
 
     // Declared / parsed characters (used to normalize speakers and pick the Character Lock)
     const parsedSource = parseStoryStructure(originalStory);
-    const scenesPerEpisode = targetSceneCount && targetSceneCount > 0
+    // At most 6 scenes per episode: asking for the whole story at once overflowed the model's
+    // reply length, the JSON was cut off and "สร้างต่อ" failed with "invalid JSON".
+    const MAX_SCENES_PER_EPISODE = 6;
+    const scenesPerEpisode = Math.min(MAX_SCENES_PER_EPISODE, targetSceneCount && targetSceneCount > 0
       ? targetSceneCount
-      : (parsedSource.hasSceneHeaders && parsedSource.scenes.length > 0 ? parsedSource.scenes.length : 5);
+      : (parsedSource.hasSceneHeaders && parsedSource.scenes.length > 0 ? parsedSource.scenes.length : 5));
     const startSceneNum = effectiveLastScene?.sceneNumber ? effectiveLastScene.sceneNumber + 1 : (existingCount > 0 ? existingCount + 1 : 1);
 
     const offline = req.body?.offline === true;
@@ -3104,7 +3107,8 @@ ${originalStory.trim()}
 """
 ${resumeBlock}
 [เป้าหมายการสร้าง]:
-- สร้าง "ตอนที่ ${episodeNumber}"
+- สร้าง "ตอนที่ ${episodeNumber}" ไม่เกิน ${scenesPerEpisode} ฉาก (เนื้อเรื่องที่เหลือไว้ตอนถัดไป)
+- "visualPrompt" ของแต่ละฉากให้สั้น กระชับ ไม่เกิน 80 คำ ไม่ต้องใส่รายละเอียดหน้าตาตัวละคร (ระบบใส่ Character Lock ให้เอง)
 - ความยาวตามเหตุการณ์จริง (ฉากละประมาณ ${clipDurationSeconds} วินาที ไม่ต้องกำหนดขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip)
 ${episodeNumber === 1 ? '- สำคัญมาก: ตอนที่ 1 ให้สร้างจากช่วงต้นเรื่องเท่านั้น ห้ามสรุปเรื่องทั้งหมดในตอนเดียว' : `- สร้างตอนที่ ${episodeNumber} ต่อจากจุดจบของตอนก่อนหน้าทันที ไม่รีเซ็ต ไม่กระโดด`}
 
@@ -3192,6 +3196,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
           systemInstruction,
           // Low temperature: follow the source in order instead of improvising toward an ending
           temperature: 0.3,
+          maxOutputTokens: 32768,
           responseMimeType: 'application/json',
           responseSchema: storyEpisodeSchema
         }
@@ -3220,6 +3225,14 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
       }
     }
     if (!parsed || typeof parsed !== 'object') {
+      // Reply cut off by the length limit: keep the complete scenes (checked for order below)
+      parsed = salvageEpisodeJson(rawText);
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      if (attempt < 2) {
+        retryNote = `\n\n[แก้ไขจากครั้งก่อน]: คำตอบครั้งก่อนยาวเกินจนถูกตัด ให้สร้างไม่เกิน 3 ฉาก และ visualPrompt สั้นๆ`;
+        continue;
+      }
       return res.status(502).json({
         success: false,
         code: 'GEMINI_INVALID_JSON',

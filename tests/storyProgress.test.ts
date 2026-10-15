@@ -89,3 +89,17 @@ check('Meta AI format: a silent clip says nobody speaks', () => {
 });
 
 console.log(`\nstory progress + Meta AI format: ${passed} passed`);
+
+{
+  const { salvageEpisodeJson } = await import('../src/services/storyProgress');
+  const full = JSON.stringify({ isStoryFinished: false, episodeTitle: 'ตอนที่ 1: "หึง"', progressPercentage: 30, sourceCovered: true,
+    scenes: [{ sceneNumber: 1, sceneHeading: 'ฉาก {1}', dialogues: [{ dialogue: 'ไปไหนมา?' }] }, { sceneNumber: 2, sceneHeading: 'ฉาก 2', visualPrompt: 'long text' }] });
+  const cut = full.slice(0, full.indexOf('long text') + 4);
+  const s = salvageEpisodeJson(cut);
+  assert.equal(s.scenes.length, 1, 'only the complete scene is kept');
+  assert.equal(s.scenes[0].sceneHeading, 'ฉาก {1}');
+  assert.equal(s.episodeTitle, 'ตอนที่ 1: "หึง"');
+  assert.equal(s.sourceCovered, false, 'a cut-off reply never counts as the end of the story');
+  assert.equal(salvageEpisodeJson('{"scenes": [{"sceneNumber": 1, "x": "unfinished'), null);
+  console.log('  ✔ a reply cut off mid-way keeps its complete scenes');
+}
