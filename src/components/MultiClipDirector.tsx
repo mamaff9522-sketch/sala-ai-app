@@ -432,8 +432,8 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
 
     try {
       const sceneHeaderMatches = scriptText.match(/^(?:\[?(?:CLIP|ฉากที่|ฉาก|SCENE)\s*0*(\d+)\]?[:.]?\s*.*)/gim);
-      const detectedScenesCount = sceneHeaderMatches && sceneHeaderMatches.length >= 4 ? sceneHeaderMatches.length : clipCount;
-      const targetClipCount = Math.max(detectedScenesCount, clipCount);
+      // Automatic: as many as the script has scene headings (the server adds more for long dialogue)
+      const targetClipCount = Math.max(1, sceneHeaderMatches ? sceneHeaderMatches.length : 1);
 
       const library = await getLibraryLockPayloads();
       const result = await splitScript(scriptText, {
@@ -767,7 +767,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
 
       // Validate prompts and surface the result in the UI (not only the console)
       const validation = validateSalaMultiClipPrompts(finalizedClips, characterNames);
-      setPromptValidation({ isValid: validation.isValid, errors: validation.errors, warnings: Array.from(new Set([...library.notices, ...validation.warnings, ...autoSplitNotices(finalizedClips, clipCount)])) });
+      setPromptValidation({ isValid: validation.isValid, errors: validation.errors, warnings: Array.from(new Set([...library.notices, ...validation.warnings, ...autoSplitNotices(finalizedClips, finalizedClips.length)])) });
       setClips(finalizedClips);
       setGenerationSource(source);
     };
@@ -784,7 +784,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
         const localClips = buildSalaMultiClipPrompts({
           scriptText,
           clipDurationSeconds: Math.max(3, Math.min(10, Number(clipDurationSeconds) || 8)),
-          clipCount: Math.max(1, Math.min(10, Number(clipCount) || 3)),
+          clipCount: 1, // automatic: every scene, dense scenes split
           continuityLock,
           dialogues: dialogues.filter(d => d && d.speaker && !isReservedSystemKeyword(d.speaker)),
           audioDirectives,
@@ -805,7 +805,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
       const res = await api.generateMultiClipDirectorPrompts({
         scriptText,
         clipDurationSeconds,
-        clipCount,
+        clipCount: 1, // automatic: the server plans one or more clips per scene
         continuityLock,
         dialogues,
         audioDirectives,
@@ -824,7 +824,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
           const localClips = buildSalaMultiClipPrompts({
             scriptText,
             clipDurationSeconds,
-            clipCount,
+            clipCount: 1,
             continuityLock,
             dialogues,
             audioDirectives,
@@ -1545,19 +1545,11 @@ ${c.negativePrompt}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  จำนวนคลิปที่ต้องการแบ่ง
+                  จำนวนคลิป
                 </label>
-                <select
-                  value={clipCount}
-                  onChange={(e) => setClipCount(Number(e.target.value))}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
-                >
-                  <option value={2}>2 คลิปต่อเนื่อง (รวม {clipDurationSeconds * 2} วิ)</option>
-                  <option value={3}>3 คลิปต่อเนื่อง (รวม {clipDurationSeconds * 3} วิ)</option>
-                  <option value={4}>4 คลิปต่อเนื่อง (รวม {clipDurationSeconds * 4} วิ)</option>
-                  <option value={5}>5 คลิปต่อเนื่อง (รวม {clipDurationSeconds * 5} วิ)</option>
-                  <option value={6}>6 คลิปต่อเนื่อง (รวม {clipDurationSeconds * 6} วิ)</option>
-                </select>
+                <div className="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-300">
+                  อัตโนมัติตามบท — ทุกฉากครบ ฉากที่บทพูดยาวแบ่งเป็นหลายคลิปให้เอง
+                </div>
               </div>
             </div>
           </div>
@@ -2302,12 +2294,12 @@ ${c.negativePrompt}
               {isGeneratingPrompts ? (
                 <>
                   <RotateCw className="w-5 h-5 animate-spin" />
-                  <span>กำลังวิเคราะห์และสร้าง Prompt ต่อเนื่อง {clipCount} คลิป...</span>
+                  <span>กำลังวิเคราะห์บทและสร้าง Prompt ทุกคลิป...</span>
                 </>
               ) : (
                 <>
                   <Sparkles className="w-5 h-5 text-cyan-200" />
-                  <span>สร้าง Prompt ทุกคลิปพร้อมกัน ({clipCount} คลิป)</span>
+                  <span>สร้าง Prompt ทุกคลิปพร้อมกัน (แบ่งคลิปอัตโนมัติ)</span>
                 </>
               )}
             </button>

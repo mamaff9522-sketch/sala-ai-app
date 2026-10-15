@@ -51,7 +51,7 @@ import { addAdminEmail, readAdminEmails } from './adminAllowlist';
 import { CREDIT_CATALOG, MISSING_FIRESTORE_CREDENTIAL_MESSAGE, MISSING_STRIPE_SECRET_MESSAGE, adjustFirestoreCredits, assertFirestoreCredentialConfigured, chargeFromUsageMetadata, creditPaidUserInFirestore, creditsForTokens, deductUsableCredits, ensureCanCallFlashLite, isRealCreditUid, normalizeVideoResolution, paymentAlreadyRecorded, readFirestoreCreditBalance, readPlatformAdminShare, stripHiddenCreditFields } from './serverBilling';
 import { registerTransferRoutes } from './serverTransfer';
 import { loadVeoReferenceImages, resolveVeoReferenceModel, veoDurationSeconds } from './serverVeo';
-import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson } from './src/services/storyProgress';
+import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson, splitDenseDialogueScenes } from './src/services/storyProgress';
 
 dotenv.config();
 
@@ -2405,6 +2405,8 @@ Respond ONLY with a JSON array with one object per clip, covering the whole scri
     // Apply DIALOGUE 20-WORD SPLIT SYSTEM (ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ)
     const splitResult = applyDialogue20WordSplitToClips(clips, duration);
     clips = splitResult.clips;
+    // Too much dialogue for one clip: split into consecutive clips (Gemini sometimes packs a whole scene)
+    clips = splitDenseDialogueScenes(clips, duration, { promptKey: 'generatedPrompt', numberKey: 'clipNumber', titleKey: 'title', endKey: 'endAction' });
 
     const validation = validateSalaMultiClipPrompts(clips, lockedNames, scriptText);
 
@@ -2706,7 +2708,7 @@ LOCK, CONT, FRAME, AUTO, RULE, NO, OUT, STORY, CHARACTERS, END, SALA_MULTI_CLIP
 ${scriptText.trim()}
 """
 
-${clipCount ? `ต้องการให้แบ่งออกเป็นประมาณ ${clipCount} ฉาก/คลิปต่อเนื่องกัน (ไม่ต้องกำหนดขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip)` : 'ให้แบ่งฉากตามโครงเรื่องจริงที่ระบุไว้ในบท โดยไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip รวม Action ต่อเนื่องในฉากเดียวกันไว้ในคลิปเดียว'}
+${Number(clipCount) > 1 ? `ต้องการให้แบ่งออกเป็นประมาณ ${clipCount} ฉาก/คลิปต่อเนื่องกัน (ไม่ต้องกำหนดขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip)` : 'ให้แบ่งฉากตามโครงเรื่องจริงที่ระบุไว้ในบท โดยไม่ต้องกำหนดจำนวนคลิปขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip รวม Action ต่อเนื่องในฉากเดียวกันไว้ในคลิปเดียว'}
 ${lockedContext}
 
 โครงสร้าง JSON ที่ต้องส่งกลับ (JSON format strictly):
@@ -2971,6 +2973,10 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
         continuityLock,
         clipDurationSeconds
       });
+      // One scene with more dialogue than one clip can hold becomes several clips
+      if (Array.isArray((localContinuation as any).scenes)) {
+        (localContinuation as any).scenes = splitDenseDialogueScenes((localContinuation as any).scenes, Number(clipDurationSeconds) || 8);
+      }
       return res.json({
         success: true,
         source: 'offline-narrative-engine',
@@ -3288,7 +3294,9 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
       declaredNames,
       existingScenes
     });
-    parsed.scenes = locked.scenes;
+    // One scene with more dialogue than one clip can hold becomes several clips
+    // (a 7-line scene used to come out as a single 8-second prompt)
+    parsed.scenes = splitDenseDialogueScenes(locked.scenes, Number(clipDurationSeconds) || 8);
     parsed.continuityWarnings = locked.warnings;
     parsed.characterWarnings = locked.characterWarnings;
 

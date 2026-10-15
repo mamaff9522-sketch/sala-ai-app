@@ -11,6 +11,7 @@
  *   before the first jump)
  */
 import { parseStoryStructure } from './storyEpisodeEngine';
+import { findSections } from './promptSections';
 
 export interface ResumePoint {
   /** Source dialogue lines in story order */
@@ -188,4 +189,85 @@ export function salvageEpisodeJson(raw: string): any | null {
   const num = before.match(/"progressPercentage"\s*:\s*(\d+(?:\.\d+)?)/);
   if (num) head.progressPercentage = Number(num[1]);
   return { ...head, scenes, sourceCovered: false, isStoryFinished: false, truncated: true };
+}
+
+/**
+ * Splits scenes whose dialogue cannot be spoken in one clip into consecutive parts
+ * (same density rule as the offline builder: ~80% of the clip for speech, about 3 lines per 10 s).
+ * Works for story-continuation scenes ({dialogues:[{speaker, dialogue}], visualPrompt}) and
+ * director clips ({dialogues:[{speaker, line}], generatedPrompt}). Each part keeps only its own
+ * lines in the prompt; numbers are renumbered from the first scene's number.
+ */
+export function splitDenseDialogueScenes<T extends Record<string, any>>(
+  scenes: T[],
+  clipDurationSeconds: number,
+  opts: { promptKey?: 'visualPrompt' | 'generatedPrompt'; numberKey?: 'sceneNumber' | 'clipNumber'; titleKey?: 'sceneHeading' | 'title'; endKey?: 'endState' | 'endAction' } = {}
+): T[] {
+  const promptKey = opts.promptKey || 'visualPrompt';
+  const numberKey = opts.numberKey || 'sceneNumber';
+  const titleKey = opts.titleKey || 'sceneHeading';
+  const endKey = opts.endKey || 'endState';
+  const duration = Math.max(3, Number(clipDurationSeconds) || 8);
+  const lineOf = (d: any) => String(d?.dialogue ?? d?.line ?? '').trim();
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // ~12 Thai chars/s + 0.6 s per line, 80% of the clip; at most ~3 lines per 10 s
+  const secs = (l: string) => l.replace(/\s/g, '').length / 12 + 0.6;
+  const budget = 0.8 * duration;
+  const maxLines = Math.max(1, Math.round(3 * duration / 10));
+
+  const out: T[] = [];
+  for (const scene of scenes || []) {
+    const ds: any[] = Array.isArray(scene?.dialogues) ? scene.dialogues : [];
+    const total = ds.reduce((a, d) => a + secs(lineOf(d)), 0);
+    if (ds.length < 2 || (total <= budget && ds.length <= maxLines)) { out.push(scene); continue; }
+    // Greedy groups in order: close a group when the next line would overflow time or line count
+    const groups: any[][] = [];
+    let cur: any[] = [];
+    let t = 0;
+    for (const d of ds) {
+      const s = secs(lineOf(d));
+      if (cur.length > 0 && (t + s > budget || cur.length >= maxLines)) { groups.push(cur); cur = []; t = 0; }
+      cur.push(d); t += s;
+    }
+    if (cur.length) groups.push(cur);
+    if (groups.length < 2) { out.push(scene); continue; }
+    const prompt = String(scene?.[promptKey] || '');
+    // Action written after the last line inside the dialogue block ("They laugh together") ends the
+    // scene: only the last part keeps it. It stops at the next known section (locks added later).
+    let tail = '';
+    const lastSrc = lineOf(ds[ds.length - 1]);
+    const at = lastSrc ? prompt.lastIndexOf(lastSrc) : -1;
+    if (at >= 0) {
+      const after = at + lastSrc.length;
+      const next = findSections(prompt).find(sec => sec.start >= after);
+      tail = prompt.slice(after, next ? next.start : prompt.length).replace(/^["”]/, '').trim().replace(/^[.,]\s*/, '');
+      if (tail.length > 300) tail = '';
+    }
+    groups.forEach((g, k) => {
+      let p = prompt;
+      if (tail && k < groups.length - 1) p = p.split(tail).join(' ');
+      for (const other of ds) {
+        if (g.includes(other)) continue;
+        const line = lineOf(other);
+        if (!line) continue;
+        const sp = esc(String(other?.speaker || ''));
+        const re = new RegExp(`(?:\\[?${sp}\\]?\\s*[:：]\\s*)?["“]?${esc(line)}["”]?\\s*`, 'g');
+        p = p.replace(re, ' ');
+      }
+      p = p.replace(/\s{2,}/g, ' ').replace(/\s+([.,])/g, '$1').trim();
+      const lastLine = lineOf(g[g.length - 1]);
+      const prevLast = k > 0 ? lineOf(groups[k - 1][groups[k - 1].length - 1]) : '';
+      out.push({
+        ...scene,
+        dialogues: g,
+        [promptKey]: p,
+        [titleKey]: `${scene?.[titleKey] || ''} (ตอนที่ ${k + 1}/${groups.length})`.trim(),
+        ...(k > 0 ? { startAction: `ต่อเนื่องจากคลิปก่อน หลังบทพูด "${prevLast}" ฉาก ท่าทาง และตำแหน่งเดิม` } : {}),
+        ...(k < groups.length - 1 ? { [endKey]: `ยังอยู่ในฉากเดิม หลังบทพูด "${lastLine}" ส่งต่อคลิปถัดไป` } : {}),
+        splitPart: { part: k + 1, total: groups.length, reason: `บทพูดยาวเกิน ${duration} วินาที แบ่งเป็น ${groups.length} คลิป` }
+      } as T);
+    });
+  }
+  const start = Number(scenes?.[0]?.[numberKey]) || 1;
+  return out.map((s, i) => ({ ...s, [numberKey]: start + i }));
 }

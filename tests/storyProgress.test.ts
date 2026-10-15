@@ -103,3 +103,23 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
   assert.equal(salvageEpisodeJson('{"scenes": [{"sceneNumber": 1, "x": "unfinished'), null);
   console.log('  ✔ a reply cut off mid-way keeps its complete scenes');
 }
+
+{
+  const { splitDenseDialogueScenes } = await import('../src/services/storyProgress');
+  const L = ['พี่ทุย! มานี่เร็ว มาดูอีนี่สิ มันโพสต์อวดรถใหม่อีกแล้ว!', 'แล้วมันเกี่ยวอะไรกับเอ็งวะ? รถมัน เงินมัน!', 'โอ๊ย! ฉันหมั่นไส้มัน อยากด่ามันสักหน่อย!', 'ก็ไปด่ามันสิ!', 'จะบ้าเหรอ! ใช้เฟซจริงด่า เดี๋ยวชาวบ้านก็รู้หมด!', 'ก็ใช้เฟซอวตารที่เราสมัครไว้ไง ใครมันจะไปรู้ว่าเป็นเรา!', 'เออจริงด้วย! พี่ใช้เฟซหนึ่ง ฉันใช้อีกเฟซหนึ่ง แล้วช่วยกันคอมเมนต์!'];
+  const ds = L.map((l, i) => ({ speaker: i % 2 ? 'พี่ทุย' : 'น้องน้ำ', dialogue: l }));
+  const vp = 'Cinematic. Dialogue: ' + ds.map(d => `[${d.speaker}]: ${d.dialogue}`).join(' ') + ' They laugh together happily. Character Lock: X.';
+  const out = splitDenseDialogueScenes([{ sceneNumber: 5, sceneHeading: 'ฉากที่ 1', dialogues: ds, visualPrompt: vp, endState: 'หัวเราะ' }], 8);
+  assert.ok(out.length >= 3, 'a 7-line scene is not one 8-second clip');
+  assert.deepEqual(out.map(s => s.sceneNumber), out.map((_, i) => 5 + i));
+  assert.deepEqual(out.flatMap(s => s.dialogues.map((d: any) => d.dialogue)), L, 'every line once, in order');
+  for (const s of out) {
+    for (const d of ds) assert.equal(s.visualPrompt.includes(d.dialogue), s.dialogues.includes(d), 'each prompt has only its own lines');
+    assert.ok(s.visualPrompt.includes('Character Lock: X.'), 'locks stay in every part');
+  }
+  assert.equal(out.filter(s => s.visualPrompt.includes('laugh')).length, 1, 'the closing action only in the last part');
+  assert.equal(out[out.length - 1].endState, 'หัวเราะ');
+  const short = splitDenseDialogueScenes([{ sceneNumber: 1, dialogues: ds.slice(3, 4), visualPrompt: 'x' }], 8);
+  assert.equal(short.length, 1, 'a short scene stays one clip');
+  console.log(`  ✔ a long dialogue scene becomes ${out.length} clips in order`);
+}

@@ -1184,6 +1184,9 @@ export const api = {
         continuityLock: payload.continuityLock,
         clipDurationSeconds: payload.clipDurationSeconds || 10
       });
+      // One scene with more dialogue than one clip can hold becomes several clips
+      const { splitDenseDialogueScenes } = await import('./storyProgress');
+      if (Array.isArray((localResult as any).scenes)) (localResult as any).scenes = splitDenseDialogueScenes((localResult as any).scenes, payload.clipDurationSeconds || 8);
       return {
         success: true,
         source: 'offline-narrative-engine',
@@ -1237,6 +1240,9 @@ export const api = {
         continuityLock: payload.continuityLock,
         clipDurationSeconds: payload.clipDurationSeconds || 10
       });
+      // One scene with more dialogue than one clip can hold becomes several clips
+      const { splitDenseDialogueScenes } = await import('./storyProgress');
+      if (Array.isArray((localResult as any).scenes)) (localResult as any).scenes = splitDenseDialogueScenes((localResult as any).scenes, payload.clipDurationSeconds || 8);
       return {
         success: true,
         source: 'offline-narrative-engine',
@@ -1262,6 +1268,9 @@ export const api = {
           continuityLock: payload.continuityLock,
           clipDurationSeconds: payload.clipDurationSeconds || 10
         });
+        // One scene with more dialogue than one clip can hold becomes several clips
+        const { splitDenseDialogueScenes } = await import('./storyProgress');
+        if (Array.isArray((localResult as any).scenes)) (localResult as any).scenes = splitDenseDialogueScenes((localResult as any).scenes, payload.clipDurationSeconds || 8);
         return {
           success: true,
           source: 'offline-narrative-engine',
