@@ -95,6 +95,7 @@ import {
 } from '../services/salaDirectorEngine';
 import { saveCurrentProject } from '../services/savedProjects';
 import { pickClipReferenceImages } from '../services/clipReferenceImages';
+import { formatClipForMetaAi, formatAllClipsForMetaAi } from '../services/metaAiPrompt';
 
 interface MultiClipDirectorProps {
   characters: Character[];
@@ -151,7 +152,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
     }
     return '';
   });
-  // Veo makes 4, 6 or 8 second clips
+  // Meta AI clips run about 8-10 seconds; 8 keeps dialogue inside even the shorter ones
   const [clipDurationSeconds, setClipDurationSeconds] = useState<number>(8);
   const [clipCount, setClipCount] = useState<number>(3);
 
@@ -782,7 +783,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
         // Location Lock from the library is applied inside the builder (verbatim description + reference line)
         const localClips = buildSalaMultiClipPrompts({
           scriptText,
-          clipDurationSeconds: Math.max(3, Math.min(8, Number(clipDurationSeconds) || 8)),
+          clipDurationSeconds: Math.max(3, Math.min(10, Number(clipDurationSeconds) || 8)),
           clipCount: Math.max(1, Math.min(10, Number(clipCount) || 3)),
           continuityLock,
           dialogues: dialogues.filter(d => d && d.speaker && !isReservedSystemKeyword(d.speaker)),
@@ -842,8 +843,22 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
     }
   };
 
+  // Copy format: 'meta' = short prompt for Meta AI with uploaded character photos (default), 'full' = whole director prompt
+  const [copyFormat, setCopyFormat] = useState<'meta' | 'full'>(() => {
+    try { return localStorage.getItem('sala_copy_format') === 'full' ? 'full' : 'meta'; } catch { return 'meta'; }
+  });
+  const changeCopyFormat = (f: 'meta' | 'full') => {
+    setCopyFormat(f);
+    try { localStorage.setItem('sala_copy_format', f); } catch { /* ignore */ }
+  };
+  const metaOptions = () => ({
+    aspectRatio: continuityLock.aspectRatio,
+    knownCharacters: (characters || []).map((c: any) => String(c?.name || '')).filter(Boolean)
+  });
+
   // Copy Single Clip
-  const handleCopySingleClip = (text: string, index: number) => {
+  const handleCopySingleClip = (clip: DirectedClipItem, index: number) => {
+    const text = copyFormat === 'meta' ? formatClipForMetaAi(clip, metaOptions()) : clip.generatedPrompt;
     navigator.clipboard.writeText(text);
     setCopiedClipIndex(index);
     setTimeout(() => setCopiedClipIndex(null), 2500);
@@ -852,7 +867,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
   // Copy All Clips Prompt Formatted
   const handleCopyAllClips = () => {
     if (clips.length === 0) return;
-    const fullText = clips.map(c => (
+    const fullText = copyFormat === 'meta' ? formatAllClipsForMetaAi(clips, metaOptions()) : clips.map(c => (
 `=== [CLIP ${c.clipNumber}/${clips.length} - ${c.title} (${c.durationSeconds}s)] ===
 ${c.generatedPrompt}
 
@@ -1521,9 +1536,10 @@ ${c.negativePrompt}
                   onChange={(e) => setClipDurationSeconds(Number(e.target.value))}
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
                 >
-                  <option value={4}>4 วินาที / คลิป</option>
+                  <option value={5}>5 วินาที / คลิป</option>
                   <option value={6}>6 วินาที / คลิป</option>
                   <option value={8}>8 วินาที / คลิป (มาตรฐาน)</option>
+                  <option value={10}>10 วินาที / คลิป</option>
                 </select>
               </div>
 
@@ -2360,12 +2376,23 @@ ${c.negativePrompt}
               )}
               <p className="text-xs text-slate-400">
                 {directorMode === 'prompt_only'
-                  ? 'โหมดสร้าง Prompt ฟรี: พร้อมคัดลอกไปใช้ใน Runway, Sora, Kling, Luma'
+                  ? 'โหมดสร้าง Prompt ฟรี: พร้อมคัดลอกไปใช้ใน Meta AI, Kling, Runway, Luma'
                   : `โหมด Auto Generate: พร้อมส่งสร้างอัตโนมัติกับ ${activeProvider.name}`}
               </p>
             </div>
 
             <div className="flex items-center gap-2">
+              {clips.length > 0 && (
+                <select
+                  value={copyFormat}
+                  onChange={(e) => changeCopyFormat(e.target.value === 'full' ? 'full' : 'meta')}
+                  className="bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"
+                  title="รูปแบบตอนคัดลอก"
+                >
+                  <option value="meta">คัดลอกแบบ Meta AI (สั้น ใช้รูปที่อัปโหลด)</option>
+                  <option value="full">คัดลอกแบบเต็ม</option>
+                </select>
+              )}
               {clips.length > 0 && (
                 <button
                   onClick={handleCopyAllClips}
@@ -2504,7 +2531,7 @@ ${c.negativePrompt}
                   {/* Actions: Copy, Edit, Regenerate */}
                   <div className="flex items-center gap-1.5">
                     <button
-                      onClick={() => handleCopySingleClip(clip.generatedPrompt, index)}
+                      onClick={() => handleCopySingleClip(clip, index)}
                       className="px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all flex items-center gap-1.5 active:scale-95"
                       title="คัดลอกเฉพาะคลิปนี้"
                     >

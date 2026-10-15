@@ -51,6 +51,7 @@ import { addAdminEmail, readAdminEmails } from './adminAllowlist';
 import { CREDIT_CATALOG, MISSING_FIRESTORE_CREDENTIAL_MESSAGE, MISSING_STRIPE_SECRET_MESSAGE, adjustFirestoreCredits, assertFirestoreCredentialConfigured, chargeFromUsageMetadata, creditPaidUserInFirestore, creditsForTokens, deductUsableCredits, ensureCanCallFlashLite, isRealCreditUid, normalizeVideoResolution, paymentAlreadyRecorded, readFirestoreCreditBalance, readPlatformAdminShare, stripHiddenCreditFields } from './serverBilling';
 import { registerTransferRoutes } from './serverTransfer';
 import { loadVeoReferenceImages, resolveVeoReferenceModel, veoDurationSeconds } from './serverVeo';
+import { findResumePoint, checkEpisodeOrder } from './src/services/storyProgress';
 
 dotenv.config();
 
@@ -2096,8 +2097,8 @@ app.post('/api/director/generate-multi-clip-prompts', requireAuth, async (req: a
     }
 
     const requestedCount = Math.max(1, Math.min(10, Number(clipCount) || 3));
-    // Veo makes 4, 6 or 8 second clips, so dialogue is planned for at most 8 seconds
-    const duration = Math.max(3, Math.min(8, Number(clipDurationSeconds) || 8));
+    // Meta AI / Veo clips run 8-10 seconds at most, so dialogue is planned for at most 10 seconds
+    const duration = Math.max(3, Math.min(10, Number(clipDurationSeconds) || 8));
     // Never plan fewer clips than the script has scenes, or the ending is lost
     let scriptSceneCount = 0;
     try { scriptSceneCount = parseSalaScript(scriptText, {}).clips.length; } catch { scriptSceneCount = 0; }
@@ -2940,6 +2941,13 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
 
     const offline = req.body?.offline === true;
 
+    // Where the story stands: the last source line already written and the source text after it.
+    // The model gets exactly the part still to write, so it cannot jump from the middle to the ending.
+    const resume = findResumePoint(originalStory, [
+      ...(Array.isArray(existingScenes) ? existingScenes : []),
+      ...(effectiveLastScene ? [effectiveLastScene] : [])
+    ]);
+
     const declaredNames = Array.from(new Set([
       ...parsedSource.characters.map(c => c.name),
       ...(Array.isArray(characters)
@@ -3045,7 +3053,7 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
   "currentMilestone": string,
   "summaryOfEventsSoFar": string,
   "sourceCovered": boolean (true เมื่อตอนนี้ครอบคลุมเหตุการณ์สุดท้ายของเนื้อเรื่องต้นฉบับแล้ว ไม่มีเหตุการณ์เหลือให้สร้างต่อ),
-  "episodeScriptText": "บทละครทั้งตอนที่จัดฟอร์แมตสมบูรณ์ (มีหัวข้อตอน, ฉากที่ 1 ถึง 5 หรือ 6, ระบุตำแหน่งตัวละคร, เริ่มต้น, การกระทำ, บทพูด, สิ้นสุดฉาก) สำหรับใส่ลงช่อง 'วางบทหรือฉากหลายฉาก' อัตโนมัติ",
+  "episodeScriptText": "บทละครทั้งตอนที่จัดฟอร์แมตสมบูรณ์ (มีหัวข้อตอน, ฉากตามลำดับต้นฉบับ, ระบุตำแหน่งตัวละคร, เริ่มต้น, การกระทำ, บทพูด, สิ้นสุดฉาก) สำหรับใส่ลงช่อง 'วางบทหรือฉากหลายฉาก' อัตโนมัติ",
   "scenes": [
 {
   "sceneNumber": number,
@@ -3070,11 +3078,31 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
   ]
 }`;
 
-    const prompt = `[เนื้อเรื่องต้นฉบับทั้งหมด (Master Story Source of Truth)]:
+    const resumeBlock = resume.lastWrittenIndex >= 0 && resume.remainingText
+      ? `
+[จุดที่เขียนถึงแล้ว]: ตอนก่อนหน้าเขียนถึงบทพูด "${resume.lastWrittenLine}" แล้ว (ทุกอย่างก่อนหน้านั้นเขียนไปแล้ว ห้ามเขียนซ้ำ)
+
+[เนื้อเรื่องส่วนที่ยังไม่ได้เขียน — ตอนนี้ต้องเริ่มจากบรรทัดแรกของส่วนนี้]:
+"""
+${resume.remainingText}
+"""
+
+[กฎลำดับเรื่อง (สำคัญที่สุด)]:
+- เขียนตามลำดับของ "ส่วนที่ยังไม่ได้เขียน" บรรทัดต่อบรรทัด ทุกบทพูดและทุกเหตุการณ์ ห้ามข้ามแม้แต่บรรทัดเดียว
+- ห้ามกระโดดไปเขียนตอนจบ ห้ามสรุปรวบเหตุการณ์ที่เหลือ
+- ถ้าเนื้อเรื่องยาวเกินตอนนี้ ให้หยุดตรงกลางเรื่องได้เลย แล้วตั้ง "sourceCovered": false เพื่อให้ผู้ใช้กดสร้างตอนต่อไป
+`
+      : `
+[กฎลำดับเรื่อง (สำคัญที่สุด)]:
+- เริ่มจากบรรทัดแรกของเนื้อเรื่อง แล้วเขียนตามลำดับบรรทัดต่อบรรทัด ทุกบทพูดและทุกเหตุการณ์ ห้ามข้าม
+- ห้ามกระโดดไปเขียนตอนจบ ห้ามสรุปรวบเหตุการณ์ ถ้าเนื้อเรื่องยาวเกินตอนนี้ให้หยุดกลางเรื่องแล้วตั้ง "sourceCovered": false
+`;
+
+    const prompt = `[เนื้อเรื่องต้นฉบับทั้งหมด (Master Story Source of Truth) — ใช้อ้างอิงเท่านั้น]:
 """
 ${originalStory.trim()}
 """
-
+${resumeBlock}
 [เป้าหมายการสร้าง]:
 - สร้าง "ตอนที่ ${episodeNumber}"
 - ความยาวตามเหตุการณ์จริง (ฉากละประมาณ ${clipDurationSeconds} วินาที ไม่ต้องกำหนดขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip)
@@ -3149,14 +3177,21 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
       required: ['isStoryFinished', 'episodeNumber', 'episodeTitle', 'progressPercentage', 'sourceCovered', 'scenes']
     };
 
+    // Up to 2 attempts: the second one only when the first skipped source lines before writing anything usable
+    let parsed: any = null;
+    let validation: ReturnType<typeof validateGeminiEpisodeScenes> | null = null;
+    let order: ReturnType<typeof checkEpisodeOrder> | null = null;
+    let retryNote = '';
+    for (let attempt = 1; attempt <= 2; attempt++) {
     let rawText = '';
     try {
       const billed = await callBillableGemini(req, res, ai, {
         model: 'gemini-3.1-flash-lite',
-        contents: prompt,
+        contents: prompt + retryNote,
         config: {
           systemInstruction,
-          temperature: 0.7,
+          // Low temperature: follow the source in order instead of improvising toward an ending
+          temperature: 0.3,
           responseMimeType: 'application/json',
           responseSchema: storyEpisodeSchema
         }
@@ -3174,7 +3209,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
       });
     }
 
-    let parsed: any = null;
+    parsed = null;
     const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     try {
       parsed = JSON.parse(cleanJson);
@@ -3192,7 +3227,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
       });
     }
 
-    const validation = validateGeminiEpisodeScenes(parsed, startSceneNum, declaredNames);
+    validation = validateGeminiEpisodeScenes(parsed, startSceneNum, declaredNames);
     if (!validation.ok) {
       return res.status(502).json({
         success: false,
@@ -3201,6 +3236,35 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
         details: validation.errors
       });
     }
+    order = checkEpisodeOrder(validation.scenes, resume);
+    if (order.skippedLines.length === 0 || order.keepSceneCount > 0) break;
+    retryNote = `
+
+[แก้ไขจากครั้งก่อน]: ครั้งก่อนคุณข้ามบทพูดเหล่านี้ไป ซึ่งห้ามเด็ดขาด: ${order.skippedLines.slice(0, 6).map(l => `"${l}"`).join(', ')}
+ให้เริ่มฉากแรกจากบทพูด "${order.skippedLines[0]}" และเขียนตามลำดับ ห้ามข้าม`;
+    }
+    if (!validation || !order) {
+      return res.status(502).json({ success: false, code: 'GEMINI_INVALID_SCENES', message: 'Gemini ไม่ได้ส่งฉากกลับมา กรุณาลองใหม่' });
+    }
+    if (order.skippedLines.length > 0 && order.keepSceneCount === 0) {
+      return res.status(502).json({
+        success: false,
+        code: 'STORY_SKIPPED',
+        message: `Gemini ข้ามเนื้อเรื่องกลางเรื่อง (เช่น "${order.skippedLines[0]}") จึงไม่ใช้ผลนี้ กรุณากดสร้างต่ออีกครั้ง หรือใช้โหมดออฟไลน์ / Gemini skipped part of the story; result rejected.`,
+        details: order.skippedLines
+      });
+    }
+    let orderNotice = '';
+    if (order.skippedLines.length > 0) {
+      // Keep only the scenes before the jump; the rest is written by the next "สร้างต่อ"
+      const dropped = validation.scenes.length - order.keepSceneCount;
+      validation.scenes = validation.scenes.slice(0, order.keepSceneCount);
+      order = checkEpisodeOrder(validation.scenes, resume);
+      orderNotice = `Gemini พยายามข้ามไปช่วงท้ายเรื่อง ระบบตัด ${dropped} ฉากที่ข้ามออก และเก็บเฉพาะฉากที่ต่อเนื่องตามต้นฉบับ กดสร้างต่อเพื่อเขียนส่วนที่เหลือ`;
+      parsed.sourceCovered = false;
+    }
+    // Not covered while any source dialogue line is still unwritten
+    if (resume.sourceLines.length > 0 && !order.allLinesCovered) parsed.sourceCovered = false;
     // Same guarantees as offline mode: heading inheritance, full Character Lock,
     // one Location Lock per place and pose handoff, all included in visualPrompt.
     const locked = applyEpisodeLocks(validation.scenes, {
@@ -3234,6 +3298,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
 
     parsed.nextScene = parsed.scenes[0];
     parsed.episodeNumber = episodeNumber;
+    if (orderNotice) parsed.fallbackNotice = orderNotice;
 
     return res.json({
       ...parsed,
