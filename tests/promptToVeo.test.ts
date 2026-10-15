@@ -48,7 +48,9 @@ check('clip length snaps to Veo 4 / 6 / 8 seconds', () => {
 check('reference photos go to a Veo model that accepts them', () => {
   assert.equal(veoSupportsReferenceImages('veo-3.1-lite-generate-preview'), false);
   assert.equal(veoSupportsReferenceImages('veo-3.1-generate-preview'), true);
-  assert.equal(resolveVeoReferenceModel(undefined), DEFAULT_VEO_REFERENCE_MODEL);
+  assert.equal(resolveVeoReferenceModel(undefined), null, 'off unless turned on');
+  assert.equal(resolveVeoReferenceModel('on'), DEFAULT_VEO_REFERENCE_MODEL);
+  assert.equal(resolveVeoReferenceModel('veo-3.1-generate-preview'), 'veo-3.1-generate-preview');
   assert.equal(resolveVeoReferenceModel('off'), null);
   assert.equal(resolveVeoReferenceModel('veo-3.1-lite-generate-preview'), null);
 });

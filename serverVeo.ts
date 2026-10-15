@@ -4,9 +4,9 @@
  * - Veo 3.1 / Fast / Lite make 4, 6 or 8 second clips only. 8 is required with
  *   reference images or 1080p. The clip length the user chose is snapped to one of these.
  * - Character reference photos ("asset" reference images, up to 3) work on Veo 3.1 and
- *   Veo 3.1 Fast, not on Veo 3.1 Lite. When a clip carries library photos, the request is
- *   sent to VEO_REFERENCE_MODEL (default veo-3.1-generate-preview). Set
- *   VEO_REFERENCE_MODEL=off to keep Lite and send text only.
+ *   Veo 3.1 Fast, not on Veo 3.1 Lite. Off by default (the app's focus is prompts used in
+ *   other tools, and Veo 3.1 costs more than Lite). Set VEO_REFERENCE_MODEL=veo-3.1-generate-preview
+ *   (or another Veo 3.1 model) to send library photos with in-app video generation.
  */
 import fs from 'fs';
 import path from 'path';
@@ -45,7 +45,8 @@ export function veoSupportsReferenceImages(model: string): boolean {
 /** Model used when a clip carries character reference photos, or null when turned off. */
 export function resolveVeoReferenceModel(env: string | undefined = process.env.VEO_REFERENCE_MODEL): string | null {
   const v = String(env ?? '').trim();
-  if (!v) return DEFAULT_VEO_REFERENCE_MODEL;
+  if (!v) return null;
+  if (/^(on|true|1|yes)$/i.test(v)) return DEFAULT_VEO_REFERENCE_MODEL;
   if (/^(off|false|0|none)$/i.test(v)) return null;
   return veoSupportsReferenceImages(v) ? v : null;
 }
