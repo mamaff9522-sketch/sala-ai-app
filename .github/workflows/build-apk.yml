@@ -61,15 +61,10 @@ jobs:
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
-          HAS_FIXED_KEY: ${{ secrets.ANDROID_KEYSTORE_PASSWORD != '' }}
         run: |
           cp android/app/build/outputs/apk/debug/app-debug.apk SalaAI.apk
           TAG="build-${{ github.run_number }}"
-          if [ "$HAS_FIXED_KEY" = "true" ]; then
-            NOTE="Signed with the fixed Sala AI key: installs over the previous version as an update."
-          else
-            NOTE="Signed with a one-off key (ANDROID_KEYSTORE_PASSWORD secret not set): uninstall the old app before installing."
-          fi
+          NOTE="Signed with the fixed Sala AI key: installs over the previous build-N version as an update."
           gh release create "$TAG" SalaAI.apk \
             --repo "${{ github.repository }}" \
             --title "Sala AI 1.9.${{ github.run_number }}" \

@@ -18,10 +18,11 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
-    // Fixed signing key (android/sala-release.keystore, password in the ANDROID_KEYSTORE_PASSWORD
-    // GitHub secret). Same key every build, so a new APK installs over the old app as an update.
-    // Without the secret the build falls back to Gradle's own debug key, as before.
-    def keystorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+    // Fixed signing key (android/sala-release.keystore), same key every build, so a new APK installs
+    // over the old app and Google sign-in keeps working once its SHA-1 is registered
+    // (B6:B7:42:B2:F7:C9:39:E6:5C:5B:4F:97:F6:54:E1:2E:BC:46:D8:CB). Like Android's standard debug
+    // key, its password is not secret; the ANDROID_KEYSTORE_PASSWORD env var overrides it.
+    def keystorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD') ?: 'cc72c3875ee9ef5d72cb74ad2c30506c'
     signingConfigs {
         sala {
             storeFile file('../sala-release.keystore')
