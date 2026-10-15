@@ -7,8 +7,10 @@ android {
         applicationId "com.salaai.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10
-        versionName "1.9"
+        // Each GitHub build gets a higher versionCode so Android installs it as an update
+        def runNumber = System.getenv('GITHUB_RUN_NUMBER')
+        versionCode runNumber ? 100 + Integer.parseInt(runNumber) : 10
+        versionName runNumber ? "1.9.${runNumber}" : "1.9"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,7 +18,24 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Fixed signing key (android/sala-release.keystore, password in the ANDROID_KEYSTORE_PASSWORD
+    // GitHub secret). Same key every build, so a new APK installs over the old app as an update.
+    // Without the secret the build falls back to Gradle's own debug key, as before.
+    def keystorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+    signingConfigs {
+        sala {
+            storeFile file('../sala-release.keystore')
+            storePassword keystorePassword ?: ''
+            keyAlias 'salaai'
+            keyPassword keystorePassword ?: ''
+        }
+    }
     buildTypes {
+        debug {
+            if (keystorePassword) {
+                signingConfig signingConfigs.sala
+            }
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'

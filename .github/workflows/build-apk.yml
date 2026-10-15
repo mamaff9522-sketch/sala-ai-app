@@ -7,6 +7,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     name: Build & Package Android Debug APK
@@ -41,6 +44,8 @@ jobs:
 
       - name: Build Android Debug APK
         working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Upload Debug APK Artifact
@@ -49,3 +54,24 @@ jobs:
           name: SalaAI-Debug-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
+
+      # A permanent download link for the newest app:
+      # https://github.com/<owner>/<repo>/releases/latest/download/SalaAI.apk
+      - name: Publish APK download link
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAS_FIXED_KEY: ${{ secrets.ANDROID_KEYSTORE_PASSWORD != '' }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk SalaAI.apk
+          TAG="build-${{ github.run_number }}"
+          if [ "$HAS_FIXED_KEY" = "true" ]; then
+            NOTE="Signed with the fixed Sala AI key: installs over the previous version as an update."
+          else
+            NOTE="Signed with a one-off key (ANDROID_KEYSTORE_PASSWORD secret not set): uninstall the old app before installing."
+          fi
+          gh release create "$TAG" SalaAI.apk \
+            --repo "${{ github.repository }}" \
+            --title "Sala AI 1.9.${{ github.run_number }}" \
+            --notes "$(git log -1 --pretty=%s) — $NOTE" \
+            --latest
