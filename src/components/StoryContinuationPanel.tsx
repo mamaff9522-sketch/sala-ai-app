@@ -426,6 +426,8 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
             lighting
           },
           charactersPresent: onScreen,
+          // Parts of one long scene share it for the continuity check
+          ...((sc as any).splitPart ? { splitPart: (sc as any).splitPart } : {}),
           startPoses: sc.startPoses || [],
           endPoses: sc.endPoses || [],
           continuityWarnings: sc.continuityWarnings || [],

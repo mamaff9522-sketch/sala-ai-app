@@ -257,14 +257,21 @@ export function splitDenseDialogueScenes<T extends Record<string, any>>(
       p = p.replace(/\s{2,}/g, ' ').replace(/\s+([.,])/g, '$1').trim();
       const lastLine = lineOf(g[g.length - 1]);
       const prevLast = k > 0 ? lineOf(groups[k - 1][groups[k - 1].length - 1]) : '';
+      const isLast = k === groups.length - 1;
       out.push({
         ...scene,
         dialogues: g,
+        // Parts stay in place: start = scene start, the scene's end pose only on the last part
+        ...(k > 0 && scene?.startPoses ? { startPoses: scene.startPoses } : {}),
+        ...(!isLast && scene?.startPoses ? { endPoses: scene.startPoses } : {}),
+        // The scene's own continuity warnings once, on the first part (not repeated per part)
+        ...(k > 0 ? { continuityWarnings: [] } : {}),
         [promptKey]: p,
         [titleKey]: `${scene?.[titleKey] || ''} (ตอนที่ ${k + 1}/${groups.length})`.trim(),
         ...(k > 0 ? { startAction: `ต่อเนื่องจากคลิปก่อน หลังบทพูด "${prevLast}" ฉาก ท่าทาง และตำแหน่งเดิม` } : {}),
         ...(k < groups.length - 1 ? { [endKey]: `ยังอยู่ในฉากเดิม หลังบทพูด "${lastLine}" ส่งต่อคลิปถัดไป` } : {}),
-        splitPart: { part: k + 1, total: groups.length, reason: `บทพูดยาวเกิน ${duration} วินาที แบ่งเป็น ${groups.length} คลิป` }
+        // sourceSceneNumber marks the parts as one scene for the continuity check (cast carried, no "disappears")
+        splitPart: { sourceSceneNumber: Number(scene?.[numberKey]) || 0, part: k + 1, total: groups.length, reason: `บทพูดยาวเกิน ${duration} วินาที แบ่งเป็น ${groups.length} คลิป` }
       } as T);
     });
   }

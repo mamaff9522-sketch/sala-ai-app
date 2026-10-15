@@ -2654,7 +2654,9 @@ export function validateSalaMultiClipPrompts(
       }
 
       // Rule 2: Dialogue speaker must be among declared characters if declared
-      if (declaredSet.size > 0 && !isReservedSystemKeyword(d.speaker)) {
+      // Off-screen voices (narrator, "เสียง…") are not characters and need no declaration
+      const offScreenVoice = /^(?:เสียง|ผู้บรรยาย|คนบรรยาย|narrator|voice\s*over|v\.?o\.?)/i.test(String(d.speaker || '').trim());
+      if (declaredSet.size > 0 && !offScreenVoice && !isReservedSystemKeyword(d.speaker)) {
         const spLower = d.speaker.trim().toLowerCase();
         const isMatched = declaredSet.has(spLower) ||
           Array.from(declaredSet).some(ds => ds.includes(spLower) || spLower.includes(ds));
