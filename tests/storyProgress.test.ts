@@ -123,3 +123,19 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
   assert.equal(short.length, 1, 'a short scene stays one clip');
   console.log(`  ✔ a long dialogue scene becomes ${out.length} clips in order`);
 }
+
+{
+  const { formatAllClipsForMetaAi } = await import('../src/services/metaAiPrompt');
+  const clips = buildSalaMultiClipPrompts({ scriptText: STORY, clipDurationSeconds: 8, clipCount: 1, continuityLock: {} });
+  const blocks = formatAllClipsForMetaAi(clips, { knownCharacters: ['พี่ทุย', 'น้องน้ำ'] }).split('\n\n');
+  assert.equal(blocks.length, clips.length);
+  for (const b of blocks) {
+    assert.ok(b.includes('ล็อกฉาก: สถานที่ หน้าบ้าน'), 'every clip locks the set, inherited when the heading names none');
+    assert.ok(b.includes('ท่าจบคลิป'), 'every clip locks its end pose');
+    assert.ok(!/ท่าจบคลิป[^.]*เดิน/.test(b), 'no one is still walking at the hand-off');
+  }
+  const endOf = (b: string) => (b.match(/ท่าจบคลิป \(ค้างไว้ส่งต่อคลิปถัดไป\): ([^.]*)\./) || [])[1];
+  const startOf = (b: string) => (b.match(/ท่าเริ่มคลิป \(ต่อจากคลิปก่อน\): ([^.]*)\./) || [])[1];
+  for (let i = 1; i < blocks.length; i++) assert.equal(startOf(blocks[i]), endOf(blocks[i - 1]), `clip ${i + 1} starts where clip ${i} ends`);
+  console.log('  ✔ Meta AI prompts lock the set and hand the end pose to the next clip');
+}

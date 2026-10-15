@@ -13,6 +13,16 @@
  */
 import { findSections, removeSections, insertBlock, tidy } from './promptSections';
 
+interface PoseForMeta {
+  name?: string;
+  posture?: string;
+  place?: string;
+  holding?: string;
+  gesture?: string;
+  facing?: string;
+  entering?: boolean;
+}
+
 interface ClipForMeta {
   clipNumber?: number;
   title?: string;
@@ -20,13 +30,70 @@ interface ClipForMeta {
   generatedPrompt?: string;
   charactersPresent?: string[];
   dialogues?: { speaker?: string; line?: string }[];
+  locationName?: string;
+  timeOfDay?: string;
+  lighting?: string;
+  continuityLock?: { location?: string; timeOfDay?: string; lighting?: string };
+  startAction?: string;
+  endAction?: string;
+  startPoses?: PoseForMeta[];
+  endPoses?: PoseForMeta[];
 }
 
 export interface MetaAiFormatOptions {
   aspectRatio?: string;
   /** Library character names, used to find who is in the clip when charactersPresent is missing */
   knownCharacters?: string[];
+  /** Place and time carried from earlier clips when this clip names none (see sceneOfClip) */
+  inheritedPlace?: { location: string; timeOfDay: string };
 }
+
+const BLANK_PLACE = /^(?:|ไม่ระบุ.*|unknown|n\/a|none|-)$/i;
+const clean = (v: unknown) => {
+  const t = String(v ?? '').trim();
+  return BLANK_PLACE.test(t) ? '' : t;
+};
+
+/** The clip's own location / time (from the clip, its lock, or a "Location:" section of the prompt). */
+export function ownPlace(clip: ClipForMeta): { location: string; timeOfDay: string } {
+  let location = clean(clip.locationName) || clean(clip.continuityLock?.location);
+  if (!location) {
+    const sec = findSections(String(clip.generatedPrompt || '')).find(x => x.label === 'Location' || x.label === 'Location Lock');
+    if (sec) location = clean(sectionBody(sec.text, sec.label).split(/[.;]/)[0]);
+  }
+  const timeOfDay = clean(clip.timeOfDay) || clean(clip.continuityLock?.timeOfDay);
+  return { location, timeOfDay };
+}
+
+/** Location / time for clip i: its own, else the nearest earlier clip that has one (same set until it changes). */
+export function sceneOfClip(clips: ClipForMeta[], index: number): { location: string; timeOfDay: string } {
+  let location = '';
+  let timeOfDay = '';
+  for (let i = index; i >= 0 && (!location || !timeOfDay); i--) {
+    const p = ownPlace(clips[i] || {});
+    if (!location && p.location) location = p.location;
+    if (!timeOfDay && p.timeOfDay) timeOfDay = p.timeOfDay;
+  }
+  return { location, timeOfDay };
+}
+
+const POSTURE_TH: Record<string, string> = { standing: 'ยืน', sitting: 'นั่ง', lying: 'นอน', kneeling: 'คุกเข่า', walking: 'เดิน' };
+/** atRest: a hand-off pose, so someone still "walking" is locked as standing (they have arrived). */
+function poseText(p: PoseForMeta, atRest = false): string {
+  const name = String(p?.name || '').trim();
+  if (!name) return '';
+  const raw = atRest && p.posture === 'walking' ? 'standing' : String(p.posture || '');
+  const posture = POSTURE_TH[raw] || '';
+  const bits = [
+    posture && !(p.entering && !atRest) ? posture : (p.entering && !atRest ? 'เดินเข้ามาในเฟรม' : ''),
+    clean(p.place) ? `ที่${clean(p.place).replace(/^ที่/, '')}` : '',
+    clean(p.holding) ? `ถือ${clean(p.holding).replace(/^ถือ/, '')}` : '',
+    clean(p.gesture),
+    clean(p.facing)
+  ].filter(Boolean);
+  return bits.length > 0 ? `${name} ${bits.join(' ')}` : '';
+}
+const posesText = (ps?: PoseForMeta[], atRest = false) => (ps || []).map(p => poseText(p, atRest)).filter(Boolean).join(', ');
 
 const DROP_LABELS = new Set([
   'Reference image',
@@ -87,6 +154,26 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   // Never pass "unspecified" placeholders to the video model
   prompt = prompt.replace(/(?:เวลา|สถานที่)\s*ไม่ระบุ[,.]?\s*/g, '');
 
+  // Location Lock: this clip's place, else the one carried from earlier clips of the same scene
+  const place = (() => {
+    const own = ownPlace(clip);
+    return {
+      location: own.location || opts.inheritedPlace?.location || '',
+      timeOfDay: own.timeOfDay || opts.inheritedPlace?.timeOfDay || ''
+    };
+  })();
+  const lockLines: string[] = [];
+  if (place.location || place.timeOfDay) {
+    lockLines.push(`ล็อกฉาก: ${[place.location ? `สถานที่ ${place.location}` : '', place.timeOfDay ? `เวลา ${place.timeOfDay}` : ''].filter(Boolean).join(' ')} — ฉาก พื้นหลัง และแสงเหมือนเดิมทุกช็อต ห้ามเปลี่ยนสถานที่`);
+  }
+  // Start / end lock: start where the previous clip ended, end on a pose the next clip picks up
+  const start = (clip.startPoses || []).map(p => poseText(p, !p.entering)).filter(Boolean).join(', ');
+  const end = posesText(clip.endPoses, true);
+  if (start) lockLines.push(`ท่าเริ่มคลิป (ต่อจากคลิปก่อน): ${start}`);
+  if (end || clean(clip.endAction)) {
+    lockLines.push(`ท่าจบคลิป (ค้างไว้ส่งต่อคลิปถัดไป): ${end || clean(clip.endAction)}`);
+  }
+
   const hasDialogue = (clip.dialogues || []).some(d => String(d?.line || '').trim());
   const head: string[] = [];
   if (clip.durationSeconds) head.push(`วิดีโอยาว ${clip.durationSeconds} วินาที`);
@@ -97,13 +184,13 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   tail.push('ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำบนจอ');
 
   const body = tidy(prompt).replace(/[.\s]+$/, '');
-  return tidy([head.join(', '), body, ...tail].filter(Boolean).map(s => s.replace(/[.\s]+$/, '')).join('. ') + '.');
+  return tidy([head.join(', '), ...lockLines.slice(0, 1), body, ...lockLines.slice(1), ...tail].filter(Boolean).map(s => s.replace(/[.\s]+$/, '')).join('. ') + '.');
 }
 
 export function formatAllClipsForMetaAi(clips: ClipForMeta[], opts: MetaAiFormatOptions = {}): string {
   return clips.map((c, i) => {
     const names = charactersInClip(c, opts.knownCharacters || []);
     const photos = names.length > 0 ? `\n(อัปโหลดรูป: ${names.map((n, j) => `${j + 1}. ${n}`).join('  ')})` : '';
-    return `=== คลิป ${c.clipNumber || i + 1}/${clips.length} — ${c.title || ''} ===${photos}\n${formatClipForMetaAi(c, opts)}`;
+    return `=== คลิป ${c.clipNumber || i + 1}/${clips.length} — ${c.title || ''} ===${photos}\n${formatClipForMetaAi(c, { ...opts, inheritedPlace: sceneOfClip(clips, i) })}`;
   }).join('\n\n');
 }
