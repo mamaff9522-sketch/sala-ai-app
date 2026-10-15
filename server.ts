@@ -50,6 +50,8 @@ import { verifyFirebaseIdToken, createSessionToken, verifySessionToken, isAdminI
 import { addAdminEmail, readAdminEmails } from './adminAllowlist';
 import { CREDIT_CATALOG, MISSING_FIRESTORE_CREDENTIAL_MESSAGE, MISSING_STRIPE_SECRET_MESSAGE, adjustFirestoreCredits, assertFirestoreCredentialConfigured, chargeFromUsageMetadata, creditPaidUserInFirestore, creditsForTokens, deductUsableCredits, ensureCanCallFlashLite, isRealCreditUid, normalizeVideoResolution, paymentAlreadyRecorded, readFirestoreCreditBalance, readPlatformAdminShare, stripHiddenCreditFields } from './serverBilling';
 import { registerTransferRoutes } from './serverTransfer';
+import { loadVeoReferenceImages, resolveVeoReferenceModel, veoDurationSeconds } from './serverVeo';
+import { findResumePoint, checkEpisodeOrder } from './src/services/storyProgress';
 
 dotenv.config();
 
@@ -129,6 +131,8 @@ export interface GenerationParams {
   negativePrompt?: string;
   aspectRatio: AspectRatio;
   referenceImages?: string[];
+  /** 'asset' = character/location photos to keep identity (Veo reference images); default = first image is the start frame */
+  referenceMode?: 'asset' | 'start-frame';
   characterId?: string;
   characterName?: string;
   projectId?: string;
@@ -1472,9 +1476,13 @@ class GeminiProviderAdapter implements ProviderAdapter {
     // 1. Prepare Prompt & Reference Image
     const promptText = buildEnrichedPrompt(params);
 
-    // Extract reference image if provided (Image-to-Video)
+    // Character / location photos from the library (Veo "asset" reference images, up to 3)
+    const assetRefs = params.referenceMode === 'asset' ? loadVeoReferenceImages(params.referenceImages, UPLOADS_DIR) : [];
+    const referenceModel = assetRefs.length > 0 ? resolveVeoReferenceModel() : null;
+
+    // Extract reference image if provided (Image-to-Video start frame)
     let inputImage: { imageBytes: string; mimeType: string } | undefined;
-    if (params.referenceImages && params.referenceImages.length > 0) {
+    if (params.referenceMode !== 'asset' && params.referenceImages && params.referenceImages.length > 0) {
       const ref = params.referenceImages[0];
       if (ref.startsWith('data:')) {
         const match = ref.match(/^data:([^;]+);base64,(.+)$/);
@@ -1492,15 +1500,26 @@ class GeminiProviderAdapter implements ProviderAdapter {
     if (params.model && (params.model.includes('veo') || params.model.startsWith('veo-'))) {
       modelName = params.model;
     }
+    const useAssetRefs = assetRefs.length > 0 && !!referenceModel;
+    if (useAssetRefs) modelName = referenceModel as string;
 
     const targetAspectRatio: '16:9' | '9:16' = params.aspectRatio === '9:16' ? '9:16' : '16:9';
 
     const videoResolution = normalizeVideoResolution(params.resolution);
+    // Veo makes 4, 6 or 8 second clips; the chosen length is sent (it used to be left out)
+    const videoDuration = veoDurationSeconds(params.durationSeconds, { resolution: videoResolution, usesReferenceImages: useAssetRefs });
+    params.durationSeconds = videoDuration;
     const videoConfig: any = {
       numberOfVideos: 1,
       resolution: videoResolution,
       aspectRatio: targetAspectRatio,
+      durationSeconds: videoDuration,
     };
+    if (useAssetRefs) {
+      videoConfig.referenceImages = assetRefs.map(image => ({ image, referenceType: 'asset' }));
+    } else if (assetRefs.length > 0) {
+      console.warn('[veo] character reference photos skipped: VEO_REFERENCE_MODEL is off');
+    }
 
     const generatePayload: any = {
       model: modelName,
@@ -1512,7 +1531,7 @@ class GeminiProviderAdapter implements ProviderAdapter {
       generatePayload.image = inputImage;
     }
 
-    updateProgress(15, `กำลังเชื่อมต่อและส่งคำขอสร้างวิดีโอไปยัง Google Veo (${modelName})...`);
+    updateProgress(15, `กำลังเชื่อมต่อและส่งคำขอสร้างวิดีโอไปยัง Google Veo (${modelName}, ${videoDuration} วินาที${useAssetRefs ? `, รูปอ้างอิงตัวละคร ${assetRefs.length} รูป` : ''})...`);
 
     let operation: any;
     try {
@@ -1815,8 +1834,12 @@ function delay(ms: number) {
 function buildEnrichedPrompt(params: GenerationParams): string {
   let prompt = params.prompt;
 
+  const isVideo = params.type === 'video';
+  // Director prompts already carry the full Character Lock; adding the anchor again doubles it
+  const hasCharacterLock = /Character Lock:/i.test(prompt);
+
   // Add character consistency anchor if selected
-  if (params.characterId) {
+  if (params.characterId && !hasCharacterLock) {
     const char = charactersStore.find(c => c.id === params.characterId);
     if (char) {
       const parts: string[] = [];
@@ -1832,8 +1855,14 @@ function buildEnrichedPrompt(params: GenerationParams): string {
     }
   }
 
-  // Add aspect ratio instructions for Gemini
-  prompt += `. Aspect ratio: ${params.aspectRatio}. High quality, photographic composition, clean studio render.`;
+  // Aspect ratio goes in the Veo config; "clean studio render" is an image-only finish that
+  // fought against outdoor / night / location scenes in video prompts.
+  prompt = prompt.replace(/[\s.]+$/, '');
+  if (!isVideo) {
+    prompt += `. Aspect ratio: ${params.aspectRatio}. High quality, photographic composition, clean studio render.`;
+  } else {
+    prompt += '.';
+  }
   if (params.negativePrompt) {
     prompt += ` Avoid: ${params.negativePrompt}`;
   }
@@ -2067,8 +2096,13 @@ app.post('/api/director/generate-multi-clip-prompts', requireAuth, async (req: a
       });
     }
 
-    const count = Math.max(1, Math.min(10, Number(clipCount) || 3));
-    const duration = Math.max(3, Math.min(30, Number(clipDurationSeconds) || 10));
+    const requestedCount = Math.max(1, Math.min(10, Number(clipCount) || 3));
+    // Meta AI / Veo clips run 8-10 seconds at most, so dialogue is planned for at most 10 seconds
+    const duration = Math.max(3, Math.min(10, Number(clipDurationSeconds) || 8));
+    // Never plan fewer clips than the script has scenes, or the ending is lost
+    let scriptSceneCount = 0;
+    try { scriptSceneCount = parseSalaScript(scriptText, {}).clips.length; } catch { scriptSceneCount = 0; }
+    const count = Math.max(requestedCount, Math.min(30, scriptSceneCount));
     const sceneCredits = Math.round(count * 0.5 * 100) / 100;
     const creditUid = req.user?.id;
     if (isRealCreditUid(creditUid)) {
@@ -2148,7 +2182,7 @@ app.post('/api/director/generate-multi-clip-prompts', requireAuth, async (req: a
       try {
         {
           const promptInstruction = `You are the Lead Visual Director for high-end cinematic AI video continuity.
-Analyze the following script/scene in Thai, split it into exactly ${count} continuous, sequential video clips of ${duration} seconds each.
+Analyze the following script/scene in Thai and split it into continuous, sequential video clips of ${duration} seconds each (about ${count} clips, at least one per scene). Cover the WHOLE script: every scene, every action and every dialogue line must be in a clip, including the ending. Never drop or merge away any part of the story; add clips if needed.
 
 CRITICAL PROTOCOL & RESERVED KEYWORDS RULES:
 - The following words are RESERVED SYSTEM KEYWORDS: LOCK, CONT, FRAME, AUTO, RULE, NO, OUT, STORY, CHARACTERS, END, SALA_MULTI_CLIP
@@ -2234,7 +2268,7 @@ ${scriptText}
 """
 
 OUTPUT FORMAT:
-Respond ONLY with a JSON array containing exactly ${count} objects (no markdown blocks, no code formatting):
+Respond ONLY with a JSON array with one object per clip, covering the whole script (no markdown blocks, no code formatting):
 [
   {
     "clipNumber": 1,
@@ -2304,6 +2338,7 @@ Respond ONLY with a JSON array containing exactly ${count} objects (no markdown 
                 clipCount: count,
                 continuityLock,
                 dialogues: sanitizedDialogues,
+                characters: libraryChars,
                 locations: libraryLocs,
                 knownCharacters: lockedNames,
                 audioDirectives
@@ -2906,6 +2941,13 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
 
     const offline = req.body?.offline === true;
 
+    // Where the story stands: the last source line already written and the source text after it.
+    // The model gets exactly the part still to write, so it cannot jump from the middle to the ending.
+    const resume = findResumePoint(originalStory, [
+      ...(Array.isArray(existingScenes) ? existingScenes : []),
+      ...(effectiveLastScene ? [effectiveLastScene] : [])
+    ]);
+
     const declaredNames = Array.from(new Set([
       ...parsedSource.characters.map(c => c.name),
       ...(Array.isArray(characters)
@@ -3011,7 +3053,7 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
   "currentMilestone": string,
   "summaryOfEventsSoFar": string,
   "sourceCovered": boolean (true เมื่อตอนนี้ครอบคลุมเหตุการณ์สุดท้ายของเนื้อเรื่องต้นฉบับแล้ว ไม่มีเหตุการณ์เหลือให้สร้างต่อ),
-  "episodeScriptText": "บทละครทั้งตอนที่จัดฟอร์แมตสมบูรณ์ (มีหัวข้อตอน, ฉากที่ 1 ถึง 5 หรือ 6, ระบุตำแหน่งตัวละคร, เริ่มต้น, การกระทำ, บทพูด, สิ้นสุดฉาก) สำหรับใส่ลงช่อง 'วางบทหรือฉากหลายฉาก' อัตโนมัติ",
+  "episodeScriptText": "บทละครทั้งตอนที่จัดฟอร์แมตสมบูรณ์ (มีหัวข้อตอน, ฉากตามลำดับต้นฉบับ, ระบุตำแหน่งตัวละคร, เริ่มต้น, การกระทำ, บทพูด, สิ้นสุดฉาก) สำหรับใส่ลงช่อง 'วางบทหรือฉากหลายฉาก' อัตโนมัติ",
   "scenes": [
 {
   "sceneNumber": number,
@@ -3036,11 +3078,31 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
   ]
 }`;
 
-    const prompt = `[เนื้อเรื่องต้นฉบับทั้งหมด (Master Story Source of Truth)]:
+    const resumeBlock = resume.lastWrittenIndex >= 0 && resume.remainingText
+      ? `
+[จุดที่เขียนถึงแล้ว]: ตอนก่อนหน้าเขียนถึงบทพูด "${resume.lastWrittenLine}" แล้ว (ทุกอย่างก่อนหน้านั้นเขียนไปแล้ว ห้ามเขียนซ้ำ)
+
+[เนื้อเรื่องส่วนที่ยังไม่ได้เขียน — ตอนนี้ต้องเริ่มจากบรรทัดแรกของส่วนนี้]:
+"""
+${resume.remainingText}
+"""
+
+[กฎลำดับเรื่อง (สำคัญที่สุด)]:
+- เขียนตามลำดับของ "ส่วนที่ยังไม่ได้เขียน" บรรทัดต่อบรรทัด ทุกบทพูดและทุกเหตุการณ์ ห้ามข้ามแม้แต่บรรทัดเดียว
+- ห้ามกระโดดไปเขียนตอนจบ ห้ามสรุปรวบเหตุการณ์ที่เหลือ
+- ถ้าเนื้อเรื่องยาวเกินตอนนี้ ให้หยุดตรงกลางเรื่องได้เลย แล้วตั้ง "sourceCovered": false เพื่อให้ผู้ใช้กดสร้างตอนต่อไป
+`
+      : `
+[กฎลำดับเรื่อง (สำคัญที่สุด)]:
+- เริ่มจากบรรทัดแรกของเนื้อเรื่อง แล้วเขียนตามลำดับบรรทัดต่อบรรทัด ทุกบทพูดและทุกเหตุการณ์ ห้ามข้าม
+- ห้ามกระโดดไปเขียนตอนจบ ห้ามสรุปรวบเหตุการณ์ ถ้าเนื้อเรื่องยาวเกินตอนนี้ให้หยุดกลางเรื่องแล้วตั้ง "sourceCovered": false
+`;
+
+    const prompt = `[เนื้อเรื่องต้นฉบับทั้งหมด (Master Story Source of Truth) — ใช้อ้างอิงเท่านั้น]:
 """
 ${originalStory.trim()}
 """
-
+${resumeBlock}
 [เป้าหมายการสร้าง]:
 - สร้าง "ตอนที่ ${episodeNumber}"
 - ความยาวตามเหตุการณ์จริง (ฉากละประมาณ ${clipDurationSeconds} วินาที ไม่ต้องกำหนดขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip)
@@ -3115,14 +3177,21 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
       required: ['isStoryFinished', 'episodeNumber', 'episodeTitle', 'progressPercentage', 'sourceCovered', 'scenes']
     };
 
+    // Up to 2 attempts: the second one only when the first skipped source lines before writing anything usable
+    let parsed: any = null;
+    let validation: ReturnType<typeof validateGeminiEpisodeScenes> | null = null;
+    let order: ReturnType<typeof checkEpisodeOrder> | null = null;
+    let retryNote = '';
+    for (let attempt = 1; attempt <= 2; attempt++) {
     let rawText = '';
     try {
       const billed = await callBillableGemini(req, res, ai, {
         model: 'gemini-3.1-flash-lite',
-        contents: prompt,
+        contents: prompt + retryNote,
         config: {
           systemInstruction,
-          temperature: 0.7,
+          // Low temperature: follow the source in order instead of improvising toward an ending
+          temperature: 0.3,
           responseMimeType: 'application/json',
           responseSchema: storyEpisodeSchema
         }
@@ -3140,7 +3209,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
       });
     }
 
-    let parsed: any = null;
+    parsed = null;
     const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
     try {
       parsed = JSON.parse(cleanJson);
@@ -3158,7 +3227,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
       });
     }
 
-    const validation = validateGeminiEpisodeScenes(parsed, startSceneNum, declaredNames);
+    validation = validateGeminiEpisodeScenes(parsed, startSceneNum, declaredNames);
     if (!validation.ok) {
       return res.status(502).json({
         success: false,
@@ -3167,6 +3236,35 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
         details: validation.errors
       });
     }
+    order = checkEpisodeOrder(validation.scenes, resume);
+    if (order.skippedLines.length === 0 || order.keepSceneCount > 0) break;
+    retryNote = `
+
+[แก้ไขจากครั้งก่อน]: ครั้งก่อนคุณข้ามบทพูดเหล่านี้ไป ซึ่งห้ามเด็ดขาด: ${order.skippedLines.slice(0, 6).map(l => `"${l}"`).join(', ')}
+ให้เริ่มฉากแรกจากบทพูด "${order.skippedLines[0]}" และเขียนตามลำดับ ห้ามข้าม`;
+    }
+    if (!validation || !order) {
+      return res.status(502).json({ success: false, code: 'GEMINI_INVALID_SCENES', message: 'Gemini ไม่ได้ส่งฉากกลับมา กรุณาลองใหม่' });
+    }
+    if (order.skippedLines.length > 0 && order.keepSceneCount === 0) {
+      return res.status(502).json({
+        success: false,
+        code: 'STORY_SKIPPED',
+        message: `Gemini ข้ามเนื้อเรื่องกลางเรื่อง (เช่น "${order.skippedLines[0]}") จึงไม่ใช้ผลนี้ กรุณากดสร้างต่ออีกครั้ง หรือใช้โหมดออฟไลน์ / Gemini skipped part of the story; result rejected.`,
+        details: order.skippedLines
+      });
+    }
+    let orderNotice = '';
+    if (order.skippedLines.length > 0) {
+      // Keep only the scenes before the jump; the rest is written by the next "สร้างต่อ"
+      const dropped = validation.scenes.length - order.keepSceneCount;
+      validation.scenes = validation.scenes.slice(0, order.keepSceneCount);
+      order = checkEpisodeOrder(validation.scenes, resume);
+      orderNotice = `Gemini พยายามข้ามไปช่วงท้ายเรื่อง ระบบตัด ${dropped} ฉากที่ข้ามออก และเก็บเฉพาะฉากที่ต่อเนื่องตามต้นฉบับ กดสร้างต่อเพื่อเขียนส่วนที่เหลือ`;
+      parsed.sourceCovered = false;
+    }
+    // Not covered while any source dialogue line is still unwritten
+    if (resume.sourceLines.length > 0 && !order.allLinesCovered) parsed.sourceCovered = false;
     // Same guarantees as offline mode: heading inheritance, full Character Lock,
     // one Location Lock per place and pose handoff, all included in visualPrompt.
     const locked = applyEpisodeLocks(validation.scenes, {
@@ -3200,6 +3298,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
 
     parsed.nextScene = parsed.scenes[0];
     parsed.episodeNumber = episodeNumber;
+    if (orderNotice) parsed.fallbackNotice = orderNotice;
 
     return res.json({
       ...parsed,
@@ -4375,7 +4474,10 @@ app.post('/api/generate', requireAuth, async (req: any, res) => {
     aspectRatio: params.aspectRatio || '1:1',
     characterId: params.characterId,
     characterName: params.characterName,
-    referenceImages: params.referenceImages,
+    // Large data: URLs stay out of the job record (it is polled and listed); the generator reads params
+    referenceImages: Array.isArray(params.referenceImages)
+      ? params.referenceImages.filter((r: any) => typeof r === 'string' && !r.startsWith('data:'))
+      : params.referenceImages,
     projectId: params.projectId,
     sceneId: params.sceneId,
     sceneNumber: params.sceneNumber,

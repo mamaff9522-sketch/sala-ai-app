@@ -74,6 +74,8 @@ export interface GenerateRequestPayload {
   aspectRatio: AspectRatio;
   resolution?: string;
   referenceImages?: string[];
+  /** 'asset' = library photos that keep characters the same (Veo reference images) */
+  referenceMode?: 'asset' | 'start-frame';
   characterId?: string;
   characterName?: string;
   projectId?: string;

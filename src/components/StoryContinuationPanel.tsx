@@ -299,7 +299,9 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
         startAction: c.startAction,
         endAction: c.endAction,
         characterPositions: c.characterPositions,
-        characters: c.dialogues?.map(d => d.speaker) || []
+        characters: c.dialogues?.map(d => d.speaker) || [],
+        // Written lines tell the server exactly where the story stands (no jumping ahead)
+        dialogues: (c.dialogues || []).map(d => ({ speaker: d.speaker, line: d.line }))
       }));
 
       // 2. Extract LAST_SCENE_STATE from the highest scene number we have
