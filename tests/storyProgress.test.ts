@@ -146,3 +146,21 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
   assert.ok(!m.includes('ต่อเนื่องจากคลิปก่อน'), 'no pose carried across a change of place');
   console.log('  ✔ a change of place starts a new set-up, no carried pose');
 }
+
+{
+  const { formatAllClipsForMetaAi, characterNote } = await import('../src/services/metaAiPrompt');
+  const lib = [
+    { name: 'พี่ทุย', appearance: rd('charlib/ptui-appearance.txt'), outfit: 'Indigo-blue Thai cotton shirt' },
+    { name: 'น้องน้ำ', appearance: rd('charlib/nongnam-appearance.txt'), outfit: 'Deep red silk sabai' }
+  ];
+  const clips = buildSalaMultiClipPrompts({ scriptText: STORY, clipDurationSeconds: 8, clipCount: 1, continuityLock: {} });
+  const notes = Object.fromEntries(lib.map(c => [c.name, characterNote(c)]));
+  const blocks = formatAllClipsForMetaAi(clips, { knownCharacters: ['พี่ทุย', 'น้องน้ำ'], photoOrder: ['พี่ทุย', 'น้องน้ำ'], characterNotes: notes }).split('\n\n');
+  for (const b of blocks) {
+    if (b.includes('= พี่ทุย')) assert.ok(b.includes('รูปที่ 1 = พี่ทุย'), 'พี่ทุย is always photo 1');
+    if (b.includes('= น้องน้ำ')) assert.ok(b.includes('รูปที่ 2 = น้องน้ำ'), 'น้องน้ำ is always photo 2, even when she speaks first');
+    assert.ok(b.includes('ห้ามกลายเป็นมนุษย์'), 'identity lock in every clip');
+  }
+  assert.ok(notes['น้องน้ำ'].length > 20 && notes['น้องน้ำ'].length < 260);
+  console.log('  ✔ photo numbers are fixed for the whole story and identity is locked');
+}

@@ -44,6 +44,13 @@ export interface MetaAiFormatOptions {
   aspectRatio?: string;
   /** Library character names, used to find who is in the clip when charactersPresent is missing */
   knownCharacters?: string[];
+  /**
+   * Fixed photo order for the whole story (photo 1 = first name, ...). The same character keeps the
+   * same photo number in every clip. Defaults to knownCharacters.
+   */
+  photoOrder?: string[];
+  /** Short identity per character (species / body / key outfit) that must never change */
+  characterNotes?: Record<string, string>;
   /** Place and time carried from earlier clips when this clip names none (see sceneOfClip) */
   inheritedPlace?: { location: string; timeOfDay: string };
   /** The clip before this one, with ITS place: same place = continuous (start pose = its end pose) */
@@ -133,6 +140,26 @@ export function charactersInClip(clip: ClipForMeta, knownCharacters: string[] = 
   return out;
 }
 
+/** Photo number per character: fixed story-wide order first, then any extra names after it. */
+export function photoNumbers(names: string[], opts: Pick<MetaAiFormatOptions, 'photoOrder' | 'knownCharacters'> = {}): Map<string, number> {
+  const order = [...(opts.photoOrder || opts.knownCharacters || [])].map(n => String(n || '').trim()).filter(Boolean);
+  for (const n of names) if (!order.includes(n)) order.push(n);
+  return new Map(order.map((n, i) => [n, i + 1] as [string, number]));
+}
+
+/** Short identity line from a library character: species / body first sentence + outfit, max ~200 chars. */
+export function characterNote(c: any): string {
+  const first = (v: unknown, max: number) => {
+    const t = String(v ?? '').replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    const cut = t.split(/(?<=[.!?。])\s/)[0];
+    return cut.length > max ? `${cut.slice(0, max).replace(/[,\s]+\S*$/, '')}…` : cut.replace(/[.\s]+$/, '');
+  };
+  const body = first(c?.appearance || c?.visualProfile?.visiblePhysicalAppearance || c?.description, 150);
+  const outfit = first(c?.outfit || c?.outfitDescription || c?.costume || c?.visualProfile?.visibleOutfit, 80);
+  return [body, outfit ? `ชุด: ${outfit}` : ''].filter(Boolean).join(', ');
+}
+
 function sectionBody(text: string, label: string): string {
   return text.slice(label.length + 1).trim().replace(/[.\s]+$/, '');
 }
@@ -152,8 +179,13 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   const lockCut = removeSections(prompt, s => s.label === 'Character Lock');
   prompt = lockCut.prompt;
   if (names.length > 0) {
-    const mapping = names.map((n, i) => `รูปที่ ${i + 1} = ${n}`).join(', ');
-    const block = `ตัวละคร (ใช้รูปที่อัปโหลดเป็นต้นแบบ): ${mapping} — ใบหน้า ทรงผม และชุดต้องเหมือนในรูปทุกช็อต`;
+    const order = photoNumbers(names, opts);
+    const mapping = names.map(n => `รูปที่ ${order.get(n)} = ${n}`).join(', ');
+    const notes = names
+      .map(n => (opts.characterNotes?.[n] ? `${n}: ${opts.characterNotes[n]}` : ''))
+      .filter(Boolean).join(' | ');
+    const block = `ตัวละคร (ใช้รูปที่อัปโหลดเป็นต้นแบบ): ${mapping} — ใบหน้า ทรงผม รูปร่าง และชุดต้องเหมือนในรูปทุกช็อต`
+      + (notes ? `. ลักษณะที่ห้ามเปลี่ยน (ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น): ${notes}` : '');
     prompt = lockCut.firstIndex >= 0 ? insertBlock(prompt, lockCut.firstIndex, block) : `${block}. ${prompt}`;
   }
 
@@ -210,7 +242,8 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
 export function formatAllClipsForMetaAi(clips: ClipForMeta[], opts: MetaAiFormatOptions = {}): string {
   return clips.map((c, i) => {
     const names = charactersInClip(c, opts.knownCharacters || []);
-    const photos = names.length > 0 ? `\n(อัปโหลดรูป: ${names.map((n, j) => `${j + 1}. ${n}`).join('  ')})` : '';
+    const nums = photoNumbers(names, opts);
+    const photos = names.length > 0 ? `\n(อัปโหลดรูป: ${names.map(n => `รูปที่ ${nums.get(n)} ${n}`).join('  ')})` : '';
     return `=== คลิป ${c.clipNumber || i + 1}/${clips.length} — ${c.title || ''} ===${photos}\n${formatClipForMetaAi(c, { ...opts, ...metaContextFor(clips, i) })}`;
   }).join('\n\n');
 }

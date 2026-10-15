@@ -95,7 +95,7 @@ import {
 } from '../services/salaDirectorEngine';
 import { saveCurrentProject } from '../services/savedProjects';
 import { pickClipReferenceImages } from '../services/clipReferenceImages';
-import { formatClipForMetaAi, formatAllClipsForMetaAi, metaContextFor } from '../services/metaAiPrompt';
+import { formatClipForMetaAi, formatAllClipsForMetaAi, metaContextFor, characterNote } from '../services/metaAiPrompt';
 
 interface MultiClipDirectorProps {
   characters: Character[];
@@ -851,10 +851,17 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
     setCopyFormat(f);
     try { localStorage.setItem('sala_copy_format', f); } catch { /* ignore */ }
   };
-  const metaOptions = () => ({
-    aspectRatio: continuityLock.aspectRatio,
-    knownCharacters: (characters || []).map((c: any) => String(c?.name || '')).filter(Boolean)
-  });
+  // Same photo number for a character in every clip; identity notes keep species / body from drifting
+  const metaOptions = () => {
+    const lib = (characters || []).filter((c: any) => c?.name);
+    const inStory = lib.filter((c: any) => clips.some(cl => JSON.stringify(cl.dialogues || []).includes(c.name) || String(cl.generatedPrompt || '').includes(c.name)));
+    return {
+      aspectRatio: continuityLock.aspectRatio,
+      knownCharacters: lib.map((c: any) => String(c.name)),
+      photoOrder: inStory.map((c: any) => String(c.name)),
+      characterNotes: Object.fromEntries(lib.map((c: any) => [String(c.name), characterNote(c)]).filter(([, v]) => v))
+    };
+  };
 
   // Copy Single Clip
   const handleCopySingleClip = (clip: DirectedClipItem, index: number) => {
