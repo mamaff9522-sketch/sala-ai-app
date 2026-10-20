@@ -1172,8 +1172,9 @@ export const api = {
   async continueStory(payload: import('../types').StoryContinuationPayload): Promise<import('../types').StoryContinuationResponse> {
     // 1. Direct offline handling if user explicitly requests offline mode
     if (payload.offline) {
-      const { generateEpisodeLocally } = await import('./storyEpisodeEngine');
-      const localResult = generateEpisodeLocally({
+      // Continues exactly after the last story line already written (never skips or repeats)
+      const { offlineContinuation } = await import('./storyProgress');
+      const localResult = offlineContinuation({
         originalStory: payload.originalStory,
         currentScriptText: payload.currentScriptText,
         episodeNumber: payload.episodeNumber,
@@ -1184,9 +1185,6 @@ export const api = {
         continuityLock: payload.continuityLock,
         clipDurationSeconds: payload.clipDurationSeconds || 10
       });
-      // One scene with more dialogue than one clip can hold becomes several clips
-      const { splitDenseDialogueScenes } = await import('./storyProgress');
-      if (Array.isArray((localResult as any).scenes)) (localResult as any).scenes = splitDenseDialogueScenes((localResult as any).scenes, payload.clipDurationSeconds || 8);
       return {
         success: true,
         source: 'offline-narrative-engine',
@@ -1228,8 +1226,9 @@ export const api = {
 
       // If res.ok (HTTP 200) but body was not JSON (e.g. index.html)
       console.warn('Backend returned non-JSON for /api/story/continue. Activating local story engine fallback.');
-      const { generateEpisodeLocally } = await import('./storyEpisodeEngine');
-      const localResult = generateEpisodeLocally({
+      // Continues exactly after the last story line already written (never skips or repeats)
+      const { offlineContinuation } = await import('./storyProgress');
+      const localResult = offlineContinuation({
         originalStory: payload.originalStory,
         currentScriptText: payload.currentScriptText,
         episodeNumber: payload.episodeNumber,
@@ -1240,9 +1239,6 @@ export const api = {
         continuityLock: payload.continuityLock,
         clipDurationSeconds: payload.clipDurationSeconds || 10
       });
-      // One scene with more dialogue than one clip can hold becomes several clips
-      const { splitDenseDialogueScenes } = await import('./storyProgress');
-      if (Array.isArray((localResult as any).scenes)) (localResult as any).scenes = splitDenseDialogueScenes((localResult as any).scenes, payload.clipDurationSeconds || 8);
       return {
         success: true,
         source: 'offline-narrative-engine',
@@ -1256,8 +1252,9 @@ export const api = {
       }
       console.warn('continueStory encountered error, attempting offline generation fallback:', err?.message || err);
       try {
-        const { generateEpisodeLocally } = await import('./storyEpisodeEngine');
-        const localResult = generateEpisodeLocally({
+        // Continues exactly after the last story line already written (never skips or repeats)
+        const { offlineContinuation } = await import('./storyProgress');
+        const localResult = offlineContinuation({
           originalStory: payload.originalStory,
           currentScriptText: payload.currentScriptText,
           episodeNumber: payload.episodeNumber,
@@ -1268,9 +1265,6 @@ export const api = {
           continuityLock: payload.continuityLock,
           clipDurationSeconds: payload.clipDurationSeconds || 10
         });
-        // One scene with more dialogue than one clip can hold becomes several clips
-        const { splitDenseDialogueScenes } = await import('./storyProgress');
-        if (Array.isArray((localResult as any).scenes)) (localResult as any).scenes = splitDenseDialogueScenes((localResult as any).scenes, payload.clipDurationSeconds || 8);
         return {
           success: true,
           source: 'offline-narrative-engine',

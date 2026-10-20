@@ -301,7 +301,8 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
         characterPositions: c.characterPositions,
         characters: c.dialogues?.map(d => d.speaker) || [],
         // Written lines tell the server exactly where the story stands (no jumping ahead)
-        dialogues: (c.dialogues || []).map(d => ({ speaker: d.speaker, line: d.line }))
+        dialogues: (c.dialogues || []).map(d => ({ speaker: d.speaker, line: d.line })),
+        sourceCursor: c.sourceCursor
       }));
 
       // 2. Extract LAST_SCENE_STATE from the highest scene number we have
@@ -317,7 +318,8 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
         timeOfDay: lastScene.continuityLock?.timeOfDay || '',
         characterPositions: lastScene.characterPositions || '',
         dialogues: lastScene.dialogues || [],
-        endPoses: lastScene.endPoses || []
+        endPoses: lastScene.endPoses || [],
+        sourceCursor: lastScene.sourceCursor
       } : null;
 
       // 3. Call continuation API for full episode (5-6 continuous scenes)
@@ -428,6 +430,8 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
           charactersPresent: onScreen,
           // Parts of one long scene share it for the continuity check
           ...((sc as any).splitPart ? { splitPart: (sc as any).splitPart } : {}),
+          // Story position reached by this episode: the next one starts right after it
+          ...(typeof (sc as any).sourceCursor === 'number' ? { sourceCursor: (sc as any).sourceCursor } : {}),
           startPoses: sc.startPoses || [],
           endPoses: sc.endPoses || [],
           continuityWarnings: sc.continuityWarnings || [],
@@ -471,7 +475,10 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
 
       // 6. Put the generated episode script into "วางบทหรือฉากหลายฉาก" (scriptText)
       const formattedEpisodeScript = res.episodeScriptText || generatedScenes.map(s => s.scriptFormattedText).join('\n\n');
-      setScriptText(formattedEpisodeScript);
+      // Episodes are appended, so the script box keeps the whole story written so far
+      setScriptText(prev => (episodeToGenerate === 1 || !String(prev || '').trim())
+        ? formattedEpisodeScript
+        : `${String(prev).trim()}\n\n${formattedEpisodeScript}`);
       if (setClipCount && generatedScenes.length > 0) {
         setClipCount(generatedScenes.length);
       }
@@ -592,7 +599,7 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
     setIsAutoRunning(true);
     stopAutoRunRef.current = false;
 
-    const maxSteps = 10;
+    const maxSteps = 60;
     for (let step = 0; step < maxSteps && !stopAutoRunRef.current; step++) {
       const result = await handleContinueStory(false, { silentErrors: true });
       if (!result.ok || result.newSceneCount === 0 || !result.hasMore || stopAutoRunRef.current) {
@@ -603,6 +610,62 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
     }
 
     setIsAutoRunning(false);
+  };
+
+  // One button: paste the story, get prompts for the whole story. Starts from the first scene and runs
+  // chunk after chunk (≤6 scenes each, so Gemini never overflows) until the story ends. A chunk Gemini
+  // cannot write is built without AI on the server, so the run does not stop half-way.
+  const [wholeStoryProgress, setWholeStoryProgress] = useState<string | null>(null);
+  const handleGenerateWholeStory = async () => {
+    if (!originalStory.trim()) {
+      setStatusNotification('⚠️ กรุณาวางเนื้อเรื่องก่อน');
+      setErrorMessage('กรุณาวางเนื้อเรื่องก่อนกดสร้างพรอมต์ทั้งเรื่อง');
+      return;
+    }
+    if (clipsRef.current.length > 0 && typeof window !== 'undefined' && window.confirm
+      && !window.confirm('สร้างพรอมต์ใหม่ทั้งเรื่องตั้งแต่ฉากแรก? คลิปเดิมในรายการจะถูกแทนที่')) {
+      return;
+    }
+    // Fresh start from scene 1
+    clipsRef.current = [];
+    episodeRef.current = 1;
+    setClips([]);
+    setScriptText('');
+    setCurrentEpisode(1);
+    setIsStoryFinished(false);
+    setFinishMessage('');
+    setProgressPercentage(0);
+    setLastGeneratedScene(null);
+    setErrorMessage(null);
+    try { localStorage.removeItem('sala_story_continuation_state'); } catch {}
+
+    setIsAutoRunning(true);
+    stopAutoRunRef.current = false;
+    let failuresInRow = 0;
+    let finishedNormally = false;
+    for (let step = 0; step < 60 && !stopAutoRunRef.current; step++) {
+      setWholeStoryProgress(`กำลังสร้างช่วงที่ ${step + 1} — ได้แล้ว ${clipsRef.current.length} คลิป`);
+      const result = await handleContinueStory(true, { silentErrors: true });
+      if (!result.ok) {
+        // Connection trouble: try the same chunk once more, then stop (press again to resume)
+        failuresInRow++;
+        if (failuresInRow >= 2) break;
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+      failuresInRow = 0;
+      if (result.newSceneCount === 0 || !result.hasMore) { finishedNormally = true; break; }
+      await new Promise(r => setTimeout(r, 800));
+    }
+    setIsAutoRunning(false);
+    setWholeStoryProgress(null);
+    const made = clipsRef.current.length;
+    if (finishedNormally) {
+      setErrorMessage(null);
+      setStatusNotification(`✅ สร้างพรอมต์ทั้งเรื่องเสร็จแล้ว ${made} คลิป — กด "คัดลอกทุกคลิปรวดเดียว" ได้เลย`);
+    } else if (!stopAutoRunRef.current) {
+      setStatusNotification(`⚠️ สร้างได้ ${made} คลิปแล้วการเชื่อมต่อขัดข้อง กด "ตอนต่อไป" หรือ "ต่ออัตโนมัติจนจบ" เพื่อทำต่อจากจุดเดิม`);
+    }
   };
 
   const handleStopAutoRun = () => {
@@ -960,6 +1023,36 @@ export const StoryContinuationPanel: React.FC<StoryContinuationPanelProps> = ({
               </button>
             </div>
           )}
+
+          {/* One button: whole story, start to finish */}
+          <div className="pt-2">
+            <button
+              type="button"
+              id="btn-story-whole"
+              onClick={isAutoRunning ? handleStopAutoRun : handleGenerateWholeStory}
+              disabled={(isContinuing && !isAutoRunning) || !originalStory.trim()}
+              className={`w-full py-3.5 px-5 rounded-2xl font-bold text-sm shadow-xl flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.99] disabled:opacity-50 ${
+                isAutoRunning
+                  ? 'bg-rose-600 hover:bg-rose-500 text-white'
+                  : 'bg-gradient-to-r from-cyan-500 via-indigo-600 to-fuchsia-600 hover:from-cyan-400 hover:via-indigo-500 hover:to-fuchsia-500 text-white shadow-indigo-600/25'
+              }`}
+            >
+              {isAutoRunning ? (
+                <>
+                  <StopCircle className="w-4 h-4" />
+                  <span>{wholeStoryProgress ? `${wholeStoryProgress} (แตะเพื่อหยุด)` : 'กำลังสร้าง… (แตะเพื่อหยุด)'}</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>สร้างพรอมต์ทั้งเรื่อง (ตั้งแต่ฉากแรกจนจบ)</span>
+                </>
+              )}
+            </button>
+            <p className="text-[11px] text-slate-400 mt-1.5 text-center">
+              วางเนื้อเรื่องแล้วกดปุ่มเดียว ระบบแบ่งทำทีละช่วงให้เองจนจบเรื่อง ทุกบรรทัดครบตามต้นฉบับ
+            </p>
+          </div>
 
           {/* Action Buttons: "ตอนต่อไป / ต่อเนื่อง" and "ต่ออัตโนมัติ" */}
           <div className="flex flex-col sm:flex-row items-stretch gap-2.5 pt-2">

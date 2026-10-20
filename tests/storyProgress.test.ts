@@ -195,3 +195,37 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
   assert.deepEqual(storyLines.filter(l => !isLineCovered(l, allAV)), [], 'director keeps every story line');
   console.log(`  ✔ lines Gemini drops are put back (${r.restoredActions} actions, ${r.restoredDialogues} dialogue), in story order`);
 }
+
+{
+  const { offlineContinuation, isLineCovered } = await import('../src/services/storyProgress');
+  // Run "ต่อเรื่อง" offline episode after episode, like the whole-story button does
+  const runAll = (story: string, perEpisode: number) => {
+    let clips: any[] = [];
+    let episodes = 0;
+    for (; episodes < 40; episodes++) {
+      const existing = clips.map(c => ({ sceneNumber: c.sceneNumber, sourceCursor: c.sourceCursor, dialogues: (c.dialogues || []).map((d: any) => ({ speaker: d.speaker, line: d.dialogue })) }));
+      const last = clips[clips.length - 1];
+      const r = offlineContinuation({ originalStory: story, existingScenes: existing, lastSceneState: last ? { sceneNumber: last.sceneNumber, sourceCursor: last.sourceCursor, endPoses: last.endPoses } : null, targetSceneCount: perEpisode, clipDurationSeconds: 8 });
+      if (!r.scenes?.length) break;
+      clips = clips.concat(r.scenes);
+      if (!r.hasMoreScenes) { episodes++; break; }
+    }
+    return { clips, episodes };
+  };
+  for (const [file, story] of [['avatar-story.txt', rd('avatar-story.txt')], ['t67-story.txt', STORY]] as const) {
+    const storyLines = story.split(/\r?\n/).map(l => l.trim()).filter(l => l && !/^(ชื่อเรื่อง|ตัวละคร|- |ฉากที่|จบ)/.test(l)).map(l => l.replace(/^[^:：]{1,20}[:：]\s*/, ''));
+    const sizes = new Set<number>();
+    for (const per of [1, 2, 6]) {
+      const { clips, episodes } = runAll(story, per);
+      assert.ok(episodes < 40, `${file}/${per}: the run ends (no endless repeat)`);
+      const all = clips.map(c => c.visualPrompt).join('\n');
+      assert.deepEqual(storyLines.filter(l => !isLineCovered(l, all)), [], `${file}/${per}: every story line in a prompt`);
+      const dl = clips.flatMap(c => (c.dialogues || []).map((d: any) => d.dialogue));
+      assert.equal(new Set(dl).size, dl.length, `${file}/${per}: no dialogue twice`);
+      assert.deepEqual(clips.map(c => c.sceneNumber), clips.map((_, i) => i + 1), `${file}/${per}: clip numbers 1..n`);
+      sizes.add(clips.length);
+    }
+    assert.equal(sizes.size, 1, `${file}: same clips whatever the chunk size`);
+  }
+  console.log('  ✔ whole story, chunk after chunk: complete, no repeats, ends (any chunk size)');
+}

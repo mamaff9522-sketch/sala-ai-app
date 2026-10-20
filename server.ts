@@ -51,7 +51,7 @@ import { addAdminEmail, readAdminEmails } from './adminAllowlist';
 import { CREDIT_CATALOG, MISSING_FIRESTORE_CREDENTIAL_MESSAGE, MISSING_STRIPE_SECRET_MESSAGE, adjustFirestoreCredits, assertFirestoreCredentialConfigured, chargeFromUsageMetadata, creditPaidUserInFirestore, creditsForTokens, deductUsableCredits, ensureCanCallFlashLite, isRealCreditUid, normalizeVideoResolution, paymentAlreadyRecorded, readFirestoreCreditBalance, readPlatformAdminShare, stripHiddenCreditFields } from './serverBilling';
 import { registerTransferRoutes } from './serverTransfer';
 import { loadVeoReferenceImages, resolveVeoReferenceModel, veoDurationSeconds } from './serverVeo';
-import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson, splitDenseDialogueScenes, restoreMissingStoryBeats } from './src/services/storyProgress';
+import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson, splitDenseDialogueScenes, restoreMissingStoryBeats, offlineContinuation, storyCursorFor } from './src/services/storyProgress';
 
 dotenv.config();
 
@@ -2965,9 +2965,10 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
         : [])
     ])).filter(n => !isReservedSystemKeyword(n));
 
-    // OFFLINE MODE: only when the user explicitly asks for it (never a silent fallback)
-    if (offline) {
-      const localContinuation = generateEpisodeLocally({
+    // Offline (no AI) episode that continues exactly after the last story line already written.
+    // Used when the user picks offline mode, and for a chunk Gemini could not write.
+    const offlineEpisode = (notice?: string) => {
+      const local = offlineContinuation({
         originalStory,
         currentScriptText,
         episodeNumber,
@@ -2978,17 +2979,18 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
         continuityLock,
         clipDurationSeconds
       });
-      // One scene with more dialogue than one clip can hold becomes several clips
-      if (Array.isArray((localContinuation as any).scenes)) {
-        (localContinuation as any).scenes = splitDenseDialogueScenes((localContinuation as any).scenes, Number(clipDurationSeconds) || 8);
-      }
       return res.json({
         success: true,
         source: 'offline-narrative-engine',
         offline: true,
-        ...localContinuation
+        ...(notice ? { fallbackNotice: notice } : {}),
+        ...local,
+        episodeNumber,
+        declaredCharacters: declaredNames,
+        ...chargeFieldsFrom(req)
       });
-    }
+    };
+    if (offline) return offlineEpisode();
 
     // User's own key first (sent by the client), otherwise the server GEMINI_API_KEY. Never logged.
     const userKey = typeof apiKey === 'string' ? apiKey.trim() : '';
@@ -3218,11 +3220,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
     } catch (geminiErr: any) {
       const reason = formatGenAIError(geminiErr);
       console.warn('Gemini story continuation failed:', reason);
-      return res.status(400).json({
-        success: false,
-        code: 'GEMINI_API_ERROR',
-        message: `Gemini สร้างบทต่อไม่สำเร็จ: ${reason} / Gemini story generation failed. Please retry, check your API key, or choose offline mode.`
-      });
+      return offlineEpisode(`Gemini ขัดข้อง (${reason}) ระบบสร้างช่วงนี้แบบไม่ใช้ AI แทน เนื้อเรื่องครบตามต้นฉบับ`);
     }
 
     parsed = null;
@@ -3244,21 +3242,13 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
         retryNote = `\n\n[แก้ไขจากครั้งก่อน]: คำตอบครั้งก่อนยาวเกินจนถูกตัด ให้สร้างไม่เกิน 3 ฉาก และ visualPrompt สั้นๆ`;
         continue;
       }
-      return res.status(502).json({
-        success: false,
-        code: 'GEMINI_INVALID_JSON',
-        message: 'Gemini ตอบกลับไม่ใช่ JSON ที่ถูกต้อง กรุณาลองใหม่ / Gemini returned invalid JSON. Please try again.'
-      });
+      return offlineEpisode('Gemini ตอบกลับไม่สมบูรณ์ ระบบสร้างช่วงนี้แบบไม่ใช้ AI แทน เนื้อเรื่องครบตามต้นฉบับ');
     }
 
     validation = validateGeminiEpisodeScenes(parsed, startSceneNum, declaredNames);
     if (!validation.ok) {
-      return res.status(502).json({
-        success: false,
-        code: 'GEMINI_INVALID_SCENES',
-        message: `Gemini ส่งข้อมูลฉากไม่ครบถ้วน กรุณาลองใหม่ / Gemini returned incomplete scene data: ${validation.errors.slice(0, 5).join('; ')}`,
-        details: validation.errors
-      });
+      console.warn('Gemini story scenes incomplete:', validation.errors.slice(0, 5).join('; '));
+      return offlineEpisode('Gemini ส่งข้อมูลฉากไม่ครบ ระบบสร้างช่วงนี้แบบไม่ใช้ AI แทน เนื้อเรื่องครบตามต้นฉบับ');
     }
     order = checkEpisodeOrder(validation.scenes, resume);
     if (order.skippedLines.length === 0 || order.keepSceneCount > 0) break;
@@ -3268,15 +3258,10 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
 ให้เริ่มฉากแรกจากบทพูด "${order.skippedLines[0]}" และเขียนตามลำดับ ห้ามข้าม`;
     }
     if (!validation || !order) {
-      return res.status(502).json({ success: false, code: 'GEMINI_INVALID_SCENES', message: 'Gemini ไม่ได้ส่งฉากกลับมา กรุณาลองใหม่' });
+      return offlineEpisode('Gemini ไม่ได้ส่งฉากกลับมา ระบบสร้างช่วงนี้แบบไม่ใช้ AI แทน');
     }
     if (order.skippedLines.length > 0 && order.keepSceneCount === 0) {
-      return res.status(502).json({
-        success: false,
-        code: 'STORY_SKIPPED',
-        message: `Gemini ข้ามเนื้อเรื่องกลางเรื่อง (เช่น "${order.skippedLines[0]}") จึงไม่ใช้ผลนี้ กรุณากดสร้างต่ออีกครั้ง หรือใช้โหมดออฟไลน์ / Gemini skipped part of the story; result rejected.`,
-        details: order.skippedLines
-      });
+      return offlineEpisode(`Gemini ข้ามเนื้อเรื่อง (เช่น "${order.skippedLines[0]}") ระบบสร้างช่วงนี้แบบไม่ใช้ AI แทน เนื้อเรื่องครบตามต้นฉบับ`);
     }
     let orderNotice = '';
     if (order.skippedLines.length > 0) {
@@ -3303,11 +3288,17 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
     // (a 7-line scene used to come out as a single 8-second prompt)
     // Gemini rewrites scenes in its own words and drops action lines: put every story line it left out
     // back into the scene where it belongs (the original story is the source of truth)
-    const restored = restoreMissingStoryBeats(locked.scenes, originalStory, { fromDialogueIndex: resume.nextIndex });
+    const restored = restoreMissingStoryBeats(locked.scenes, originalStory, { fromDialogueIndex: resume.nextIndex, fromBeat: resume.fromBeat });
     if (restored.restoredActions || restored.restoredDialogues) {
       console.log(`[story continue] restored ${restored.restoredActions} action and ${restored.restoredDialogues} dialogue line(s) Gemini left out`);
     }
-    parsed.scenes = splitDenseDialogueScenes(restored.scenes, Number(clipDurationSeconds) || 8);
+    // Story position reached (action lines included); the next episode starts right after it
+    const cursor = storyCursorFor(restored.scenes, originalStory, resume.fromBeat);
+    if (cursor < resume.fromBeat) {
+      return offlineEpisode('Gemini ไม่ได้เขียนเนื้อเรื่องต่อ ระบบสร้างช่วงนี้แบบไม่ใช้ AI แทน');
+    }
+    parsed.sourceCovered = cursor >= (parsedSource.narrativeBeats?.length || 0) - 1;
+    parsed.scenes = splitDenseDialogueScenes(restored.scenes.map((sc: any) => ({ ...sc, sourceCursor: cursor })), Number(clipDurationSeconds) || 8);
     parsed.continuityWarnings = locked.warnings;
     parsed.characterWarnings = locked.characterWarnings;
 

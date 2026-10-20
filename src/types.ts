@@ -638,6 +638,8 @@ export interface DirectedClipItem {
   characterLockText?: string;
   /** Set when a dense scene was auto-split into several clips (density rule) */
   splitPart?: { sourceSceneNumber: number; part: number; total: number; reason: string };
+  /** Last story beat (action or dialogue) this clip's episode covers; story continuation resumes after it */
+  sourceCursor?: number;
   /** Estimated speech seconds of this clip's dialogue (density rule) */
   estimatedSpeechSeconds?: number;
   isEditing?: boolean;

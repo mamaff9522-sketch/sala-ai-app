@@ -10,7 +10,7 @@
  * - checkEpisodeOrder(): source lines a new episode skipped, and the scenes to keep (the ones
  *   before the first jump)
  */
-import { parseStoryStructure } from './storyEpisodeEngine';
+import { parseStoryStructure, generateEpisodeLocally, hasExplicitEndingMarker } from './storyEpisodeEngine';
 import { findSections, insertBlock, removeSections } from './promptSections';
 
 export interface ResumePoint {
@@ -26,6 +26,41 @@ export interface ResumePoint {
   lastWrittenLine: string;
   /** false when nothing could be matched although scenes exist (no dialogue to anchor on) */
   anchored: boolean;
+  /** First story beat (action or dialogue) still to write */
+  fromBeat: number;
+}
+
+/** Story text after beat index `idx` (walks story lines and beats in step). '' when not found. */
+function textAfterBeat(story: string, beats: any[], idx: number): string {
+  const norm = String(story || '').replace(/\r\n?/g, '\n');
+  const lines = norm.split('\n');
+  const key = (b: any) => squash(b?.type === 'dialogue' ? b?.dialogue?.dialogue : b?.text);
+  let j = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const sq = squash(lines[i]);
+    while (sq && j <= idx && key(beats[j]) && sq.includes(key(beats[j]))) {
+      if (j === idx) return lines.slice(i + 1).join('\n').trim();
+      j++;
+    }
+  }
+  return '';
+}
+
+/**
+ * Last story beat these scenes carry, scanning forward from `fromBeat` (actions by fuzzy match, so
+ * light rewording counts). Stops at the first dialogue line they do not carry.
+ */
+export function storyCursorFor(scenes: any[], originalStory: string, fromBeat: number, promptKey: 'visualPrompt' | 'generatedPrompt' = 'visualPrompt'): number {
+  let beats: any[] = [];
+  try { beats = parseStoryStructure(originalStory).narrativeBeats || []; } catch { return fromBeat - 1; }
+  const text = (scenes || []).map(s => [s?.[promptKey], ...(Array.isArray(s?.dialogues) ? s.dialogues.map((d: any) => d?.dialogue ?? d?.line) : [])].join(' ')).join('\n');
+  let last = fromBeat - 1;
+  for (let b = Math.max(0, fromBeat); b < beats.length; b++) {
+    const t = beats[b]?.type === 'dialogue' ? beats[b]?.dialogue?.dialogue : beats[b]?.text;
+    if (isLineCovered(String(t || ''), text)) last = b;
+    else if (beats[b]?.type === 'dialogue') break;
+  }
+  return last;
 }
 
 const squash = (s: unknown) => String(s ?? '')
@@ -64,6 +99,31 @@ export function sourceDialogueLines(originalStory: string): string[] {
 /** Finds where the next episode must start, from the scenes already written. */
 export function findResumePoint(originalStory: string, writtenScenes: any[] = []): ResumePoint {
   const sourceLines = sourceDialogueLines(originalStory);
+  // Preferred: the story position stamped on earlier episodes (counts action lines too, so an episode
+  // that ended on action lines is never written again)
+  const cursors = (writtenScenes || []).map(s => Number(s?.sourceCursor)).filter(n => Number.isFinite(n) && n >= 0);
+  if (cursors.length > 0) {
+    let parsedBeats: any[] = [];
+    let dlgBeats: number[] = [];
+    try {
+      const ps = parseStoryStructure(originalStory);
+      parsedBeats = ps.narrativeBeats || [];
+      dlgBeats = ps.allDialogues.map(d => d.beatIndex);
+    } catch { /* fall through to dialogue matching */ }
+    if (parsedBeats.length > 0) {
+      const cursor = Math.min(Math.max(...cursors), parsedBeats.length - 1);
+      const nextIndex = dlgBeats.filter(b => b <= cursor).length;
+      return {
+        sourceLines,
+        nextIndex,
+        lastWrittenIndex: nextIndex - 1,
+        remainingText: cursor >= parsedBeats.length - 1 ? '' : textAfterBeat(originalStory, parsedBeats, cursor),
+        lastWrittenLine: nextIndex > 0 ? sourceLines[nextIndex - 1] : '',
+        anchored: true,
+        fromBeat: cursor + 1
+      };
+    }
+  }
   let last = -1;
   for (const scene of writtenScenes || []) {
     for (const line of linesOfScene(scene)) {
@@ -90,13 +150,18 @@ export function findResumePoint(originalStory: string, writtenScenes: any[] = []
     }
     if (cutAt >= 0) remainingText = storyLines.slice(cutAt + 1).join('\n').trim();
   }
+  let fromBeat = 0;
+  if (last >= 0) {
+    try { fromBeat = (parseStoryStructure(originalStory).allDialogues[last]?.beatIndex ?? -1) + 1; } catch { fromBeat = 0; }
+  }
   return {
     sourceLines,
     nextIndex: last + 1,
     lastWrittenIndex: last,
     remainingText,
     lastWrittenLine,
-    anchored
+    anchored,
+    fromBeat
   };
 }
 
@@ -317,6 +382,8 @@ export function restoreMissingStoryBeats<T extends Record<string, any>>(
   originalStory: string,
   opts: {
     fromDialogueIndex?: number;
+    /** First story beat still to write (wins over fromDialogueIndex) */
+    fromBeat?: number;
     untilEnd?: boolean;
     promptKey?: 'visualPrompt' | 'generatedPrompt';
     dialogueKey?: 'dialogue' | 'line';
@@ -351,7 +418,9 @@ export function restoreMissingStoryBeats<T extends Record<string, any>>(
   if (matched.length === 0 && !opts.untilEnd) return none;
   const lastMatched = matched.length ? Math.max(...matched) : -1;
 
-  const startBeat = from > 0 && dlgBeat[from - 1] != null ? dlgBeat[from - 1] + 1 : 0;
+  const startBeat = opts.fromBeat != null && opts.fromBeat >= 0
+    ? opts.fromBeat
+    : (from > 0 && dlgBeat[from - 1] != null ? dlgBeat[from - 1] + 1 : 0);
   const endBeat = opts.untilEnd || lastMatched === sourceLines.length - 1 || lastMatched < 0
     ? beats.length - 1
     : dlgBeat[lastMatched];
@@ -411,4 +480,100 @@ export function restoreMissingStoryBeats<T extends Record<string, any>>(
 function insertBeforeLocks(prompt: string, block: string): string {
   const stop = findSections(prompt).find(x => ['Dialogue', 'Continuity Handoff', 'Stance/Position Lock', 'Negative prompt'].includes(x.label));
   return insertBlock(prompt, stop ? stop.start : prompt.length, block);
+}
+
+const SCENE_HEADING_RE = /^[ \t#*_\[【(]*(?:ฉากที่|ฉาก|scene)\s*\d+.*$/gim;
+
+/**
+ * The story text still to write: the story's opening (title / character list), the heading of the
+ * scene where writing stopped (so place and time carry over), then everything after the last
+ * written line. '' when the story is used up; null when nothing written can be found in the story
+ * (no dialogue to anchor on), so the caller falls back to its old behaviour.
+ */
+export function remainingStorySource(originalStory: string, resume: ResumePoint, hasWrittenScenes: boolean): string | null {
+  const norm = String(originalStory || '').replace(/\r\n?/g, '\n');
+  if (resume.fromBeat <= 0) return hasWrittenScenes ? null : norm;
+  if (!resume.remainingText.trim()) return '';
+  const cut = norm.lastIndexOf(resume.remainingText);
+  if (cut < 0) return null;
+  const before = norm.slice(0, cut);
+  const heads = before.match(SCENE_HEADING_RE) || [];
+  const firstHead = norm.search(new RegExp(SCENE_HEADING_RE.source, 'im'));
+  const preamble = firstHead > 0 ? norm.slice(0, firstHead).trim() : '';
+  return [preamble, heads.length ? heads[heads.length - 1].trim() : '', resume.remainingText].filter(Boolean).join('\n\n');
+}
+
+/**
+ * One offline (no AI) episode that continues EXACTLY after the last line already written.
+ * The old engine continued from the last scene NUMBER, which skips scenes once long scenes are split
+ * into several clips or episodes came from Gemini (their numbers no longer match the story's scenes).
+ */
+export function offlineContinuation(p: {
+  originalStory: string;
+  existingScenes?: any[];
+  lastSceneState?: any;
+  targetSceneCount?: number;
+  characters?: any[];
+  continuityLock?: any;
+  clipDurationSeconds?: number;
+  episodeNumber?: number;
+  currentScriptText?: string;
+}): any {
+  const existing = Array.isArray(p.existingScenes) ? p.existingScenes : [];
+  const written = [...existing, ...(p.lastSceneState ? [p.lastSceneState] : [])];
+  const resume = findResumePoint(p.originalStory, written);
+  const duration = Number(p.clipDurationSeconds) || 8;
+  const perEpisode = Math.max(1, Math.min(6, Number(p.targetSceneCount) || 6));
+  const source = remainingStorySource(p.originalStory, resume, written.length > 0);
+
+  if (source === null) {
+    // Nothing to anchor on (story without dialogue): the old scene-number behaviour
+    const legacy: any = generateEpisodeLocally({ ...p, targetSceneCount: perEpisode } as any);
+    if (Array.isArray(legacy.scenes)) legacy.scenes = splitDenseDialogueScenes(legacy.scenes, duration);
+    return legacy;
+  }
+  if (source === '') {
+    const finished = hasExplicitEndingMarker(p.originalStory);
+    return { scenes: [], hasMoreScenes: false, sourceCovered: true, isStoryFinished: finished, finishMessage: finished ? 'เนื้อเรื่องจบแล้ว (จบบริบูรณ์ตามต้นฉบับ)' : 'ใช้เนื้อเรื่องต้นฉบับครบแล้ว', progressPercentage: 100 };
+  }
+  const startSceneNum = Math.max(
+    Number(p.lastSceneState?.sceneNumber) || 0,
+    ...existing.map(s => Number(s?.sceneNumber) || 0),
+    0
+  ) + 1;
+  const local: any = generateEpisodeLocally({
+    originalStory: source,
+    currentScriptText: p.currentScriptText,
+    episodeNumber: 1,
+    targetSceneCount: perEpisode,
+    existingScenes: [],
+    // keeps the pose hand-off; sceneNumber 0 so the engine starts at the top of the remaining text
+    lastSceneState: p.lastSceneState ? { ...p.lastSceneState, sceneNumber: 0 } : null,
+    characters: p.characters,
+    continuityLock: p.continuityLock,
+    clipDurationSeconds: duration
+  } as any);
+  const numbered = (local.scenes || []).map((s: any, i: number) => ({ ...s, sceneNumber: startSceneNum + i }));
+  const order = checkEpisodeOrder(numbered, resume);
+  const cursor = storyCursorFor(numbered, p.originalStory, resume.fromBeat);
+  const beatCount = (() => { try { return parseStoryStructure(p.originalStory).narrativeBeats.length; } catch { return 0; } })();
+  if (cursor < resume.fromBeat) {
+    // No story line advanced: never hand back the same scenes again
+    return { scenes: [], hasMoreScenes: false, sourceCovered: true, isStoryFinished: false, finishMessage: 'ไม่มีเนื้อเรื่องเหลือให้สร้างต่อ', progressPercentage: 100 };
+  }
+  const scenes = splitDenseDialogueScenes(numbered.map((s: any) => ({ ...s, sourceCursor: cursor })), duration);
+  const hasMoreScenes = cursor < beatCount - 1;
+  const finished = !hasMoreScenes && hasExplicitEndingMarker(p.originalStory);
+  const total = resume.sourceLines.length;
+  return {
+    ...local,
+    episodeNumber: p.episodeNumber || local.episodeNumber,
+    scenes,
+    nextScene: scenes[0],
+    hasMoreScenes,
+    sourceCovered: !hasMoreScenes,
+    isStoryFinished: finished,
+    finishMessage: finished ? 'เนื้อเรื่องจบแล้ว (จบบริบูรณ์ตามต้นฉบับ)' : (!hasMoreScenes ? 'ใช้เนื้อเรื่องต้นฉบับครบแล้ว' : ''),
+    progressPercentage: total > 0 ? Math.min(100, Math.round(((order.lastIndex + 1) / total) * 100)) : local.progressPercentage
+  };
 }
