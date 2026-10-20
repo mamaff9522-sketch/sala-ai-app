@@ -3154,7 +3154,6 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
   "currentMilestone": string,
   "summaryOfEventsSoFar": string,
   "sourceCovered": boolean (true เมื่อตอนนี้ครอบคลุมเหตุการณ์สุดท้ายของเนื้อเรื่องต้นฉบับแล้ว ไม่มีเหตุการณ์เหลือให้สร้างต่อ),
-  "episodeScriptText": "บทละครทั้งตอนที่จัดฟอร์แมตสมบูรณ์ (มีหัวข้อตอน, ฉากตามลำดับต้นฉบับ, ระบุตำแหน่งตัวละคร, เริ่มต้น, การกระทำ, บทพูด, สิ้นสุดฉาก) สำหรับใส่ลงช่อง 'วางบทหรือฉากหลายฉาก' อัตโนมัติ",
   "scenes": [
 {
   "sceneNumber": number,
@@ -3173,8 +3172,7 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
     }
   ],
   "endState": "จุดจบของฉาก ส่งต่อโมเมนตัมสู่ฉากถัดไป",
-  "visualPrompt": "Cinematic 8K video prompt in English containing character lock, spatial positioning, start action, core action, and camera directives for 10s video",
-  "scriptFormattedText": "ข้อความของฉากนี้ตามมาตรฐานบทละคร"
+  "visualPrompt": "Cinematic 8K video prompt in English containing character lock, spatial positioning, start action, core action, and camera directives for 10s video"
 }
   ]
 }`;
@@ -3228,7 +3226,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
 7. ในสถานที่เดียวกัน ให้ Story เดินเรื่องต่อเนื่องจนหมดช่วงนั้น
 8. เมื่อเนื้อเรื่องกำลังเปลี่ยนไปสถานที่ใหม่ ให้หยุดทันที ห้ามสร้างฉากข้ามไปยังสถานที่ใหม่
 9. ล็อคตำแหน่งตัวละคร (เช่น พี่ทุยอยู่ซ้ายเสา, น้องน้ำอยู่ขวาเสา) ให้ต่อเนื่องในทุกฉาก
-10. จัดเตรียม episodeScriptText สำหรับวางลงช่อง "วางบทหรือฉากหลายฉาก" อัตโนมัติ
+10. ไม่ต้องเขียนบทซ้ำในช่องอื่น (ระบบประกอบบทจากฉากให้เอง) เขียน visualPrompt สั้นกระชับ ไม่เกิน 120 คำต่อฉาก
 11. ห้ามสรุปว่าจบเรื่องเด็ดขาด เว้นแต่จะเจอคำว่า "จบเรื่อง", "จบบริบูรณ์", "จบฉาก", "ตอนจบ", "จบ", "-จบ-", "THE END" ในฉากสุดท้าย/บรรทัดท้ายของเนื้อเรื่องต้นฉบับ
 12. ตั้งค่า "sourceCovered": true เฉพาะเมื่อตอนนี้ครอบคลุมเหตุการณ์สุดท้ายของเนื้อเรื่องต้นฉบับแล้ว (ไม่มีเหตุการณ์เหลือให้สร้างตอนต่อไป) มิฉะนั้นให้เป็น false
 13. หัวข้อฉากที่เป็นชื่อตอน/อารมณ์ หรือ "หน้าบ้านต่อเนื่อง" ไม่ใช่สถานที่: "location" ต้องเป็นสถานที่จริงของฉากก่อนหน้า และ "timeOfDay" เดิม
@@ -3259,8 +3257,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
           }
         },
         endState: { type: Type.STRING },
-        visualPrompt: { type: Type.STRING },
-        scriptFormattedText: { type: Type.STRING }
+        visualPrompt: { type: Type.STRING }
       },
       required: ['sceneNumber', 'sceneHeading', 'location', 'timeOfDay', 'characters', 'actionDescription', 'startAction', 'dialogues', 'endState', 'visualPrompt']
     };
@@ -3275,7 +3272,6 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
         currentMilestone: { type: Type.STRING },
         summaryOfEventsSoFar: { type: Type.STRING },
         sourceCovered: { type: Type.BOOLEAN },
-        episodeScriptText: { type: Type.STRING },
         scenes: { type: Type.ARRAY, items: storySceneSchema }
       },
       required: ['isStoryFinished', 'episodeNumber', 'episodeTitle', 'progressPercentage', 'sourceCovered', 'scenes']
@@ -3286,6 +3282,7 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
     let validation: ReturnType<typeof validateGeminiEpisodeScenes> | null = null;
     let order: ReturnType<typeof checkEpisodeOrder> | null = null;
     let retryNote = '';
+    let lastReplyIssue = '';
     for (let attempt = 1; attempt <= 2; attempt++) {
     let rawText = '';
     try {
@@ -3304,6 +3301,11 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
       if (!billed) return;
       const response = billed.response;
       rawText = response.text || '';
+      const finishReason = String(response?.candidates?.[0]?.finishReason || '');
+      lastReplyIssue = !rawText.trim() ? `ไม่มีข้อความตอบกลับ${finishReason ? ` ${finishReason}` : ''}`
+        : finishReason === 'MAX_TOKENS' ? 'คำตอบยาวเกินจนถูกตัด'
+        : finishReason && finishReason !== 'STOP' ? finishReason
+        : `อ่านคำตอบไม่ได้ ${rawText.length} ตัวอักษร`;
     } catch (geminiErr: any) {
       const reason = formatGenAIError(geminiErr);
       console.warn('Gemini story continuation failed:', reason);
@@ -3329,7 +3331,8 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
         retryNote = `\n\n[แก้ไขจากครั้งก่อน]: คำตอบครั้งก่อนยาวเกินจนถูกตัด ให้สร้างไม่เกิน 3 ฉาก และ visualPrompt สั้นๆ`;
         continue;
       }
-      return offlineEpisode('Gemini ตอบกลับไม่สมบูรณ์ ระบบสร้างช่วงนี้แบบไม่ใช้ AI แทน เนื้อเรื่องครบตามต้นฉบับ');
+      console.warn('Gemini story reply unreadable:', lastReplyIssue);
+      return offlineEpisode(`Gemini ตอบกลับไม่สมบูรณ์ (${lastReplyIssue}) ระบบสร้างช่วงนี้แบบไม่ใช้ AI แทน เนื้อเรื่องครบตามต้นฉบับ`);
     }
 
     validation = validateGeminiEpisodeScenes(parsed, startSceneNum, declaredNames);
@@ -3390,7 +3393,16 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
     if (restored.restoredActions || restored.restoredDialogues) {
       console.log(`[story continue] restored ${restored.restoredActions} action and ${restored.restoredDialogues} dialogue line(s)`);
     }
-    parsed.scenes = restored.scenes;
+    parsed.scenes = restored.scenes.map((s: any) => s.scriptFormattedText ? s : {
+      ...s,
+      scriptFormattedText: [
+        s.sceneHeading,
+        s.startAction ? `(เริ่มต้น: ${s.startAction})` : '',
+        s.actionDescription ? `(การกระทำ: ${s.actionDescription})` : '',
+        ...(Array.isArray(s.dialogues) ? s.dialogues : []).map((d: any) => `${d.speaker}${d.emotionOrAction ? ' ' + d.emotionOrAction : ''}: "${d.dialogue}"`),
+        s.endState ? `(สิ้นสุดฉาก: ${s.endState})` : ''
+      ].filter(Boolean).join('\n')
+    });
     parsed.continuityWarnings = locked.warnings;
     parsed.characterWarnings = locked.characterWarnings;
 
