@@ -3,7 +3,8 @@ import { Check, Copy, Play, StopCircle, Wrench, UserCheck, AlertTriangle, CheckC
 import type { Character } from '../types';
 import { api } from '../services/api';
 import { runWholeStory, type StoryClip } from '../services/wholeStoryRunner';
-import { metaOptionsForStory } from '../services/storyProgress';
+import { metaOptionsForStory, offlineContinuation } from '../services/storyProgress';
+import { isClipByClipScript } from '../services/storyNormalize';
 import { formatClipForMetaAi, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
 import { toCharacterLockPayload } from '../services/characterAppearance';
 
@@ -98,16 +99,28 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
     setResultStory(text);
     setProgress('กำลังเริ่ม...');
     const lib = (characters || []).filter(c => c?.name && text.includes(c.name)).map(c => toCharacterLockPayload(c));
+    // Already split clip by clip by the writer: use the clips exactly as written, on this phone,
+    // free (Gemini would only rewrite them, at the cost of one call per 6 clips)
+    const exact = isClipByClipScript(text);
+    const runLocal = async (payload: any) => {
+      await new Promise(r => setTimeout(r, 0)); // let the progress line update
+      return { success: true, ...offlineContinuation(payload) } as any;
+    };
     try {
       const r = await runWholeStory(text, {
         characters: lib,
         aspectRatio: aspect,
         clipSeconds: seconds,
+        offline: exact,
+        maxSteps: exact ? 400 : undefined,
         shouldStop: () => stopRef.current,
         onProgress: p => { setProgress(p.message); setClips(p.clips); }
-      }, payload => api.continueStory(payload));
+      }, exact ? runLocal : (payload => api.continueStory(payload)));
       setClips(r.clips);
-      setNotices(r.notices);
+      const notices = r.notices.filter(n => !exact || !n.includes('ไม่ใช้ AI ตั้งแต่'));
+      if (exact) notices.unshift('บทนี้แบ่งคลิปมาแล้ว ระบบใช้คลิปตามบทเป๊ะทุกคลิป สร้างในเครื่อง ไม่ใช้ AI ไม่เสียเครดิต');
+      r.notices = notices;
+      setNotices(notices);
       if (r.error) setError(`สร้างได้ ${r.clips.length} คลิปแล้วเกิดปัญหา: ${r.error} — กดสร้างใหม่อีกครั้งได้`);
       saveJson(RESULT_KEY, { story: text, clips: r.clips, notices: r.notices, aspect, seconds });
     } catch (e: any) {

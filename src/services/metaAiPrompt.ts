@@ -285,6 +285,9 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   if (opts.aspectRatio) head.push(`สัดส่วนภาพ ${opts.aspectRatio}`);
   const tail: string[] = [];
   if (hasDialogue) tail.push('ตัวละครพูดภาษาไทยตามบทพูดด้านบนคำต่อคำ ปากขยับตรงกับเสียง ไม่พูดประโยคอื่นเพิ่ม');
+  // One speaker: everyone else keeps their mouth closed (the video model makes the whole cast talk)
+  const speakers = Array.from(new Set((clip.dialogues || []).filter(d => String(d?.line || '').trim() && !isEmptyLine(d?.line)).map(d => String(d?.speaker || '').trim()).filter(Boolean)));
+  if (speakers.length === 1 && names.some(n => n !== speakers[0])) tail.push(`เฉพาะ${speakers[0]}ที่ขยับปากพูด ตัวละครอื่นปิดปาก ไม่พูดตาม`);
   else tail.push('ไม่มีบทพูดในคลิปนี้ ตัวละครไม่พูด');
   tail.push('ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำบนจอ');
 

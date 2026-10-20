@@ -477,7 +477,9 @@ export function restoreMissingStoryBeats<T extends Record<string, any>>(
     const prompt = String(scene?.[promptKey] || '');
     if (beat.type === 'action') {
       const text = String(beat.text || '').trim();
-      if (!text || isLineCovered(text, prompt) || isLineCovered(text, (addActions.get(s) || []).join(' '))) continue;
+      // Already written in ANY clip of this batch: not missing. (Only the clip next to the nearest
+      // dialogue was checked, so the action of a clip without dialogue was copied into its neighbour.)
+      if (!text || isLineCovered(text, prompt) || out.some((o: any) => isLineCovered(text, String(o?.[promptKey] || ''))) || isLineCovered(text, (addActions.get(s) || []).join(' '))) continue;
       if (!addActions.has(s)) addActions.set(s, []);
       addActions.get(s)!.push(text.replace(/[.\s]+$/, ''));
       restoredActions++;

@@ -7,6 +7,7 @@ import { offlineContinuation, isLineCovered, metaOptionsForStory } from '../src/
 import { parseStoryStructure } from '../src/services/storyEpisodeEngine';
 import { formatAllClipsForMetaAi, formatClipForMetaAi, characterNote } from '../src/services/metaAiPrompt';
 import { analyzeClipContinuity } from '../src/services/continuityEngine';
+import { isClipByClipScript } from '../src/services/storyNormalize';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rd = (f: string) => fs.readFileSync(path.join(here, 'fixtures', f), 'utf8');
@@ -116,6 +117,32 @@ await check('review points: real cast per clip, no "ไม่มี" lines, no "
     const act = c.match(/Scene Action: ([^.]+)/)?.[1] || '';
     if (act) assert.equal(c.split(act.slice(0, 15)).length - 1, 1, `action written once: ${act}`);
   }
+});
+
+await check('ไฟแค้นซ่อนรัก 225 clips: the writer\'s clips kept exactly, every line once, notes never played', async () => {
+  const story = rd('faiklaen-225-clips.txt');
+  assert.equal(isClipByClipScript(story), true);
+  const r = await runWholeStory(story, { offline: true, clipSeconds: 8, maxSteps: 400 }, fakeServer(false));
+  assert.equal(r.clips.length, 225, 'one prompt per written clip');
+  const clips = formatAllClipsForMetaAi(r.clips as any, metaOptionsForStory(story, [], characterNote)).split('\n\n').map(c => c.split('\n').slice(1).join(' '));
+  const lines = Array.from(story.matchAll(/^บทพูด \[([^\]]+)\]: “(.+)”$/gm)).map(m => ({ who: m[1], line: m[2] }));
+  assert.equal(lines.length, 190);
+  for (const { who, line } of lines) {
+    const where = clips.filter(c => c.includes(`"${line}"`));
+    assert.equal(where.length, 1, `"${line}" in ${where.length} clips`);
+    assert.ok(where[0].includes(`${who === 'ตำรวจ' ? 'ตำรวจหญิง' : who} speaks: "${line}"`), `${who}: ${line}`);
+  }
+  for (const [i, c] of clips.entries()) {
+    assert.ok(!/คลิป \d+\/225|ภาพ\/การกระทำ|บทพูด \[|ข้อกำหนด|ความยาวเป้าหมาย|รูปที่ 1 ซึ่ง/.test(c), `clip ${i + 1} leaks a note: ${c.slice(0, 120)}`);
+    assert.ok(/ล็อกฉาก: สถานที่ \S+.* เวลา \S+/.test(c), `clip ${i + 1} locks place and time`);
+    assert.ok(!/speaks:\s*"ไม่มี"/.test(c));
+  }
+  // a clip without dialogue keeps its own action; the clip before it does not get it too
+  assert.ok(clips[23].includes('ภาคินวางกระเป๋าที่ท้ายรถ') && !clips[22].includes('ภาคินวางกระเป๋าที่ท้ายรถ'));
+  assert.ok(clips[44].includes('แฟ้มสีน้ำเงินปิดลงช้า') && !clips[45].includes('แฟ้มสีน้ำเงินปิดลงช้า'));
+  assert.ok(clips[0].includes('เวลา กลางวัน'), 'day time read from "วันที่ 1 ช่วงกลางวัน"');
+  assert.ok(clips[0].includes('เฉพาะคุณหญิงมณีที่ขยับปากพูด'), 'only the speaker moves their lips');
+  assert.ok(/ตัวละครในคลิป: [^—]*ทนายกฤต/.test(clips[32]), '"กฤต" in an action is ทนายกฤต');
 });
 
 console.log(`\nwhole story: ${passed} passed`);
