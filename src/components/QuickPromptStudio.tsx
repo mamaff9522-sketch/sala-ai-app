@@ -1,0 +1,241 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Copy, Play, StopCircle, Wrench, UserCheck, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import type { Character } from '../types';
+import { api } from '../services/api';
+import { runWholeStory, type StoryClip } from '../services/wholeStoryRunner';
+import { metaOptionsForStory } from '../services/storyProgress';
+import { formatClipForMetaAi, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
+import { toCharacterLockPayload } from '../services/characterAppearance';
+
+/**
+ * One-button screen: paste the story, tap once, get a prompt for every clip, ready for Meta AI.
+ * Everything else (scenes, clip split, Gemini in chunks, no-AI fallback, scene / pose / character
+ * locks) is done by the system. The full tools stay one tap away.
+ */
+interface QuickPromptStudioProps {
+  characters: Character[];
+  onOpenTools: () => void;
+  onOpenCharacters: () => void;
+}
+
+const DRAFT_KEY = 'sala_quick_story_draft';
+const RESULT_KEY = 'sala_quick_story_result';
+
+function loadJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function saveJson(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ }
+}
+
+export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters, onOpenTools, onOpenCharacters }) => {
+  const saved = loadJson<{ story: string; clips: StoryClip[]; notices: string[]; aspect: string; seconds: number } | null>(RESULT_KEY, null);
+  const [story, setStory] = useState<string>(() => loadJson<string>(DRAFT_KEY, saved?.story || ''));
+  const [aspect, setAspect] = useState<string>(saved?.aspect || '9:16');
+  const [seconds, setSeconds] = useState<number>(saved?.seconds || 8);
+  const [clips, setClips] = useState<StoryClip[]>(saved?.clips || []);
+  const [resultStory, setResultStory] = useState<string>(saved?.story || '');
+  const [notices, setNotices] = useState<string[]>(saved?.notices || []);
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const stopRef = useRef(false);
+
+  useEffect(() => { saveJson(DRAFT_KEY, story); }, [story]);
+
+  // Meta AI copy for each clip: only this story's characters, fixed photo numbers, scene / pose locks
+  const metaOpts = useMemo(() => {
+    const lib = (characters || []).map(c => ({ ...toCharacterLockPayload(c), avatarUrl: (c as any).avatarUrl, referenceImages: (c as any).referenceImages }));
+    return { ...metaOptionsForStory(resultStory, lib, characterNote), aspectRatio: aspect };
+  }, [characters, resultStory, aspect]);
+  const prompts = useMemo(
+    () => clips.map((c, i) => formatClipForMetaAi(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) })),
+    [clips, metaOpts]
+  );
+  const photoLine = (c: StoryClip) => {
+    const names = charactersInClip(c as any, metaOpts.knownCharacters).filter(n => metaOpts.withPhoto.includes(n));
+    const nums = photoNumbers(names, metaOpts);
+    return names.sort((a, b) => (nums.get(a) || 0) - (nums.get(b) || 0)).map(n => `รูปที่ ${nums.get(n)} ${n}`).join('  ');
+  };
+
+  const copy = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch { /* ignore */ }
+      document.body.removeChild(ta);
+    }
+    setCopied(key);
+    setTimeout(() => setCopied(c => (c === key ? null : c)), 2000);
+  };
+
+  const copyAll = () => {
+    const all = clips.map((c, i) => {
+      const photos = photoLine(c);
+      return `=== คลิป ${i + 1}/${clips.length} ===${photos ? `\n(อัปโหลดรูป: ${photos})` : ''}\n${prompts[i]}`;
+    }).join('\n\n');
+    copy(all, 'all');
+  };
+
+  const start = async () => {
+    const text = story.trim();
+    if (!text) { setError('วางเนื้อเรื่องก่อนครับ'); return; }
+    stopRef.current = false;
+    setRunning(true);
+    setError(null);
+    setNotices([]);
+    setClips([]);
+    setResultStory(text);
+    setProgress('กำลังเริ่ม...');
+    const lib = (characters || []).filter(c => c?.name && text.includes(c.name)).map(c => toCharacterLockPayload(c));
+    try {
+      const r = await runWholeStory(text, {
+        characters: lib,
+        aspectRatio: aspect,
+        clipSeconds: seconds,
+        shouldStop: () => stopRef.current,
+        onProgress: p => { setProgress(p.message); setClips(p.clips); }
+      }, payload => api.continueStory(payload));
+      setClips(r.clips);
+      setNotices(r.notices);
+      if (r.error) setError(`สร้างได้ ${r.clips.length} คลิปแล้วเกิดปัญหา: ${r.error} — กดสร้างใหม่อีกครั้งได้`);
+      saveJson(RESULT_KEY, { story: text, clips: r.clips, notices: r.notices, aspect, seconds });
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    } finally {
+      setRunning(false);
+      setProgress('');
+    }
+  };
+
+  const libraryInStory = (characters || []).filter(c => c?.name && story.includes(c.name)).length;
+
+  return (
+    <div className="min-h-screen text-white pb-28 pt-3 px-3 sm:px-6 app-sky font-sans">
+      <div className="max-w-xl mx-auto space-y-3">
+        <header className="flex items-start justify-between gap-2 px-1">
+          <div>
+            <h1 className="text-xl font-bold">สร้างพรอมต์จากเรื่อง</h1>
+            <p className="text-[13px] text-slate-300 mt-0.5">วางเนื้อเรื่อง กดปุ่มเดียว ได้พรอมต์ทุกคลิปพร้อมวางใน Meta AI</p>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenTools}
+            className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-slate-600 bg-slate-900/70 px-3 py-2 text-[13px] text-slate-200"
+          >
+            <Wrench className="w-4 h-4" /> เครื่องมือเต็ม
+          </button>
+        </header>
+
+        <div className="rounded-2xl border border-slate-700 bg-[#0b1224]/90 p-3 space-y-3">
+          <textarea
+            value={story}
+            onChange={e => setStory(e.target.value)}
+            disabled={running}
+            placeholder={'วางเนื้อเรื่องที่นี่ เช่น\n\nตัวละคร\nน้ำฟ้า ลูกสะใภ้สาว\n\nฉาก: คฤหาสน์หรู กลางคืน\nคุณหญิงมณีโยนกระเป๋า...\nคุณหญิงมณี: "ออกไปจากบ้านฉัน!"'}
+            className="w-full min-h-[220px] rounded-xl bg-slate-950/80 border border-slate-700 p-3 text-[15px] leading-relaxed text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-indigo-500"
+          />
+          <div className="flex flex-wrap items-center gap-2 text-[13px]">
+            <span className="text-slate-400">สัดส่วน</span>
+            {['9:16', '16:9'].map(a => (
+              <button key={a} type="button" disabled={running} onClick={() => setAspect(a)}
+                className={`px-3 py-1.5 rounded-lg border ${aspect === a ? 'border-indigo-400 bg-indigo-600/30 text-white' : 'border-slate-700 text-slate-300'}`}>
+                {a}
+              </button>
+            ))}
+            <span className="text-slate-400 ml-2">ความยาวคลิป</span>
+            {[8, 10].map(s => (
+              <button key={s} type="button" disabled={running} onClick={() => setSeconds(s)}
+                className={`px-3 py-1.5 rounded-lg border ${seconds === s ? 'border-indigo-400 bg-indigo-600/30 text-white' : 'border-slate-700 text-slate-300'}`}>
+                {s} วิ
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={running ? () => { stopRef.current = true; } : start}
+            disabled={!running && !story.trim()}
+            className={`w-full py-3.5 rounded-2xl font-bold text-[15px] flex items-center justify-center gap-2 disabled:opacity-50 ${
+              running ? 'bg-rose-600 text-white' : 'bg-gradient-to-r from-cyan-500 via-indigo-600 to-fuchsia-600 text-white shadow-lg shadow-indigo-600/30'
+            }`}
+          >
+            {running ? <><StopCircle className="w-5 h-5" /> {progress || 'กำลังสร้าง...'} (แตะเพื่อหยุด)</> : <><Play className="w-5 h-5 fill-current" /> สร้างพรอมต์ทั้งเรื่อง</>}
+          </button>
+
+          <button type="button" onClick={onOpenCharacters} className="w-full text-left text-[12px] text-slate-400 flex items-center gap-1.5">
+            <UserCheck className="w-4 h-4 text-slate-500" />
+            {libraryInStory > 0
+              ? `ใช้หน้าตาจากคลังตัวละคร ${libraryInStory} ตัวที่มีชื่อในเรื่องนี้ (แตะเพื่อดูคลัง)`
+              : 'ตัวละครที่ไม่มีในคลังจะใช้คำอธิบายจากรายชื่อตัวละครในบท (แตะเพื่อเพิ่มรูปในคลัง)'}
+          </button>
+        </div>
+
+        {error && (
+          <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 p-3 text-[13px] text-rose-200 flex gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> <span>{error}</span>
+          </div>
+        )}
+        {notices.length > 0 && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-950/30 p-3 text-[12px] text-amber-200 space-y-1">
+            {notices.map((n, i) => <div key={i}>• {n}</div>)}
+          </div>
+        )}
+
+        {clips.length > 0 && (
+          <div className="space-y-2.5">
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center gap-1.5 text-[14px] font-semibold">
+                {!running && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                {running ? `ได้แล้ว ${clips.length} คลิป...` : `ได้ ${clips.length} คลิป`}
+              </div>
+              {!running && (
+                <button type="button" onClick={copyAll}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3 py-2 text-[13px] font-semibold">
+                  {copied === 'all' ? <><Check className="w-4 h-4" /> คัดลอกแล้ว</> : <><Copy className="w-4 h-4" /> คัดลอกทั้งหมด</>}
+                </button>
+              )}
+            </div>
+            {clips.map((c, i) => {
+              const photos = photoLine(c);
+              return (
+                <div key={`${c.clipNumber}-${i}`} className="rounded-2xl border border-slate-700 bg-[#0b1224]/90 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[14px] font-bold">คลิป {i + 1}</div>
+                      <div className="text-[12px] text-slate-400 truncate">{String(c.title || '').replace(/\s*[-–—/]?\s*ไม่ระบุ(?:จากต้นฉบับ)?/g, '')}</div>
+                    </div>
+                    <button type="button" onClick={() => copy(prompts[i], `c${i}`)}
+                      className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-slate-600 bg-slate-800 px-3 py-1.5 text-[13px]">
+                      {copied === `c${i}` ? <><Check className="w-4 h-4 text-emerald-400" /> คัดลอกแล้ว</> : <><Copy className="w-4 h-4" /> คัดลอก</>}
+                    </button>
+                  </div>
+                  {photos && <div className="mt-1.5 text-[12px] text-cyan-300">อัปโหลดรูปใน Meta AI: {photos}</div>}
+                  {c.dialogues.length > 0 && (
+                    <div className="mt-2 space-y-0.5 text-[13px] text-slate-200">
+                      {c.dialogues.map((d, j) => <div key={j}><span className="text-slate-400">{d.speaker}:</span> “{d.line}”</div>)}
+                    </div>
+                  )}
+                  <details className="mt-2">
+                    <summary className="text-[12px] text-slate-400 cursor-pointer">ดูพรอมต์เต็ม</summary>
+                    <p className="mt-1.5 text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">{prompts[i]}</p>
+                  </details>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

@@ -11,6 +11,7 @@ import { Admin } from './pages/Admin';
 import { Pricing } from './pages/Pricing';
 import { ActiveJobBanner } from './components/ActiveJobBanner';
 import { HomeDashboard } from './components/HomeDashboard';
+import { QuickPromptStudio } from './components/QuickPromptStudio';
 import { ProjectList } from './components/ProjectList';
 import { ChatRoom } from './components/ChatRoom';
 import { QuickGenerateModal } from './components/QuickGenerateModal';
@@ -636,7 +637,7 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 w-full">
-        {['home', 'chat', 'director', 'characters', 'locations'].includes(activeTab) && (
+        {['home', 'tools', 'chat', 'director', 'characters', 'locations'].includes(activeTab) && (
           <div className="px-3 pt-3">
             <button
               type="button"
@@ -647,7 +648,17 @@ export default function App() {
             </button>
           </div>
         )}
+        {/* Home: one button — paste the story, get every clip's prompt */}
         {activeTab === 'home' && (
+          <QuickPromptStudio
+            characters={characters}
+            onOpenTools={() => handleTabChange('tools')}
+            onOpenCharacters={() => handleTabChange('characters')}
+          />
+        )}
+
+        {/* Full tools (the previous home screen) */}
+        {activeTab === 'tools' && (
           <HomeDashboard
             onNavigate={(tab) => handleTabChange(tab)}
             credits={credits}

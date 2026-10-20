@@ -52,7 +52,8 @@ import { CREDIT_CATALOG, MISSING_FIRESTORE_CREDENTIAL_MESSAGE, MISSING_STRIPE_SE
 import { registerTransferRoutes } from './serverTransfer';
 import { loadVeoReferenceImages, resolveVeoReferenceModel, veoDurationSeconds } from './serverVeo';
 import { OMNI_VIDEO_MODEL, extractLastFrame, generateOmniVideo } from './serverOmni';
-import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson, splitDenseDialogueScenes, restoreMissingStoryBeats, offlineContinuation, storyCursorFor } from './src/services/storyProgress';
+import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson, splitDenseDialogueScenes, restoreMissingStoryBeats, offlineContinuation, storyCursorFor, lockForScript, fixDialogueSpeakers } from './src/services/storyProgress';
+import { normalizeStoryScript } from './src/services/storyNormalize';
 
 dotenv.config();
 
@@ -2151,7 +2152,7 @@ app.post('/api/director/generate-multi-clip-prompts', requireAuth, async (req: a
       scriptText,
       clipDurationSeconds = 10,
       clipCount = 3,
-      continuityLock = {},
+      continuityLock: rawContinuityLock = {},
       dialogues = [],
       audioDirectives = {},
       apiKey,
@@ -2159,6 +2160,8 @@ app.post('/api/director/generate-multi-clip-prompts', requireAuth, async (req: a
       characters = [],
       locations = []
     } = req.body;
+    // Only this story's characters / place: a lock left over from another story is not sent to Gemini
+    const continuityLock: any = lockForScript(rawContinuityLock, scriptText);
 
     if (!scriptText || typeof scriptText !== 'string' || scriptText.trim().length === 0) {
       return res.status(400).json({
@@ -2277,7 +2280,7 @@ CRITICAL CONTINUITY DIRECTIVES (MASTER CONTINUITY LOCK):
   * ดึงค่า "สถานที่" (Location) และ "ช่วงเวลา/สภาพแสง" (Lighting/Time) จากเนื้อเรื่องของฉากนั้นโดยตรง
   * เมื่อขึ้นฉากใหม่ ให้รีเซ็ตค่าสภาพแวดล้อมเดิมทิ้งทันที ห้ามนำค่าเดิม (เช่น ป่าทึบ/แสงแดด) ข้ามมาใช้ในฉากใหม่ (เช่น ถ้ำโบราณ/กลางคืน)
   * หัวข้อฉากที่เป็นชื่อตอน/อารมณ์ (เช่น "อารมณ์เริ่มตึงเครียด", "คืนดีกัน") หรือ "…ต่อเนื่อง" ไม่ใช่สถานที่ใหม่ ให้ใช้สถานที่และเวลาของฉากเดิมต่อเนื่อง
-${buildLockedContinuityContext(continuityLock, characters, locations)}
+${buildLockedContinuityContext(continuityLock, (Array.isArray(characters) ? characters : []).filter((c: any) => c?.name && scriptText.includes(String(c.name))), locations)}
 
 CRITICAL ORIGINAL DIALOGUE INTEGRITY RULES:
 - ORIGINAL_DIALOGUE_ONLY = true
@@ -2305,6 +2308,8 @@ ACTION & NARRATION RULE:
   * สร้าง Action เพิ่มเอง
 
 CLIP SPLITTING RULES:
+- บทพูดในแต่ละคลิปต้องพูดจบได้ใน ${duration} วินาที (ประมาณ ${Math.max(1, Math.round(3 * duration / 10))} บรรทัดสั้น) ถ้าเกินให้แยกเป็นคลิปถัดไปในสถานที่เดิม
+- generatedPrompt ของแต่ละคลิปบรรยายเฉพาะเหตุการณ์ของคลิปนั้น ห้ามบรรยายเหตุการณ์ที่เกิดไปแล้วในคลิปก่อนซ้ำ
 - ห้ามใช้ 1 Action = 1 Clip เด็ดขาด
 - Action/Narration ที่ต่อเนื่องกันในฉากและสถานที่เดียวกัน ให้รวมอยู่ในคลิปเดียวเท่าที่เวลา ${duration} วินาทีรองรับ (เช่น “หันมอง → เดินเข้าไป → ทำหน้าโมโห → หยิบมีด → ฟันต้นไม้” เป็นเหตุการณ์ต่อเนื่องกันในฉากเดียวกัน ให้รวมอยู่ในคลิปเดียว)
 - ห้ามสร้าง Action เพิ่มเองเพื่อยืดจำนวนคลิป
@@ -2479,10 +2484,11 @@ Respond ONLY with a JSON array with one object per clip, covering the whole scri
     clips = splitResult.clips;
     // Gemini rewrites the script in its own words and drops action lines: put back every script line
     // it left out, in the clip where it belongs
-    const restoredBeats = restoreMissingStoryBeats(clips, scriptText, { untilEnd: true, promptKey: 'generatedPrompt', dialogueKey: 'line' });
-    clips = restoredBeats.scenes;
-    // Too much dialogue for one clip: split into consecutive clips (Gemini sometimes packs a whole scene)
-    clips = splitDenseDialogueScenes(clips, duration, { promptKey: 'generatedPrompt', numberKey: 'clipNumber', titleKey: 'title', endKey: 'endAction' });
+    // Speakers as in the script; too much dialogue for one clip → consecutive clips, each with only its
+    // own actions; then every script line Gemini left out goes back into the clip where it belongs
+    clips = fixDialogueSpeakers(clips, scriptText, { promptKey: 'generatedPrompt', dialogueKey: 'line' }).scenes;
+    clips = splitDenseDialogueScenes(clips, duration, { promptKey: 'generatedPrompt', numberKey: 'clipNumber', titleKey: 'title', endKey: 'endAction', story: scriptText });
+    clips = restoreMissingStoryBeats(clips, scriptText, { untilEnd: true, promptKey: 'generatedPrompt', dialogueKey: 'line' }).scenes;
 
     const validation = validateSalaMultiClipPrompts(clips, lockedNames, scriptText);
 
@@ -2512,11 +2518,13 @@ app.post('/api/director/regenerate-single-clip', requireAuth, async (req: any, r
       sceneSummary = '',
       previousClipEndAction = '',
       nextClipStartAction = '',
-      continuityLock = {},
+      continuityLock: rawContinuityLock = {},
       dialogues = [],
       audioDirectives = {},
       scriptText = ''
     } = req.body;
+    // Only this story's characters / place: a lock left over from another story is not sent to Gemini
+    const continuityLock: any = lockForScript(rawContinuityLock, scriptText);
 
     const quotes = scriptText ? extractVerbatimScriptQuotes(scriptText) : null;
     const safeDialogues = Array.isArray(dialogues)
@@ -2677,10 +2685,12 @@ app.post('/api/script/split', async (req: express.Request, res: express.Response
       scriptText,
       clipCount,
       apiKey,
-      continuityLock,
+      continuityLock: rawContinuityLock,
       characters,
       locations
     } = req.body || {};
+    // Only this story's characters / place: a lock left over from another story is not sent to Gemini
+    const continuityLock: any = lockForScript(rawContinuityLock, scriptText);
     const offlineMode = req.body?.offlineMode === true || req.body?.offline === true;
     const libChars = markMissingUploadReferences(Array.isArray(characters) ? characters : []);
     if (!scriptText || typeof scriptText !== 'string' || !scriptText.trim()) {
@@ -2982,17 +2992,21 @@ app.post(['/api/story/continue', '/api/story/continue/'], async (req: express.Re
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   try {
     const {
-      originalStory,
+      originalStory: rawOriginalStory,
       currentScriptText,
       episodeNumber: reqEpisodeNumber,
       targetSceneCount = 5,
       existingScenes = [],
       lastSceneState,
       characters,
-      continuityLock,
+      continuityLock: rawContinuityLock,
       clipDurationSeconds = 10,
       apiKey
     } = req.body || {};
+    // Only this story's characters / place: a lock left over from another story is not sent to Gemini
+    // Same script format everywhere (title in quotes, "ฉาก:" without a number, character list without dashes)
+    const originalStory: string = typeof rawOriginalStory === 'string' ? normalizeStoryScript(rawOriginalStory) : rawOriginalStory;
+    const continuityLock: any = lockForScript(rawContinuityLock, originalStory || '');
 
     if (!originalStory || typeof originalStory !== 'string' || !originalStory.trim()) {
       return res.status(400).json({
@@ -3192,6 +3206,8 @@ ${originalStory.trim()}
 ${resumeBlock}
 [เป้าหมายการสร้าง]:
 - สร้าง "ตอนที่ ${episodeNumber}" ไม่เกิน ${scenesPerEpisode} ฉาก (เนื้อเรื่องที่เหลือไว้ตอนถัดไป)
+- 1 ฉากใน JSON = 1 คลิปวิดีโอ ${clipDurationSeconds} วินาที: บทพูดในฉากต้องพูดจบได้ใน ${clipDurationSeconds} วินาที (ประมาณ ${Math.max(1, Math.round(3 * (Number(clipDurationSeconds) || 8) / 10))} บรรทัดสั้น) ถ้าเกินให้แยกเป็นฉากถัดไปในสถานที่เดิม
+- "visualPrompt" ของแต่ละฉากบรรยายเฉพาะเหตุการณ์ของฉากนั้น ห้ามบรรยายเหตุการณ์ที่เกิดไปแล้วในฉากก่อนซ้ำ
 - "visualPrompt" ต้องมีทุก Action/Narration ของฉากนั้นครบทุกบรรทัดตามลำดับในบท ห้ามตัด ห้ามสรุปรวบ ห้ามข้าม แต่ไม่ต้องใส่รายละเอียดหน้าตาตัวละคร (ระบบใส่ Character Lock ให้เอง)
 - ความยาวตามเหตุการณ์จริง (ฉากละประมาณ ${clipDurationSeconds} วินาที ไม่ต้องกำหนดขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip)
 ${episodeNumber === 1 ? '- สำคัญมาก: ตอนที่ 1 ให้สร้างจากช่วงต้นเรื่องเท่านั้น ห้ามสรุปเรื่องทั้งหมดในตอนเดียว' : `- สร้างตอนที่ ${episodeNumber} ต่อจากจุดจบของตอนก่อนหน้าทันที ไม่รีเซ็ต ไม่กระโดด`}
@@ -3359,17 +3375,22 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
     // (a 7-line scene used to come out as a single 8-second prompt)
     // Gemini rewrites scenes in its own words and drops action lines: put every story line it left out
     // back into the scene where it belongs (the original story is the source of truth)
-    const restored = restoreMissingStoryBeats(locked.scenes, originalStory, { fromDialogueIndex: resume.nextIndex, fromBeat: resume.fromBeat });
-    if (restored.restoredActions || restored.restoredDialogues) {
-      console.log(`[story continue] restored ${restored.restoredActions} action and ${restored.restoredDialogues} dialogue line(s) Gemini left out`);
-    }
+    const fixedScenes = fixDialogueSpeakers(locked.scenes, originalStory).scenes;
     // Story position reached (action lines included); the next episode starts right after it
-    const cursor = storyCursorFor(restored.scenes, originalStory, resume.fromBeat);
+    const probe = restoreMissingStoryBeats(fixedScenes, originalStory, { fromDialogueIndex: resume.nextIndex, fromBeat: resume.fromBeat });
+    const cursor = storyCursorFor(probe.scenes, originalStory, resume.fromBeat);
     if (cursor < resume.fromBeat) {
       return offlineEpisode('Gemini ไม่ได้เขียนเนื้อเรื่องต่อ ระบบสร้างช่วงนี้แบบไม่ใช้ AI แทน');
     }
     parsed.sourceCovered = cursor >= (parsedSource.narrativeBeats?.length || 0) - 1;
-    parsed.scenes = splitDenseDialogueScenes(restored.scenes.map((sc: any) => ({ ...sc, sourceCursor: cursor })), Number(clipDurationSeconds) || 8);
+    // Too much dialogue for one clip → consecutive clips, each with only its own actions; then every
+    // story line Gemini left out goes back into the clip where it belongs
+    const splitScenes = splitDenseDialogueScenes(fixedScenes.map((sc: any) => ({ ...sc, sourceCursor: cursor })), Number(clipDurationSeconds) || 8, { story: originalStory });
+    const restored = restoreMissingStoryBeats(splitScenes, originalStory, { fromDialogueIndex: resume.nextIndex, fromBeat: resume.fromBeat, toBeat: cursor });
+    if (restored.restoredActions || restored.restoredDialogues) {
+      console.log(`[story continue] restored ${restored.restoredActions} action and ${restored.restoredDialogues} dialogue line(s)`);
+    }
+    parsed.scenes = restored.scenes;
     parsed.continuityWarnings = locked.warnings;
     parsed.characterWarnings = locked.characterWarnings;
 

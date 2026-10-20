@@ -24,6 +24,7 @@ export const KNOWN_SECTION_LABELS = [
   'Starting moment',
   'Core action',
   'Script action',
+  'Scene Action',
   'Ending momentum',
   'Cinematography',
   'Camera',
@@ -97,4 +98,21 @@ export function stripExact(prompt: string, texts: string[]): string {
 export function countOccurrences(haystack: string, needle: string): number {
   if (!needle) return 0;
   return haystack.split(needle).length - 1;
+}
+
+/**
+ * Removes leftovers after lines or sections were moved out of a prompt:
+ * - a speech cue without its line: `น้ำฟ้า speaks: ;`, `she replies with dignity:.`
+ * - an empty label: `Continuity Flow:.`, `Dialogue:` at the end
+ */
+export function dropEmptyCues(prompt: string): string {
+  let p = String(prompt || '');
+  const CUE = /(?:^|(?<=[.;"”]\s?)|(?<=\s))[^.;:"“”\[\]]{0,60}\b(?:speaks|says|shouts|yells|replies|asks|whispers|answers|responds)\b[^.;:"“”\[\]]{0,40}[:：]\s*(?=[.;]|$)[.;]?/gi;
+  const EMPTY_LABEL = /(^|[.;"”]\s*)(?:[A-Za-z][A-Za-z /&-]{1,30}|[ก-๙][ก-๙ /]{0,30})[:：]\s*(?=[.;](?:\s|$)|$)[.;]?/g;
+  for (let i = 0; i < 3; i++) {
+    const before = p;
+    p = p.replace(CUE, ' ').replace(EMPTY_LABEL, '$1');
+    if (p === before) break;
+  }
+  return tidy(p.replace(/\s+([.;,])/g, '$1').replace(/;\s*\./g, '.').replace(/([.;])\s*;/g, '$1'));
 }

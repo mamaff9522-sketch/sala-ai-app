@@ -14,6 +14,7 @@
  * 9. Strict validation required before generation.
  */
 
+import { normalizeStoryScript } from './storyNormalize';
 import {
   DirectedClipItem,
   DialogueLockEntry,
@@ -1088,7 +1089,8 @@ export function parseSalaScript(
     defaultClipCount?: number;
   }
 ): ParseSalaScriptResult {
-  const lines = scriptText.split('\n').map(l => l.trim());
+  // Title in quotes, "ตอนที่ N", character lists without dashes, "ฉาก:" without a number
+  const lines = normalizeStoryScript(String(scriptText || '')).split('\n').map(l => l.trim());
   const metadata: ParsedControlMetadata = {
     declaredCharacters: [],
     lockDirectives: {},
@@ -1812,11 +1814,12 @@ export function deriveScenePhysicalStates({
     const who = lastDiag.offScreen ? `${lastDiag.speaker} (เสียงนอกจอ)` : lastDiag.speaker;
     const delivery = lastDiag.emotionOrAction ? ` ${lastDiag.emotionOrAction}` : "";
     // Only the line that was actually spoken. Do not invent a reaction the script never wrote.
-    endState = `${who}${delivery} เพิ่งพูดจบว่า "${lastDiag.dialogue}"`;
+    // The words are not repeated: the next clip starts from this state and would say them again
+    endState = `${who}${delivery} เพิ่งพูดจบ หยุดพูดแล้ว`;
   } else if (lastSentence) {
     endState = formatActionAsHappeningEvent(lastSentence);
   } else if (lastDiag) {
-    endState = `${lastDiag.speaker} พูดจบ: "${lastDiag.dialogue}"`;
+    endState = `${lastDiag.speaker} พูดจบแล้ว`;
   } else {
     endState = [charsLabel, place ? `ที่${place}` : "", time].filter(Boolean).join(" ") || "จบช็อตอย่างต่อเนื่อง";
   }
@@ -2235,7 +2238,12 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
       actionBeats: raw.actions
     });
 
-    const startAction = raw.startAction || clipStartState;
+    // Later parts of one split scene continue in place: the previous part's last action already
+    // happened (it used to be repeated as this clip's "Starting moment", e.g. the suitcase thrown twice)
+    const isLaterPart = !!splitPart && splitPart.part > 1;
+    const startAction = isLaterPart
+      ? `ต่อจากคลิปก่อนทันที ตัวละครอยู่ตำแหน่งเดิม${prevEndState ? ` (เหตุการณ์ "${String(prevEndState).replace(/[.\s]+$/, '')}" เกิดขึ้นไปแล้วในคลิปก่อน ห้ามทำซ้ำ)` : ''}`
+      : (raw.startAction || clipStartState);
     const endAction = raw.endState || clipEndState;
 
     // Construct Clean Final Provider Prompt (1 Clip = 1 Prompt)

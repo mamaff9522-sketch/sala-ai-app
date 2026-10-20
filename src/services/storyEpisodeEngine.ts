@@ -12,6 +12,7 @@
  *   off-screen voices (เสียงปริศนา / เสียง…) out of the locked character list.
  * - Slices scenes per episode instead of re-splitting the whole story.
  */
+import { normalizeStoryScript } from './storyNormalize';
 import {
   isReservedSystemKeyword,
   isMetadataKeyword,
@@ -333,7 +334,10 @@ export function parseSceneHeading(rest: string, hasPreviousLocation = false): Sc
     let p = p0;
     if (CONTINUATION_SUFFIX_REGEX.test(p)) { continued = true; p = p.replace(CONTINUATION_SUFFIX_REGEX, '').trim(); }
     if (!p) continue;
-    const isTime = TIME_WORD_REGEX.test(p) && p.replace(TIME_WORD_REGEX, '').replace(/^(ตอน|ยาม|ช่วง)/, '').trim().length < 3;
+    // A time word, alone or leading the part with weather after it ("กลางคืน ฝนตกหนัก")
+    const lead = p.match(new RegExp(TIME_WORD_REGEX.source, TIME_WORD_REGEX.flags.replace('g', '')));
+    const leadsWithTime = !!lead && lead.index != null && /^(?:ตอน|ยาม|ช่วง)?\s*$/.test(p.slice(0, lead.index));
+    const isTime = (TIME_WORD_REGEX.test(p) && p.replace(TIME_WORD_REGEX, '').replace(/^(ตอน|ยาม|ช่วง)/, '').trim().length < 3) || leadsWithTime;
     if (isTime && !timeOfDay) { timeOfDay = p; continue; }
     if (!location && isLocationLike(p) && isValidLocationCandidate(p)) { location = p; continue; }
     if (isMoodLike(p)) { titleParts.push(p); continue; }
@@ -489,7 +493,8 @@ export function parseStoryStructure(rawStory: string): ParsedStoryStructure {
   };
   if (!rawStory || typeof rawStory !== 'string') return empty;
 
-  const lines = rawStory.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  // Title in quotes, "ตอนที่ N", character lists without dashes, "ฉาก:" without a number
+  const lines = normalizeStoryScript(rawStory).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const metadata: Record<string, string> = {};
   const characters: { name: string; description: string; declared: boolean }[] = [];
   const offScreen = new Set<string>();

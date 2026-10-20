@@ -11,7 +11,7 @@
  * - keeps Location, Atmosphere, Core action, Cinematography and the Thai Dialogue verbatim
  * - adds clip length, aspect ratio, "speak Thai exactly as written" and "no on-screen text"
  */
-import { findSections, removeSections, insertBlock, tidy } from './promptSections';
+import { findSections, removeSections, insertBlock, tidy, dropEmptyCues } from './promptSections';
 
 interface PoseForMeta {
   name?: string;
@@ -51,6 +51,11 @@ export interface MetaAiFormatOptions {
   photoOrder?: string[];
   /** Short identity per character (species / body / key outfit) that must never change */
   characterNotes?: Record<string, string>;
+  /**
+   * Characters that have a photo to upload. Others are described by their note only (no "photo N"
+   * asked for a photo the user does not have). Default: every character has one.
+   */
+  withPhoto?: string[];
   /** Place and time carried from earlier clips when this clip names none (see sceneOfClip) */
   inheritedPlace?: { location: string; timeOfDay: string };
   /** The clip before this one, with ITS place: same place = continuous (start pose = its end pose) */
@@ -140,6 +145,13 @@ export function charactersInClip(clip: ClipForMeta, knownCharacters: string[] = 
   return out;
 }
 
+/** The clip's characters that have a photo to upload (all of them when withPhoto is not given). */
+function withPhotoIn(names: string[], opts: Pick<MetaAiFormatOptions, 'withPhoto'>): string[] {
+  if (!Array.isArray(opts.withPhoto)) return names;
+  const set = new Set(opts.withPhoto.map(n => String(n || '').trim()));
+  return names.filter(n => set.has(n));
+}
+
 /** Photo number per character: fixed story-wide order first, then any extra names after it. */
 export function photoNumbers(names: string[], opts: Pick<MetaAiFormatOptions, 'photoOrder' | 'knownCharacters'> = {}): Map<string, number> {
   const order = [...(opts.photoOrder || opts.knownCharacters || [])].map(n => String(n || '').trim()).filter(Boolean);
@@ -179,13 +191,23 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   const lockCut = removeSections(prompt, s => s.label === 'Character Lock');
   prompt = lockCut.prompt;
   if (names.length > 0) {
-    const order = photoNumbers(names, opts);
-    const mapping = names.map(n => `รูปที่ ${order.get(n)} = ${n}`).join(', ');
+    const photoNames = withPhotoIn(names, opts);
+    const order = photoNumbers(photoNames, opts);
+    const others = names.filter(n => !photoNames.includes(n));
     const notes = names
       .map(n => (opts.characterNotes?.[n] ? `${n}: ${opts.characterNotes[n]}` : ''))
       .filter(Boolean).join(' | ');
-    const block = `ตัวละคร (ใช้รูปที่อัปโหลดเป็นต้นแบบ): ${mapping} — ใบหน้า ทรงผม รูปร่าง และชุดต้องเหมือนในรูปทุกช็อต`
-      + (notes ? `. ลักษณะที่ห้ามเปลี่ยน (ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น): ${notes}` : '');
+    const parts: string[] = [];
+    if (photoNames.length) {
+      parts.push(`ตัวละคร (ใช้รูปที่อัปโหลดเป็นต้นแบบ): ${photoNames.map(n => `รูปที่ ${order.get(n)} = ${n}`).join(', ')} — ใบหน้า ทรงผม รูปร่าง และชุดต้องเหมือนในรูปทุกช็อต`);
+    }
+    if (others.length) {
+      parts.push(`ตัวละคร${photoNames.length ? 'อื่น' : ''}ในคลิป: ${others.join(', ')} — หน้าตาและชุดของแต่ละคนต้องเหมือนเดิมทุกคลิป`);
+    }
+    // Animal characters drift into people most: say so explicitly for them
+    const animal = /anthropomorphic|animal|reptile|gecko|lizard|buffalo|creature|สัตว์|เกล็ด|ตุ๊กแก|ตัวเหี้ย|กิ้งก่า|ควาย/i.test(notes);
+    if (notes) parts.push(`ลักษณะที่ห้ามเปลี่ยน (${animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}): ${notes}`);
+    const block = parts.join('. ');
     prompt = lockCut.firstIndex >= 0 ? insertBlock(prompt, lockCut.firstIndex, block) : `${block}. ${prompt}`;
   }
 
@@ -199,7 +221,7 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   }).prompt;
 
   // Never pass "unspecified" placeholders to the video model
-  prompt = prompt.replace(/(?:เวลา|สถานที่)\s*ไม่ระบุ[,.]?\s*/g, '');
+  prompt = prompt.replace(/(?:เวลา|สถานที่)\s*ไม่ระบุ(?:จากต้นฉบับ)?[,.]?\s*/g, '').replace(/[,/\-–—]?\s*ไม่ระบุ(?:จากต้นฉบับ)?/g, '');
 
   // Location Lock: this clip's place, else the one carried from earlier clips of the same scene
   const place = (() => {
@@ -235,15 +257,17 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   else tail.push('ไม่มีบทพูดในคลิปนี้ ตัวละครไม่พูด');
   tail.push('ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำบนจอ');
 
-  const body = tidy(prompt).replace(/[.\s]+$/, '');
+  const body = dropEmptyCues(tidy(prompt)).replace(/[.;\s]+$/, '');
   return tidy([head.join(', '), ...lockLines.slice(0, 1), body, ...lockLines.slice(1), ...tail].filter(Boolean).map(s => s.replace(/[.\s]+$/, '')).join('. ') + '.');
 }
 
 export function formatAllClipsForMetaAi(clips: ClipForMeta[], opts: MetaAiFormatOptions = {}): string {
   return clips.map((c, i) => {
-    const names = charactersInClip(c, opts.knownCharacters || []);
+    const names = withPhotoIn(charactersInClip(c, opts.knownCharacters || []), opts);
     const nums = photoNumbers(names, opts);
-    const photos = names.length > 0 ? `\n(อัปโหลดรูป: ${names.map(n => `รูปที่ ${nums.get(n)} ${n}`).join('  ')})` : '';
-    return `=== คลิป ${c.clipNumber || i + 1}/${clips.length} — ${c.title || ''} ===${photos}\n${formatClipForMetaAi(c, { ...opts, ...metaContextFor(clips, i) })}`;
+    const photos = names.length > 0
+      ? `\n(อัปโหลดรูป: ${[...names].sort((a, b) => (nums.get(a) || 0) - (nums.get(b) || 0)).map(n => `รูปที่ ${nums.get(n)} ${n}`).join('  ')})`
+      : '';
+    return `=== คลิป ${c.clipNumber || i + 1}/${clips.length} — ${String(c.title || '').replace(/\s*[-–—/]?\s*ไม่ระบุ(?:จากต้นฉบับ)?/g, '').trim()} ===${photos}\n${formatClipForMetaAi(c, { ...opts, ...metaContextFor(clips, i) })}`;
   }).join('\n\n');
 }

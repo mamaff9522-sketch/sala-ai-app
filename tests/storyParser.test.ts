@@ -159,7 +159,9 @@ check('endings are scene-specific (no ธันวา/มายด์/ลุง�
     if (i > 0) assert.equal(s.startAction, ep.scenes[i - 1].endState);
   });
   assert.ok(ep.scenes[0].endState.includes('พี่ต้นหยุดเขี่ยกองไฟ'), ep.scenes[0].endState);
-  assert.ok(ep.scenes[4].endState.includes('พี่ต้น... มันตามเรามา'), ep.scenes[4].endState);
+  // Ends on a line: who spoke, never the words again (the next clip starts from this state and would repeat them)
+  assert.ok(ep.scenes[4].endState.includes('น้องฟ้าใส') && ep.scenes[4].endState.includes('พูดจบ'), ep.scenes[4].endState);
+  assert.ok(!ep.scenes[4].endState.includes('มันตามเรามา'), ep.scenes[4].endState);
   const unique = new Set(ep.scenes.map((s: any) => s.endState));
   assert.equal(unique.size, 5);
 });

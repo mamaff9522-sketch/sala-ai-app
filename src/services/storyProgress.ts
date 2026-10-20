@@ -11,7 +11,8 @@
  *   before the first jump)
  */
 import { parseStoryStructure, generateEpisodeLocally, hasExplicitEndingMarker } from './storyEpisodeEngine';
-import { findSections, insertBlock, removeSections } from './promptSections';
+import { normalizeStoryScript } from './storyNormalize';
+import { findSections, insertBlock, removeSections, dropEmptyCues } from './promptSections';
 
 export interface ResumePoint {
   /** Source dialogue lines in story order */
@@ -266,7 +267,14 @@ export function salvageEpisodeJson(raw: string): any | null {
 export function splitDenseDialogueScenes<T extends Record<string, any>>(
   scenes: T[],
   clipDurationSeconds: number,
-  opts: { promptKey?: 'visualPrompt' | 'generatedPrompt'; numberKey?: 'sceneNumber' | 'clipNumber'; titleKey?: 'sceneHeading' | 'title'; endKey?: 'endState' | 'endAction' } = {}
+  opts: {
+    promptKey?: 'visualPrompt' | 'generatedPrompt';
+    numberKey?: 'sceneNumber' | 'clipNumber';
+    titleKey?: 'sceneHeading' | 'title';
+    endKey?: 'endState' | 'endAction';
+    /** The story: action sections are cleared so restoreMissingStoryBeats can give each part its own actions */
+    story?: string;
+  } = {}
 ): T[] {
   const promptKey = opts.promptKey || 'visualPrompt';
   const numberKey = opts.numberKey || 'sceneNumber';
@@ -320,8 +328,24 @@ export function splitDenseDialogueScenes<T extends Record<string, any>>(
         p = p.replace(re, ' ');
       }
       p = p.replace(/\s{2,}/g, ' ').replace(/\s+([.,])/g, '$1').trim();
+
+      // Action sections describe the whole scene; with opts.story each part gets back only its own
+      // actions (restoreMissingStoryBeats). Later parts never replay what an earlier part showed.
+      if (opts.story) {
+        p = removeSections(p, x => ACTION_LABELS.has(x.label)).prompt;
+      } else if (k > 0) {
+        p = removeSections(p, x => x.label === 'Starting moment').prompt;
+      }
       const lastLine = lineOf(g[g.length - 1]);
       const prevLast = k > 0 ? lineOf(groups[k - 1][groups[k - 1].length - 1]) : '';
+      // Speech cues left without their line ("น้ำฟ้า speaks: ;") and emptied labels ("Continuity Flow:.")
+      p = dropEmptyCues(p);
+      if (k > 0) {
+        // No earlier line is quoted here: the video model could say it again
+        const cont = 'Starting moment: ต่อจากคลิปก่อนทันที ตัวละครอยู่ตำแหน่งเดิม (เหตุการณ์และบทพูดของคลิปก่อนเกิดขึ้นไปแล้ว ห้ามทำซ้ำ)';
+        const firstSec = findSections(p).find(x => x.label === 'Dialogue' || x.label === 'Character Lock' || x.label === 'Cinematography');
+        p = insertBlock(p, firstSec ? firstSec.start : p.length, cont);
+      }
       const isLast = k === groups.length - 1;
       out.push({
         ...scene,
@@ -333,8 +357,8 @@ export function splitDenseDialogueScenes<T extends Record<string, any>>(
         ...(k > 0 ? { continuityWarnings: [] } : {}),
         [promptKey]: p,
         [titleKey]: `${scene?.[titleKey] || ''} (ตอนที่ ${k + 1}/${groups.length})`.trim(),
-        ...(k > 0 ? { startAction: `ต่อเนื่องจากคลิปก่อน หลังบทพูด "${prevLast}" ฉาก ท่าทาง และตำแหน่งเดิม` } : {}),
-        ...(k < groups.length - 1 ? { [endKey]: `ยังอยู่ในฉากเดิม หลังบทพูด "${lastLine}" ส่งต่อคลิปถัดไป` } : {}),
+        ...(k > 0 ? { startAction: 'ต่อเนื่องจากคลิปก่อน ฉาก ท่าทาง และตำแหน่งเดิม' } : {}),
+        ...(k < groups.length - 1 ? { [endKey]: 'ยังอยู่ในฉากเดิม ท่าทางและตำแหน่งเดิม ส่งต่อคลิปถัดไป' } : {}),
         // sourceSceneNumber marks the parts as one scene for the continuity check (cast carried, no "disappears")
         splitPart: { sourceSceneNumber: Number(scene?.[numberKey]) || 0, part: k + 1, total: groups.length, reason: `บทพูดยาวเกิน ${duration} วินาที แบ่งเป็น ${groups.length} คลิป` }
       } as T);
@@ -384,6 +408,8 @@ export function restoreMissingStoryBeats<T extends Record<string, any>>(
     fromDialogueIndex?: number;
     /** First story beat still to write (wins over fromDialogueIndex) */
     fromBeat?: number;
+    /** Last story beat this episode covers (when known) */
+    toBeat?: number;
     untilEnd?: boolean;
     promptKey?: 'visualPrompt' | 'generatedPrompt';
     dialogueKey?: 'dialogue' | 'line';
@@ -421,9 +447,11 @@ export function restoreMissingStoryBeats<T extends Record<string, any>>(
   const startBeat = opts.fromBeat != null && opts.fromBeat >= 0
     ? opts.fromBeat
     : (from > 0 && dlgBeat[from - 1] != null ? dlgBeat[from - 1] + 1 : 0);
-  const endBeat = opts.untilEnd || lastMatched === sourceLines.length - 1 || lastMatched < 0
-    ? beats.length - 1
-    : dlgBeat[lastMatched];
+  const endBeat = opts.toBeat != null && opts.toBeat >= 0
+    ? Math.min(opts.toBeat, beats.length - 1)
+    : (opts.untilEnd || lastMatched === sourceLines.length - 1 || lastMatched < 0
+      ? beats.length - 1
+      : dlgBeat[lastMatched]);
 
   // Output scene of each beat in the window
   const sceneAtBeat = new Map<number, number>();
@@ -482,6 +510,8 @@ function insertBeforeLocks(prompt: string, block: string): string {
   return insertBlock(prompt, stop ? stop.start : prompt.length, block);
 }
 
+const ACTION_LABELS = new Set(['Core action', 'Script action', 'Scene Action', 'Starting moment', 'Ending momentum']);
+
 const SCENE_HEADING_RE = /^[ \t#*_\[【(]*(?:ฉากที่|ฉาก|scene)\s*\d+.*$/gim;
 
 /**
@@ -519,6 +549,7 @@ export function offlineContinuation(p: {
   episodeNumber?: number;
   currentScriptText?: string;
 }): any {
+  p = { ...p, originalStory: normalizeStoryScript(String(p.originalStory || '')), continuityLock: lockForScript(p.continuityLock, String(p.originalStory || '')) };
   const existing = Array.isArray(p.existingScenes) ? p.existingScenes : [];
   const written = [...existing, ...(p.lastSceneState ? [p.lastSceneState] : [])];
   const resume = findResumePoint(p.originalStory, written);
@@ -561,7 +592,9 @@ export function offlineContinuation(p: {
     // No story line advanced: never hand back the same scenes again
     return { scenes: [], hasMoreScenes: false, sourceCovered: true, isStoryFinished: false, finishMessage: 'ไม่มีเนื้อเรื่องเหลือให้สร้างต่อ', progressPercentage: 100 };
   }
-  const scenes = splitDenseDialogueScenes(numbered.map((s: any) => ({ ...s, sourceCursor: cursor })), duration);
+  // Long scenes → several clips, each with only its own actions (put back from the story)
+  const split = splitDenseDialogueScenes(numbered.map((s: any) => ({ ...s, sourceCursor: cursor })), duration, { story: p.originalStory });
+  const scenes = restoreMissingStoryBeats(split, p.originalStory, { fromDialogueIndex: resume.nextIndex, fromBeat: resume.fromBeat, toBeat: cursor }).scenes;
   const hasMoreScenes = cursor < beatCount - 1;
   const finished = !hasMoreScenes && hasExplicitEndingMarker(p.originalStory);
   const total = resume.sourceLines.length;
@@ -576,4 +609,135 @@ export function offlineContinuation(p: {
     finishMessage: finished ? 'เนื้อเรื่องจบแล้ว (จบบริบูรณ์ตามต้นฉบับ)' : (!hasMoreScenes ? 'ใช้เนื้อเรื่องต้นฉบับครบแล้ว' : ''),
     progressPercentage: total > 0 ? Math.min(100, Math.round(((order.lastIndex + 1) / total) * 100)) : local.progressPercentage
   };
+}
+
+/**
+ * The Master Continuity Lock without leftovers from another story.
+ * The lock is kept between stories in the app; sent as "use in every scene, never change" it put the
+ * previous story's characters (e.g. น้องน้ำ) and light (daylight) into a new night-time story.
+ * - characters whose name is not in this script are dropped (with their appearance / position)
+ * - place / time / light are dropped when the script names its own place or time, or when the
+ *   locked place is not in the script
+ */
+export function lockForScript<T extends Record<string, any>>(lock: T | null | undefined, script: string): T {
+  if (!lock || typeof lock !== 'object') return ({} as T);
+  const text = normalizeStoryScript(String(script || ''));
+  if (!text.trim()) return lock;
+  const inScript = (n: unknown) => {
+    const name = String(n ?? '').trim();
+    return !!name && text.includes(name);
+  };
+  const out: any = { ...lock };
+  const names = (Array.isArray(lock.characterNames) ? lock.characterNames : []).filter(inScript);
+  out.characterNames = names;
+  if (lock.characterName && !inScript(lock.characterName)) {
+    out.characterName = names[0] || '';
+    out.characterAppearance = '';
+    out.characterId = undefined;
+  }
+  if (Array.isArray(lock.characterPositionLocks)) {
+    out.characterPositionLocks = lock.characterPositionLocks.filter((p: any) => inScript(p?.name));
+  }
+  if (lock.characterPosition && /[ก-๙A-Za-z]/.test(String(lock.characterPosition))) {
+    const all = [lock.characterName, ...(Array.isArray(lock.characterNames) ? lock.characterNames : [])].filter(Boolean);
+    if (all.some(n => !inScript(n) && String(lock.characterPosition).includes(String(n)))) out.characterPosition = '';
+  }
+  let scriptNamesPlace = false;
+  try {
+    const parsed = parseStoryStructure(text);
+    scriptNamesPlace = (parsed.scenes || []).some(s => {
+      const loc = String(s.location || '').trim();
+      return (loc && !/^ไม่ระบุ/.test(loc)) || !!String(s.timeOfDay || '').trim();
+    });
+  } catch { /* keep */ }
+  if (scriptNamesPlace || (lock.location && !inScript(lock.location))) {
+    out.location = '';
+    out.locationId = undefined;
+    out.locationVisualDetails = '';
+    out.timeOfDay = '';
+    out.lighting = '';
+  }
+  return out as T;
+}
+
+/**
+ * Puts the story's own speaker back on every dialogue line (Gemini sometimes gives a line to a locked
+ * or similarly named character, e.g. น้ำฟ้า's line to น้องน้ำ). A wrong name that is not a character of
+ * this story is also replaced in the prompt text.
+ */
+export function fixDialogueSpeakers<T extends Record<string, any>>(
+  scenes: T[],
+  originalStory: string,
+  opts: { promptKey?: 'visualPrompt' | 'generatedPrompt'; dialogueKey?: 'dialogue' | 'line' } = {}
+): { scenes: T[]; fixed: number } {
+  const promptKey = opts.promptKey || 'visualPrompt';
+  const dialogueKey = opts.dialogueKey || 'dialogue';
+  let parsed: ReturnType<typeof parseStoryStructure>;
+  try { parsed = parseStoryStructure(originalStory); } catch { return { scenes, fixed: 0 }; }
+  const src = parsed.allDialogues || [];
+  if (src.length === 0) return { scenes, fixed: 0 };
+  const lines = src.map(d => d.dialogue);
+  const storyNames = new Set<string>([...parsed.characters.map(c => c.name), ...src.map(d => d.speaker)].filter(Boolean));
+  const renames = new Map<string, string>();
+  let fixed = 0;
+  const out = (scenes || []).map(sc => {
+    const ds = Array.isArray(sc?.dialogues) ? sc.dialogues : [];
+    const nd = ds.map((d: any) => {
+      const idx = matchSourceLine(d?.[dialogueKey] ?? d?.line ?? d?.dialogue, lines);
+      const right = idx >= 0 ? src[idx].speaker : '';
+      const wrong = String(d?.speaker || '').trim();
+      if (!right || !wrong || wrong === right) return d;
+      fixed++;
+      if (!storyNames.has(wrong)) renames.set(wrong, right);
+      return { ...d, speaker: right };
+    });
+    return { ...sc, dialogues: nd };
+  });
+  if (renames.size > 0) {
+    const swap = (v: unknown) => {
+      let t = String(v ?? '');
+      renames.forEach((right, wrong) => { t = t.split(wrong).join(right); });
+      return t;
+    };
+    out.forEach((sc: any) => {
+      if (typeof sc[promptKey] === 'string') sc[promptKey] = swap(sc[promptKey]);
+      if (Array.isArray(sc.charactersPresent)) sc.charactersPresent = Array.from(new Set(sc.charactersPresent.map((n: string) => swap(n))));
+      if (Array.isArray(sc.characters)) sc.characters = Array.from(new Set(sc.characters.map((n: string) => swap(n))));
+    });
+  }
+  return { scenes: out as T[], fixed };
+}
+
+/**
+ * Meta AI copy options for one story: its characters only.
+ * - photo numbers: story characters that have a library photo, in story order (fixed for every clip)
+ * - identity line per character: library appearance when the character is in the library, otherwise
+ *   the description the script gives in its character list ("น้ำฟ้า — ลูกสะใภ้สาวฐานะยากจน…")
+ */
+export function metaOptionsForStory(story: string, library: any[] = [], noteOf: (c: any) => string = () => ''): {
+  knownCharacters: string[];
+  photoOrder: string[];
+  withPhoto: string[];
+  characterNotes: Record<string, string>;
+} {
+  let parsed: ReturnType<typeof parseStoryStructure> | null = null;
+  try { parsed = parseStoryStructure(story); } catch { parsed = null; }
+  const storyNames: string[] = [];
+  const add = (n: unknown) => { const t = String(n ?? '').trim(); if (t && !storyNames.includes(t)) storyNames.push(t); };
+  (parsed?.characters || []).forEach(c => add(c.name));
+  (parsed?.allDialogues || []).filter(d => !d.offScreen).forEach(d => add(d.speaker));
+  const text = normalizeStoryScript(String(story || ''));
+  const lib = (Array.isArray(library) ? library : []).filter(c => c?.name && text.includes(String(c.name)));
+  lib.forEach(c => add(c.name));
+  const hasPhoto = (c: any) => !!(c?.referenceImageUrl || c?.referenceMetadata?.referenceImageUrl || c?.visualProfile?.referenceImageUrl || c?.avatarUrl || (Array.isArray(c?.referenceImages) && c.referenceImages.length));
+  const withPhoto = storyNames.filter(n => lib.some(c => c.name === n && hasPhoto(c)));
+  const characterNotes: Record<string, string> = {};
+  for (const n of storyNames) {
+    const fromLib = lib.find(c => c.name === n);
+    const libNote = fromLib ? String(noteOf(fromLib) || '').trim() : '';
+    const scriptNote = String(parsed?.characters.find(c => c.name === n)?.description || '').trim();
+    const note = libNote || scriptNote;
+    if (note) characterNotes[n] = note;
+  }
+  return { knownCharacters: storyNames, photoOrder: withPhoto, withPhoto, characterNotes };
 }
