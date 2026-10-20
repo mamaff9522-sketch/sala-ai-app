@@ -11,7 +11,7 @@
  *   before the first jump)
  */
 import { parseStoryStructure } from './storyEpisodeEngine';
-import { findSections } from './promptSections';
+import { findSections, insertBlock, removeSections } from './promptSections';
 
 export interface ResumePoint {
   /** Source dialogue lines in story order */
@@ -277,4 +277,138 @@ export function splitDenseDialogueScenes<T extends Record<string, any>>(
   }
   const start = Number(scenes?.[0]?.[numberKey]) || 1;
   return out.map((s, i) => ({ ...s, [numberKey]: start + i }));
+}
+
+const squashForCover = (s: string) => String(s || '')
+  .replace(/กำลัง/g, '')
+  .replace(/[\s"“”'‘’«»「」.,!?…~:：;()\-—–]/g, '')
+  .toLowerCase();
+
+/** true when the text already carries this story line (exact, or ≥80% of its 4-char pieces, so light rewording counts). */
+export function isLineCovered(line: string, text: string): boolean {
+  const k = squashForCover(line);
+  const t = squashForCover(text);
+  if (k.length < 2) return true;
+  if (t.includes(k)) return true;
+  const pieces = new Set<string>();
+  for (let i = 0; i + 4 <= k.length; i++) pieces.add(k.slice(i, i + 4));
+  if (pieces.size === 0) return false;
+  let hit = 0;
+  for (const p of pieces) if (t.includes(p)) hit++;
+  return hit / pieces.size >= 0.8;
+}
+
+/**
+ * Puts back story lines that Gemini left out of its scene prompts.
+ *
+ * Gemini rewrites each scene in its own words and often drops action / narration lines (and now and
+ * then a dialogue line). The original story is the source of truth: every beat in the window this
+ * episode covers is assigned to a scene (by the dialogue around it, within the same source scene) and,
+ * when that scene's prompt does not carry it, it is written back in story order:
+ * - action / narration → a "Script action:" section
+ * - dialogue → the scene's dialogue list and its "Dialogue:" section
+ *
+ * Window: from the line after the last one already written (fromDialogueIndex) up to the last
+ * dialogue line these scenes use; to the end of the story when that is the story's last line or
+ * untilEnd is set (the director covers the whole script).
+ */
+export function restoreMissingStoryBeats<T extends Record<string, any>>(
+  scenes: T[],
+  originalStory: string,
+  opts: {
+    fromDialogueIndex?: number;
+    untilEnd?: boolean;
+    promptKey?: 'visualPrompt' | 'generatedPrompt';
+    dialogueKey?: 'dialogue' | 'line';
+  } = {}
+): { scenes: T[]; restoredActions: number; restoredDialogues: number } {
+  const promptKey = opts.promptKey || 'visualPrompt';
+  const dialogueKey = opts.dialogueKey || 'dialogue';
+  const none = { scenes, restoredActions: 0, restoredDialogues: 0 };
+  if (!Array.isArray(scenes) || scenes.length === 0) return none;
+  let parsed: ReturnType<typeof parseStoryStructure>;
+  try { parsed = parseStoryStructure(originalStory); } catch { return none; }
+  const beats = parsed.narrativeBeats || [];
+  if (beats.length === 0) return none;
+  const sourceLines = parsed.allDialogues.map(d => d.dialogue);
+  const dlgBeat = parsed.allDialogues.map(d => d.beatIndex);
+
+  // Source scene of every beat (beats are shared objects between narrativeBeats and scenes[].beats)
+  const srcSceneOfObj = new Map<any, number>();
+  (parsed.scenes || []).forEach((sc, i) => (sc.beats || []).forEach(b => srcSceneOfObj.set(b, i)));
+  const srcScene = beats.map(b => srcSceneOfObj.get(b) ?? 0);
+
+  // Which output scene holds each source dialogue line
+  const from = Math.max(0, opts.fromDialogueIndex || 0);
+  const sceneOfDialogue = new Map<number, number>();
+  scenes.forEach((sc, sIdx) => {
+    for (const d of Array.isArray(sc.dialogues) ? sc.dialogues : []) {
+      const idx = matchSourceLine(d?.[dialogueKey] ?? d?.line ?? d?.dialogue, sourceLines, Math.max(0, from - 1));
+      if (idx >= 0 && !sceneOfDialogue.has(idx)) sceneOfDialogue.set(idx, sIdx);
+    }
+  });
+  const matched = Array.from(sceneOfDialogue.keys());
+  if (matched.length === 0 && !opts.untilEnd) return none;
+  const lastMatched = matched.length ? Math.max(...matched) : -1;
+
+  const startBeat = from > 0 && dlgBeat[from - 1] != null ? dlgBeat[from - 1] + 1 : 0;
+  const endBeat = opts.untilEnd || lastMatched === sourceLines.length - 1 || lastMatched < 0
+    ? beats.length - 1
+    : dlgBeat[lastMatched];
+
+  // Output scene of each beat in the window
+  const sceneAtBeat = new Map<number, number>();
+  sceneOfDialogue.forEach((s, dIdx) => sceneAtBeat.set(dlgBeat[dIdx], s));
+  const mappedBeats = Array.from(sceneAtBeat.keys()).sort((a, b) => a - b);
+  const assign = (b: number): number => {
+    const prev = [...mappedBeats].reverse().find(x => x < b);
+    const next = mappedBeats.find(x => x > b);
+    if (prev != null && srcScene[prev] === srcScene[b]) return sceneAtBeat.get(prev)!;
+    if (next != null) return sceneAtBeat.get(next)!;
+    if (prev != null) return sceneAtBeat.get(prev)!;
+    return 0;
+  };
+
+  const out = scenes.map(s => ({ ...s, dialogues: Array.isArray(s.dialogues) ? [...s.dialogues] : [] })) as T[];
+  const addActions = new Map<number, string[]>();
+  let restoredActions = 0;
+  let restoredDialogues = 0;
+  for (let b = startBeat; b <= endBeat && b < beats.length; b++) {
+    const beat = beats[b];
+    const s = beat.type === 'dialogue' && sceneAtBeat.has(b) ? sceneAtBeat.get(b)! : assign(b);
+    const scene: any = out[s];
+    const prompt = String(scene?.[promptKey] || '');
+    if (beat.type === 'action') {
+      const text = String(beat.text || '').trim();
+      if (!text || isLineCovered(text, prompt) || isLineCovered(text, (addActions.get(s) || []).join(' '))) continue;
+      if (!addActions.has(s)) addActions.set(s, []);
+      addActions.get(s)!.push(text.replace(/[.\s]+$/, ''));
+      restoredActions++;
+    } else if (beat.dialogue && !sceneAtBeat.has(b)) {
+      // A dialogue line no scene carries: add it after the dialogue that precedes it in the story
+      const dIdx = dlgBeat.indexOf(b);
+      const entry: any = { speaker: beat.dialogue.speaker, [dialogueKey]: beat.dialogue.dialogue, id: `restored_${dIdx}` };
+      const prevIdx = dIdx - 1;
+      const at = scene.dialogues.findIndex((d: any) => matchSourceLine(d?.[dialogueKey] ?? d?.line ?? d?.dialogue, sourceLines) === prevIdx);
+      scene.dialogues.splice(at >= 0 ? at + 1 : scene.dialogues.length, 0, entry);
+      // Rewrite the Dialogue section from the scene's list, so the restored line sits in story order
+      const block = `Dialogue: ${scene.dialogues.map((d: any) => `[${d.speaker}]: "${d?.[dialogueKey] ?? d?.line ?? d?.dialogue}"`).join(' ')}`;
+      const cut = removeSections(prompt, x => x.label === 'Dialogue');
+      scene[promptKey] = cut.firstIndex >= 0 ? insertBlock(cut.prompt, cut.firstIndex, block) : insertBeforeLocks(prompt, block);
+      sceneAtBeat.set(b, s);
+      restoredDialogues++;
+    }
+  }
+  addActions.forEach((list, s) => {
+    const scene: any = out[s];
+    const block = `Script action: ${list.join('. ')}`;
+    scene[promptKey] = insertBeforeLocks(String(scene[promptKey] || ''), block);
+  });
+  return { scenes: out, restoredActions, restoredDialogues };
+}
+
+/** Inserts a block before the Dialogue / lock sections (or at the end) with clean joins. */
+function insertBeforeLocks(prompt: string, block: string): string {
+  const stop = findSections(prompt).find(x => ['Dialogue', 'Continuity Handoff', 'Stance/Position Lock', 'Negative prompt'].includes(x.label));
+  return insertBlock(prompt, stop ? stop.start : prompt.length, block);
 }

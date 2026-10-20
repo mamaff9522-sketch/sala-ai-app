@@ -23,6 +23,7 @@ export const KNOWN_SECTION_LABELS = [
   'Props',
   'Starting moment',
   'Core action',
+  'Script action',
   'Ending momentum',
   'Cinematography',
   'Camera',
@@ -75,7 +76,15 @@ export function insertBlock(prompt: string, index: number, block: string): strin
 
 /** Collapses doubled spaces / periods left by removals. */
 export function tidy(prompt: string): string {
-  return prompt.replace(/\s{2,}/g, ' ').replace(/\s+\./g, '.').replace(/\.(\s*\.)+/g, '.').trim();
+  // "..." / "…" inside dialogue are kept: only stray doubled periods left by removals are collapsed
+  const ELL = '\u0000ELLIPSIS\u0000';
+  return prompt
+    .replace(/\.{3,}/g, ELL)
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+\./g, '.')
+    .replace(/\.(\s*\.)+/g, '.')
+    .split(ELL).join('...')
+    .trim();
 }
 
 /** Removes every exact occurrence of the given texts (used before section cutting for idempotency). */

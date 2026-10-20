@@ -164,3 +164,34 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
   assert.ok(notes['น้องน้ำ'].length > 20 && notes['น้องน้ำ'].length < 260);
   console.log('  ✔ photo numbers are fixed for the whole story and identity is locked');
 }
+
+{
+  const { restoreMissingStoryBeats, isLineCovered } = await import('../src/services/storyProgress');
+  const AV = rd('avatar-story.txt');
+  const lineOf = (s: string) => ({ line: s });
+  const ep1 = [{ dialogues: ['พี่ทุย! มานี่เร็ว มาดูอีนี่สิ มันโพสต์อวดรถใหม่อีกแล้ว!', 'แล้วมันเกี่ยวอะไรกับเอ็งวะ? รถมัน เงินมัน!', 'โอ๊ย! ฉันหมั่นไส้มัน อยากด่ามันสักหน่อย!', 'ก็ไปด่ามันสิ!', 'จะบ้าเหรอ! ใช้เฟซจริงด่า เดี๋ยวชาวบ้านก็รู้หมด!', 'ก็ใช้เฟซอวตารที่เราสมัครไว้ไง ใครมันจะไปรู้ว่าเป็นเรา!', 'เออจริงด้วย! พี่ใช้เฟซหนึ่ง ฉันใช้อีกเฟซหนึ่ง แล้วช่วยกันคอมเมนต์!'].map(lineOf) }];
+  const resume = findResumePoint(AV, ep1);
+  const D = (speaker: string, dialogue: string) => ({ speaker, dialogue });
+  // Gemini-like episode: summaries without the action lines, one dialogue line dropped
+  const gem = [
+    { dialogues: [D('น้องน้ำ', 'พี่! มันตอบกลับมาแล้ว!'), D('พี่ทุย', 'มันว่าไง?')], visualPrompt: 'Cinematic. Core action: she looks at her phone. Dialogue: [น้องน้ำ]: "พี่! มันตอบกลับมาแล้ว!" [พี่ทุย]: "มันว่าไง?". Continuity Handoff: both present.' },
+    { dialogues: [D('น้องน้ำ', 'มันบอกว่า... ไอ้เฟซนี้ ส่งรูปควายเป็นโปรไฟล์ ต้องเป็นไอ้ทุยแน่ๆ!'), D('น้องน้ำ', '...พี่ไง')], visualPrompt: 'Cinematic. Core action: shocked. Dialogue: [น้องน้ำ]: "มันบอกว่า... ไอ้เฟซนี้ ส่งรูปควายเป็นโปรไฟล์ ต้องเป็นไอ้ทุยแน่ๆ!" [น้องน้ำ]: "...พี่ไง".' },
+    { dialogues: [D('ป้าร้านค้า', 'อ้าว! สองคนนี้นี่เอง เฟซควายกับเฟซตุ๊กแก ทั้งหมู่บ้านรู้กันหมดแล้วจ้า!')], visualPrompt: 'Cinematic. Dialogue: [ป้าร้านค้า]: "อ้าว! สองคนนี้นี่เอง เฟซควายกับเฟซตุ๊กแก ทั้งหมู่บ้านรู้กันหมดแล้วจ้า!".' }
+  ];
+  const r = restoreMissingStoryBeats(gem as any, AV, { fromDialogueIndex: resume.nextIndex });
+  const all = r.scenes.map((s: any) => s.visualPrompt).join('\n');
+  for (const w of ['แสงแดดเริ่มอ่อนลง ทั้งคู่ยังนั่งพิมพ์อยู่บนแคร่', 'พี่ทุยชะโงกหน้ามาดูจอ', 'พี่ทุยสะดุ้ง ทำโทรศัพท์หล่นลงพื้น', 'ป้าเจ้าของร้านเงยหน้ามองแล้วยิ้มกว้าง', 'พี่ทุยกับน้องน้ำหันมองหน้ากัน แล้ววิ่งหนีออกจากร้าน']) {
+    assert.ok(isLineCovered(w, all), `restored: ${w}`);
+  }
+  assert.ok(!isLineCovered('พี่ทุยวางจอบพิงเสา แล้วเดินมานั่งข้างน้องน้ำ', all), 'lines of earlier episodes are not repeated');
+  const s2: any = r.scenes[1];
+  assert.deepEqual(s2.dialogues.map((d: any) => d.dialogue), ['มันบอกว่า... ไอ้เฟซนี้ ส่งรูปควายเป็นโปรไฟล์ ต้องเป็นไอ้ทุยแน่ๆ!', 'ฉิบหายแล้ว! ใครใช้รูปควายเป็นโปรไฟล์วะ!', '...พี่ไง'], 'dropped dialogue back in story order');
+  assert.ok(s2.visualPrompt.indexOf('ฉิบหายแล้ว') < s2.visualPrompt.indexOf('...พี่ไง'), 'and in that order in the prompt');
+  assert.ok(s2.visualPrompt.includes('"มันบอกว่า... ไอ้เฟซนี้'), '"..." inside dialogue survives');
+  // Offline paths keep the whole story (checked against the same file)
+  const clipsAV = buildSalaMultiClipPrompts({ scriptText: AV, clipDurationSeconds: 8, clipCount: 1, continuityLock: {} });
+  const allAV = clipsAV.map(c => c.generatedPrompt).join('\n');
+  const storyLines = AV.split(/\r?\n/).map(l => l.trim()).filter(l => l && !/^(ชื่อเรื่อง|ตัวละคร|- |ฉากที่|จบ)/.test(l)).map(l => l.replace(/^[^:：]{1,20}[:：]\s*/, ''));
+  assert.deepEqual(storyLines.filter(l => !isLineCovered(l, allAV)), [], 'director keeps every story line');
+  console.log(`  ✔ lines Gemini drops are put back (${r.restoredActions} actions, ${r.restoredDialogues} dialogue), in story order`);
+}

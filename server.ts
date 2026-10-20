@@ -51,7 +51,7 @@ import { addAdminEmail, readAdminEmails } from './adminAllowlist';
 import { CREDIT_CATALOG, MISSING_FIRESTORE_CREDENTIAL_MESSAGE, MISSING_STRIPE_SECRET_MESSAGE, adjustFirestoreCredits, assertFirestoreCredentialConfigured, chargeFromUsageMetadata, creditPaidUserInFirestore, creditsForTokens, deductUsableCredits, ensureCanCallFlashLite, isRealCreditUid, normalizeVideoResolution, paymentAlreadyRecorded, readFirestoreCreditBalance, readPlatformAdminShare, stripHiddenCreditFields } from './serverBilling';
 import { registerTransferRoutes } from './serverTransfer';
 import { loadVeoReferenceImages, resolveVeoReferenceModel, veoDurationSeconds } from './serverVeo';
-import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson, splitDenseDialogueScenes } from './src/services/storyProgress';
+import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson, splitDenseDialogueScenes, restoreMissingStoryBeats } from './src/services/storyProgress';
 
 dotenv.config();
 
@@ -2221,6 +2221,7 @@ CRITICAL ORIGINAL DIALOGUE INTEGRITY RULES:
 - NEVER use words like "shouting", "yelling", "says", "asks", or "speaks" in generatedPrompt if there is no real dialogue from the original script in that clip.
 
 ACTION & NARRATION RULE:
+- ทุกบรรทัด Action/Narration ในบทต้องอยู่ใน generatedPrompt ของคลิปใดคลิปหนึ่ง ครบทุกบรรทัด ห้ามตัด ห้ามสรุปรวบ
 - ถ้าบทมี Action/Narration แม้ไม่มีบทพูด ต้องนำ Action/Narration นั้นไปสร้างเป็นเหตุการณ์ใน Prompt ตามลำดับเดิม
 - ตัวอย่าง:
   บท: "บรรยากาศป่ามืด ฝนตก ฟ้าใสเดินเข้าป่า"
@@ -2405,6 +2406,10 @@ Respond ONLY with a JSON array with one object per clip, covering the whole scri
     // Apply DIALOGUE 20-WORD SPLIT SYSTEM (ถ้าบทพูดของตัวละครยาวเกิน 20 คำ ให้ตัดเฉพาะบทพูดส่วนที่เกินไปต่อในคลิปถัดไปอัตโนมัติ)
     const splitResult = applyDialogue20WordSplitToClips(clips, duration);
     clips = splitResult.clips;
+    // Gemini rewrites the script in its own words and drops action lines: put back every script line
+    // it left out, in the clip where it belongs
+    const restoredBeats = restoreMissingStoryBeats(clips, scriptText, { untilEnd: true, promptKey: 'generatedPrompt', dialogueKey: 'line' });
+    clips = restoredBeats.scenes;
     // Too much dialogue for one clip: split into consecutive clips (Gemini sometimes packs a whole scene)
     clips = splitDenseDialogueScenes(clips, duration, { promptKey: 'generatedPrompt', numberKey: 'clipNumber', titleKey: 'title', endKey: 'endAction' });
 
@@ -3114,7 +3119,7 @@ ${originalStory.trim()}
 ${resumeBlock}
 [เป้าหมายการสร้าง]:
 - สร้าง "ตอนที่ ${episodeNumber}" ไม่เกิน ${scenesPerEpisode} ฉาก (เนื้อเรื่องที่เหลือไว้ตอนถัดไป)
-- "visualPrompt" ของแต่ละฉากให้สั้น กระชับ ไม่เกิน 80 คำ ไม่ต้องใส่รายละเอียดหน้าตาตัวละคร (ระบบใส่ Character Lock ให้เอง)
+- "visualPrompt" ต้องมีทุก Action/Narration ของฉากนั้นครบทุกบรรทัดตามลำดับในบท ห้ามตัด ห้ามสรุปรวบ ห้ามข้าม แต่ไม่ต้องใส่รายละเอียดหน้าตาตัวละคร (ระบบใส่ Character Lock ให้เอง)
 - ความยาวตามเหตุการณ์จริง (ฉากละประมาณ ${clipDurationSeconds} วินาที ไม่ต้องกำหนดขั้นต่ำ 5 หรือ 6 คลิป และห้ามใช้ 1 Action = 1 Clip)
 ${episodeNumber === 1 ? '- สำคัญมาก: ตอนที่ 1 ให้สร้างจากช่วงต้นเรื่องเท่านั้น ห้ามสรุปเรื่องทั้งหมดในตอนเดียว' : `- สร้างตอนที่ ${episodeNumber} ต่อจากจุดจบของตอนก่อนหน้าทันที ไม่รีเซ็ต ไม่กระโดด`}
 
@@ -3296,7 +3301,13 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
     });
     // One scene with more dialogue than one clip can hold becomes several clips
     // (a 7-line scene used to come out as a single 8-second prompt)
-    parsed.scenes = splitDenseDialogueScenes(locked.scenes, Number(clipDurationSeconds) || 8);
+    // Gemini rewrites scenes in its own words and drops action lines: put every story line it left out
+    // back into the scene where it belongs (the original story is the source of truth)
+    const restored = restoreMissingStoryBeats(locked.scenes, originalStory, { fromDialogueIndex: resume.nextIndex });
+    if (restored.restoredActions || restored.restoredDialogues) {
+      console.log(`[story continue] restored ${restored.restoredActions} action and ${restored.restoredDialogues} dialogue line(s) Gemini left out`);
+    }
+    parsed.scenes = splitDenseDialogueScenes(restored.scenes, Number(clipDurationSeconds) || 8);
     parsed.continuityWarnings = locked.warnings;
     parsed.characterWarnings = locked.characterWarnings;
 
