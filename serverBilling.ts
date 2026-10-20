@@ -54,7 +54,7 @@ export function paidTopupSplit(amount: number): { usableCredits: number; adminSh
 /** Reported token count only. Returns null when the API did not send one. Never invents a count. */
 export function tokenCountFromUsage(usage: any): number | null {
   if (!usage || typeof usage !== 'object') return null;
-  for (const key of ['totalTokenCount', 'totalTokens', 'tokenCount'] as const) {
+  for (const key of ['totalTokenCount', 'totalTokens', 'tokenCount', 'total_tokens', 'total_token_count'] as const) {
     const value = usage[key];
     if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
   }

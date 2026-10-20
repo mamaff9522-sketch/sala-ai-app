@@ -94,8 +94,8 @@ import {
   summarizeAutoSplit
 } from '../services/salaDirectorEngine';
 import { saveCurrentProject } from '../services/savedProjects';
-import { pickClipReferenceImages } from '../services/clipReferenceImages';
-import { formatClipForMetaAi, formatAllClipsForMetaAi, metaContextFor, characterNote } from '../services/metaAiPrompt';
+import { pickClipReferences } from '../services/clipReferenceImages';
+import { formatClipForMetaAi, formatAllClipsForMetaAi, metaContextFor, characterNote, sceneOfClip } from '../services/metaAiPrompt';
 
 interface MultiClipDirectorProps {
   characters: Character[];
@@ -1037,9 +1037,17 @@ ${c.negativePrompt}
       // Library photos of the characters in each clip go to Veo so faces and outfits stay the same
       let libraryForRefs: any[] = [];
       try { libraryForRefs = (await getLibraryLockPayloads()).payloads; } catch { libraryForRefs = []; }
+      // A clip at the same place as the one before starts from that clip's last frame (server waits for it)
+      let prevJobId: string | null = null;
+      const samePlaceAs = (a: number, b: number) => {
+        const pa = sceneOfClip(clips as any, a).location.replace(/\s|ต่อเนื่อง/g, '');
+        const pb = sceneOfClip(clips as any, b).location.replace(/\s|ต่อเนื่อง/g, '');
+        return !pa || !pb || pa === pb || pa.includes(pb) || pb.includes(pa);
+      };
       for (let i = 0; i < clips.length; i++) {
         const clip = clips[i];
-        const clipRefs = pickClipReferenceImages(clip, libraryForRefs);
+        const refs = pickClipReferences(clip, libraryForRefs);
+        const continueFrom = i > 0 && prevJobId && samePlaceAs(i - 1, i) ? prevJobId : undefined;
         setBatchProgress({
           current: i + 1,
           total: clips.length,
@@ -1062,7 +1070,8 @@ ${c.negativePrompt}
           aspectRatio: continuityLock.aspectRatio,
           durationSeconds: clip.durationSeconds,
           characterId: continuityLock.characterId || undefined,
-          ...(clipRefs.length > 0 ? { referenceImages: clipRefs, referenceMode: 'asset' as const } : {})
+          ...(refs.urls.length > 0 ? { referenceImages: refs.urls, referenceNames: refs.names, referenceMode: 'asset' as const } : {}),
+          ...(continueFrom ? { continueFromJobId: continueFrom } : {})
         };
 
         let result: Awaited<ReturnType<typeof api.startGeneration>>;
@@ -1089,6 +1098,7 @@ ${c.negativePrompt}
         });
 
         onGenerationStarted(result.jobId);
+        prevJobId = result.jobId;
         // Pause slightly between dispatch
         await new Promise(r => setTimeout(r, 600));
       }

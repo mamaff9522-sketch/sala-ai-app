@@ -32,6 +32,22 @@ function usableUrl(c: LibraryCharacterLike): string | null {
   return realBackup || null;
 }
 
+/** Photos plus who each one shows (same order), for prompts that name the references. */
+export function pickClipReferences(
+  clip: ClipLike,
+  library: LibraryCharacterLike[],
+  max = MAX_CLIP_REFERENCE_IMAGES
+): { urls: string[]; names: string[] } {
+  const urls: string[] = [];
+  const names: string[] = [];
+  for (const url of pickClipReferenceImages(clip, library, max)) {
+    const c = library.find(l => usableUrl(l) === url);
+    urls.push(url);
+    names.push(String(c?.name || ''));
+  }
+  return { urls, names };
+}
+
 export function pickClipReferenceImages(
   clip: ClipLike,
   library: LibraryCharacterLike[],

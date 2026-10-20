@@ -51,6 +51,7 @@ import { addAdminEmail, readAdminEmails } from './adminAllowlist';
 import { CREDIT_CATALOG, MISSING_FIRESTORE_CREDENTIAL_MESSAGE, MISSING_STRIPE_SECRET_MESSAGE, adjustFirestoreCredits, assertFirestoreCredentialConfigured, chargeFromUsageMetadata, creditPaidUserInFirestore, creditsForTokens, deductUsableCredits, ensureCanCallFlashLite, isRealCreditUid, normalizeVideoResolution, paymentAlreadyRecorded, readFirestoreCreditBalance, readPlatformAdminShare, stripHiddenCreditFields } from './serverBilling';
 import { registerTransferRoutes } from './serverTransfer';
 import { loadVeoReferenceImages, resolveVeoReferenceModel, veoDurationSeconds } from './serverVeo';
+import { OMNI_VIDEO_MODEL, extractLastFrame, generateOmniVideo } from './serverOmni';
 import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson, splitDenseDialogueScenes, restoreMissingStoryBeats, offlineContinuation, storyCursorFor } from './src/services/storyProgress';
 
 dotenv.config();
@@ -133,6 +134,10 @@ export interface GenerationParams {
   referenceImages?: string[];
   /** 'asset' = character/location photos to keep identity (Veo reference images); default = first image is the start frame */
   referenceMode?: 'asset' | 'start-frame';
+  /** Who each reference photo shows (same order as referenceImages) */
+  referenceNames?: string[];
+  /** Job of the previous clip at the same place: this clip starts from that clip's last frame */
+  continueFromJobId?: string;
   characterId?: string;
   characterName?: string;
   projectId?: string;
@@ -1472,6 +1477,10 @@ class GeminiProviderAdapter implements ProviderAdapter {
     if (!ai) {
       throw new Error('ไม่พบคีย์ GEMINI_API_KEY บนเซิร์ฟเวอร์ กรุณาตั้งค่า API Key ก่อนใช้งาน Google Veo');
     }
+    // Veo 3.1 / 3.1 Lite shut down on 22 Oct 2026: Gemini Omni Flash unless VIDEO_ENGINE=veo
+    if (String(process.env.VIDEO_ENGINE || '').toLowerCase() !== 'veo') {
+      return generateVideoWithOmni(params, jobId, updateProgress);
+    }
 
     // 1. Prepare Prompt & Reference Image
     const promptText = buildEnrichedPrompt(params);
@@ -1829,6 +1838,68 @@ const providerManager = new ProviderManager();
 // ==========================================
 function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * One clip with Gemini Omni Flash: library photos keep the characters' faces, and a clip that continues
+ * the previous one (same place) starts from that clip's last frame, so set and positions carry over.
+ */
+async function generateVideoWithOmni(
+  params: GenerationParams,
+  jobId: string,
+  updateProgress: (prog: number, stage: string) => void
+): Promise<{ outputUrl: string; isMock: boolean; usage?: any }> {
+  const apiKey = String(process.env.GEMINI_API_KEY || '').trim();
+  const references = params.referenceMode === 'asset' ? loadVeoReferenceImages(params.referenceImages, UPLOADS_DIR) : [];
+  const names = Array.isArray(params.referenceNames) ? params.referenceNames.map(n => String(n || '')) : [];
+
+  // Start frame: last frame of the previous clip, once that clip is done (waits up to 15 minutes)
+  let firstFrame: { imageBytes: string; mimeType: string } | null = null;
+  const prevId = typeof params.continueFromJobId === 'string' ? params.continueFromJobId : '';
+  if (prevId && prevId !== jobId) {
+    const started = Date.now();
+    while (Date.now() - started < 15 * 60 * 1000) {
+      const prev = jobsStore.get(prevId);
+      if (!prev || prev.status === 'completed' || prev.status === 'failed' || prev.status === 'cancelled') break;
+      const waited = Math.round((Date.now() - started) / 1000);
+      updateProgress(8, `รอคลิปก่อนหน้าเสร็จ เพื่อใช้ภาพสุดท้ายเป็นจุดเริ่มของคลิปนี้ (${waited}s)...`);
+      await delay(4000);
+    }
+    if (jobsStore.get(prevId)?.status === 'completed') {
+      firstFrame = await extractLastFrame(resolveVideoPathForJob(prevId));
+    }
+  }
+
+  const seconds = Math.min(10, Math.max(3, Number(params.durationSeconds) || 8));
+  params.durationSeconds = seconds;
+  updateProgress(20, `กำลังสร้างวิดีโอด้วย Gemini Omni (${OMNI_VIDEO_MODEL}, ~${seconds} วินาที${references.length ? `, รูปตัวละคร ${references.length} รูป` : ''}${firstFrame ? ', เริ่มจากภาพสุดท้ายของคลิปก่อน' : ''})...`);
+  const started = Date.now();
+  const ticker = setInterval(() => {
+    const s = Math.round((Date.now() - started) / 1000);
+    updateProgress(Math.min(90, 20 + Math.floor(s * 0.6)), `Gemini Omni กำลังสร้างวิดีโอ (${s}s)...`);
+  }, 5000);
+  let result: { bytes: Buffer; response: any };
+  try {
+    result = await generateOmniVideo({
+      prompt: buildEnrichedPrompt(params),
+      references,
+      referenceNames: names,
+      firstFrame,
+      aspectRatio: params.aspectRatio,
+      resolution: normalizeVideoResolution(params.resolution),
+      durationSeconds: seconds
+    }, apiKey);
+  } finally {
+    clearInterval(ticker);
+  }
+
+  updateProgress(95, 'กำลังบันทึกไฟล์ MP4 ลงเซิร์ฟเวอร์...');
+  const generatedDir = path.join(process.cwd(), 'public', 'generated-videos');
+  if (!fs.existsSync(generatedDir)) fs.mkdirSync(generatedDir, { recursive: true });
+  fs.writeFileSync(path.join(generatedDir, `${jobId}.mp4`), result.bytes);
+  updateProgress(100, 'สร้างวิดีโอด้วย Gemini Omni สำเร็จ พร้อมเปิดเล่นและดาวน์โหลด MP4');
+  const usage = result.response?.usage || result.response?.usage_metadata || result.response?.usageMetadata || null;
+  return { outputUrl: `/api/video-stream/${jobId}`, isMock: false, usage };
 }
 
 function buildEnrichedPrompt(params: GenerationParams): string {

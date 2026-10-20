@@ -76,6 +76,10 @@ export interface GenerateRequestPayload {
   referenceImages?: string[];
   /** 'asset' = library photos that keep characters the same (Veo reference images) */
   referenceMode?: 'asset' | 'start-frame';
+  /** Who each reference photo shows (same order as referenceImages) */
+  referenceNames?: string[];
+  /** Job of the previous clip at the same place: this clip starts from that clip's last frame */
+  continueFromJobId?: string;
   characterId?: string;
   characterName?: string;
   projectId?: string;
