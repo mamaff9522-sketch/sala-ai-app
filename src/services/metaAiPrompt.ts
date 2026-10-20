@@ -11,7 +11,7 @@
  * - keeps Location, Atmosphere, Core action, Cinematography and the Thai Dialogue verbatim
  * - adds clip length, aspect ratio, "speak Thai exactly as written" and "no on-screen text"
  */
-import { findSections, removeSections, insertBlock, tidy, dropEmptyCues } from './promptSections';
+import { findSections, removeSections, insertBlock, tidy, dropEmptyCues, ensureDialoguesInPrompt } from './promptSections';
 
 interface PoseForMeta {
   name?: string;
@@ -161,14 +161,31 @@ export function photoNumbers(names: string[], opts: Pick<MetaAiFormatOptions, 'p
 
 /** Short identity line from a library character: species / body first sentence + outfit, max ~200 chars. */
 export function characterNote(c: any): string {
+  // Whole parts only ("ผิว/เกล็ด: …", "รูปหน้า: …"): Thai has no spaces between words, so cutting
+  // at a character count broke words ("รูปหน้า:…"). Parts that say nothing ("ไม่เห็นในภาพ") are dropped.
   const first = (v: unknown, max: number) => {
     const t = String(v ?? '').replace(/\s+/g, ' ').trim();
     if (!t) return '';
-    const cut = t.split(/(?<=[.!?。])\s/)[0];
-    return cut.length > max ? `${cut.slice(0, max).replace(/[,\s]+\S*$/, '')}…` : cut.replace(/[.\s]+$/, '');
+    const sentence = t.split(/(?<=[.!?。])\s/)[0].replace(/[.\s]+$/, '');
+    const parts: string[] = [];
+    let depth = 0; let cur = '';
+    for (const ch of sentence) {
+      if (ch === '(') depth++;
+      if (ch === ')') depth = Math.max(0, depth - 1);
+      if (depth === 0 && /[,•|;]/.test(ch)) { parts.push(cur); cur = ''; continue; }
+      cur += ch;
+    }
+    parts.push(cur);
+    const useful = parts.map(x => x.trim()).filter(x => x && !/[:：]\s*$/.test(x) && !/ไม่เห็น|ไม่ระบุ|ไม่ทราบ|not visible|unknown/i.test(x));
+    const kept: string[] = [];
+    for (const x of useful) {
+      if (kept.length > 0 && kept.join(', ').length + x.length + 2 > max) break;
+      kept.push(x);
+    }
+    return kept.join(', ');
   };
-  const body = first(c?.appearance || c?.visualProfile?.visiblePhysicalAppearance || c?.description, 150);
-  const outfit = first(c?.outfit || c?.outfitDescription || c?.costume || c?.visualProfile?.visibleOutfit, 80);
+  const body = first(c?.appearance || c?.visualProfile?.visiblePhysicalAppearance || c?.description, 220);
+  const outfit = first(c?.outfit || c?.outfitDescription || c?.costume || c?.visualProfile?.visibleOutfit, 120);
   return [body, outfit ? `ชุด: ${outfit}` : ''].filter(Boolean).join(', ');
 }
 
@@ -257,7 +274,7 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   else tail.push('ไม่มีบทพูดในคลิปนี้ ตัวละครไม่พูด');
   tail.push('ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำบนจอ');
 
-  const body = dropEmptyCues(tidy(prompt)).replace(/[.;\s]+$/, '');
+  const body = ensureDialoguesInPrompt(dropEmptyCues(tidy(prompt)), clip.dialogues).replace(/[.;\s]+$/, '');
   return tidy([head.join(', '), ...lockLines.slice(0, 1), body, ...lockLines.slice(1), ...tail].filter(Boolean).map(s => s.replace(/[.\s]+$/, '')).join('. ') + '.');
 }
 

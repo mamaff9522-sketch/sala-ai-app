@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { runWholeStory } from '../src/services/wholeStoryRunner';
 import { offlineContinuation, isLineCovered, metaOptionsForStory } from '../src/services/storyProgress';
 import { parseStoryStructure } from '../src/services/storyEpisodeEngine';
-import { formatAllClipsForMetaAi, characterNote } from '../src/services/metaAiPrompt';
+import { formatAllClipsForMetaAi, formatClipForMetaAi, characterNote } from '../src/services/metaAiPrompt';
+import { analyzeClipContinuity } from '../src/services/continuityEngine';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rd = (f: string) => fs.readFileSync(path.join(here, 'fixtures', f), 'utf8');
@@ -63,6 +64,26 @@ await check('stops when asked', async () => {
   const r = await runWholeStory(rd('avatar-story.txt'), { offline: true, shouldStop: () => n++ >= 1 }, async (p: any) => ({ success: true, ...offlineContinuation({ ...p, targetSceneCount: 1 }) } as any));
   assert.equal(r.finished, false);
   assert.ok(r.clips.length > 0);
+});
+
+await check('Gemini scene text without the lines: dialogue is still in the Meta AI prompt', () => {
+  const clip: any = { clipNumber: 1, durationSeconds: 10, locationName: 'ห้องโถงบ้าน', charactersPresent: ['แพรวา', 'น้องน้ำ'],
+    generatedPrompt: 'Cinematic 8K, medium shot, แพรวา shouting with anger.',
+    dialogues: [{ speaker: 'แพรวา', line: 'ออกไปจากบ้านฉัน!' }, { speaker: 'น้องน้ำ', line: 'ไม่มีวัน' }] };
+  const m = formatClipForMetaAi(clip, { knownCharacters: ['แพรวา', 'น้องน้ำ'] });
+  assert.ok(m.includes('แพรวา speaks: "ออกไปจากบ้านฉัน!"') && m.includes('น้องน้ำ speaks: "ไม่มีวัน"'), m);
+  assert.ok(m.indexOf('ออกไปจากบ้านฉัน') < m.indexOf('ไม่มีวัน'), 'lines stay in order');
+});
+
+await check('poses: "เผชิญหน้ากับ…" is not a place, places are never cut mid-word', () => {
+  const pl = (t: string) => analyzeClipContinuity({ clips: [{ text: t }], lockedCharacters: ['แพรวา', 'น้องน้ำ'] }).clips[0].endPoses.map((p: any) => p.place).filter(Boolean).join('|');
+  assert.equal(pl('แพรวายืนเผชิญหน้ากับน้องน้ำด้วยท่าทางเกรี้ยวกราด'), '');
+  assert.equal(pl('น้องน้ำยืนอยู่ที่หน้าประตูบ้านด้วยสีหน้าเรียบเฉย'), 'ที่หน้าประตูบ้าน');
+});
+
+await check('character note: whole parts only, nothing "not visible"', () => {
+  const n = characterNote({ appearance: 'ประเภท: reptile (กิ้งก่า), ผิว/เกล็ด: เกล็ดสีเขียว มีจุดดำ, รูปหน้า: หัวกิ้งก่า ตาโต, ทรงผม: ไม่มี (ไม่เห็นในภาพ)', outfit: 'ท่อนบน: ไม่เห็นชัดในภาพ • ท่อนล่าง: ไม่เห็นในภาพ' });
+  assert.equal(n, 'ประเภท: reptile (กิ้งก่า), ผิว/เกล็ด: เกล็ดสีเขียว มีจุดดำ, รูปหน้า: หัวกิ้งก่า ตาโต');
 });
 
 console.log(`\nwhole story: ${passed} passed`);

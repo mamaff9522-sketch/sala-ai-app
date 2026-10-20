@@ -116,3 +116,23 @@ export function dropEmptyCues(prompt: string): string {
   }
   return tidy(p.replace(/\s+([.;,])/g, '$1').replace(/;\s*\./g, '.').replace(/([.;])\s*;/g, '$1'));
 }
+
+/** Compare text ignoring spaces, quotes and punctuation. */
+const squash = (t: string) => String(t || '').replace(/[\s"'“”‘’.,!?…:;()\[\]\-–—~]/g, '');
+
+/**
+ * Makes sure every dialogue line of the clip is written in its prompt. Gemini's English scene
+ * description often leaves the lines out, and a video prompt without them makes the characters
+ * say nothing (or invent speech). Missing lines are added, in order, as one "Dialogue:" section.
+ */
+export function ensureDialoguesInPrompt(prompt: string, dialogues: { speaker?: string; line?: string; dialogue?: string; emotionOrAction?: string }[] | undefined): string {
+  const p = String(prompt || '');
+  const have = squash(p);
+  const missing = (dialogues || [])
+    .map(d => ({ speaker: String(d?.speaker || '').trim(), line: String(d?.line ?? d?.dialogue ?? '').trim(), how: String(d?.emotionOrAction || '').trim() }))
+    .filter(d => d.line && !have.includes(squash(d.line)));
+  if (missing.length === 0) return p;
+  const cue = missing.map(d => `${d.speaker || 'Character'}${d.how ? ` ${d.how}` : ''} speaks: "${d.line}"`).join('; ');
+  const body = p.replace(/[.\s]+$/, '');
+  return body ? `${body}. Dialogue: ${cue}.` : `Dialogue: ${cue}.`;
+}

@@ -106,7 +106,11 @@ const STATICS: { re: RegExp; posture: Posture }[] = [
 const LEAVE_RE = /(?:เดินออกไป|เดินจากไป|ออกไปจาก|ออกจาก(?:ห้อง|บ้าน|ฉาก|ร้าน)|จากไป|หายตัวไป|หายไป|ออกไป|\bleaves?\b|\bexits?\b|\bwalks? out\b|\bleft\b)/i;
 const ENTER_RE = /(?:เดินเข้ามา|เข้ามา|มาถึง|กลับมา|ปรากฏตัว|โผล่มา|\benters?\b|\barrives?\b|\bwalks? in\b|\bcomes? back\b)/i;
 const GROUP_RE = /(?:ทั้งคู่|ทั้งสอง|ทุกคน|พวกเขา|\bboth\b|\beveryone\b)/i;
-const PLACE_RE = /(?:อยู่)?((?:ที่|บน|หน้า|ข้าง|ตรง|ริม|ใกล้|หลัง|ใน)[ก-๙A-Za-z0-9]{2,24})/;
+const PLACE_RE = /(?:อยู่)?((?:ที่|บน|หน้า|ข้าง|ตรง|ริม|ใกล้|หลัง|ใน)[ก-๙A-Za-z0-9]{2,40})/;
+/** A place phrase ends before words that start a manner / next action ("…ด้วยท่าทางเกรี้ยวกราด") */
+const PLACE_END_RE = /(?:ด้วย|พร้อม|ขณะ|แล้ว|และ|โดย|เพื่อ|อย่าง|ท่าทาง|สีหน้า|น้ำเสียง|ก่อน|จน|ทันที).*$/;
+/** "เผชิญหน้ากับ X", "หันหน้าไป" — "หน้า" here is a face, not a place */
+const FACE_NOT_PLACE_RE = /(?:เผชิญ|หัน|ก้ม|เงย|เบือน|ส่าย|สบ)$/;
 /** Words that start like a place phrase but are not places ("หน้าจอ", "สีหน้า", "ในที่สุด") */
 const NOT_PLACE_RE = /^(?:หน้าจอ|หน้าตา|หน้าที่|หน้าต่อไป|ในที่สุด|ในใจ|ที่สุด|ที่จะ|ที่ไม่|ที่เคย|ที่ทำ|ข้างใน)/;
 /** Arriving here: the character ends at the scene location */
@@ -204,9 +208,15 @@ function readSegment(seg: string, names: string[], lastSubjects: string[], prese
     const from = Math.max(0, ev.kind === 'transition' ? tIdx : (ev.kind === 'static' ? sIdx : 0));
     // Place: the last place phrase after the first movement/posture word (destination wins)
     const placeMatches = Array.from(seg.slice(from).matchAll(new RegExp(PLACE_RE.source, 'g')))
-      .filter(m => !NOT_PLACE_RE.test(m[1]) && !names.some(n => m[1].endsWith(n) && !m[1].startsWith('ข้าง')));
+      .filter(m => !NOT_PLACE_RE.test(m[1]) && !FACE_NOT_PLACE_RE.test(seg.slice(from).slice(0, m.index! + m[0].length - m[1].length)) && !/^หน้า(?:กับ|เข้า|ไป|มา)/.test(m[1]))
+      .map(m => {
+        const trimmed = m[1].replace(PLACE_END_RE, '');
+        // still at the length limit: the phrase was cut mid-word, not a usable place
+        return trimmed.length >= 3 && !(trimmed === m[1] && m[1].length >= 42) ? trimmed : '';
+      })
+      .filter(pl => pl && !names.some(n => pl.endsWith(n) && !pl.startsWith('ข้าง')));
     const pm = placeMatches.length > 0 ? placeMatches[placeMatches.length - 1] : null;
-    if (pm) ev.place = pm[1];
+    if (pm) ev.place = pm;
     else if (destination && (ev.kind === 'transition' || ev.kind === 'enter')) ev.place = `ข้าง${destination}`;
     else if (location && (ev.kind === 'transition' || ev.kind === 'enter') && ARRIVE_HERE_RE.test(seg)) ev.place = location;
   }
