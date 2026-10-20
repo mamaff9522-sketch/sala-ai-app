@@ -1237,7 +1237,9 @@ ${c.negativePrompt}
                 )}
               </button>
 
-              {/* Mode B: Auto Generate Mode */}
+              {/* Mode B: Auto Generate Mode — hidden: in-app video costs real money (server refuses video
+                  unless ENABLE_IN_APP_VIDEO=on). Prompts are copied into Meta AI instead. */}
+              {false && (
               <button
                 onClick={() => setDirectorMode('auto_generate')}
                 className={`p-4 rounded-2xl border text-left transition-all relative ${
@@ -1274,6 +1276,7 @@ ${c.negativePrompt}
                   </div>
                 )}
               </button>
+              )}
             </div>
           </div>
         </div>

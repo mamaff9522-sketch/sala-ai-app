@@ -4503,6 +4503,16 @@ app.post('/api/generate', requireAuth, async (req: any, res) => {
     return res.status(400).json({ success: false, message: 'กรุณากรอก Prompt ก่อนเริ่มสร้างผลงาน' });
   }
 
+  // In-app video costs real money per second (Google bill). Off unless ENABLE_IN_APP_VIDEO=on;
+  // the app is used to copy prompts into Meta AI instead.
+  if (params.type === 'video' && String(process.env.ENABLE_IN_APP_VIDEO || '').toLowerCase() !== 'on') {
+    return res.status(403).json({
+      success: false,
+      code: 'IN_APP_VIDEO_OFF',
+      message: 'ปิดการสร้างวิดีโอในแอปไว้ เพราะมีค่าใช้จ่ายจริงต่อวินาที กรุณาคัดลอกพรอมต์ไปสร้างใน Meta AI แทน / In-app video is turned off.'
+    });
+  }
+
   // Resolve provider strictly (no silent fallback to mock/sample output)
   params.provider = (params.provider || 'gemini') as ProviderId;
   const adapter = providerManager.find(params.provider);
