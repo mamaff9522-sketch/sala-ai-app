@@ -156,7 +156,10 @@ check('endings are scene-specific (no ธันวา/มายด์/ลุง�
   ep.scenes.forEach((s: any, i: number) => {
     assert.ok(!/ธันวา|มายด์|ลุงชาญ|โกดัง/.test(s.endState), `scene ${i + 1} end: ${s.endState}`);
     assert.ok(!/ธันวา|มายด์|ลุงชาญ|โกดัง/.test(s.startAction), `scene ${i + 1} start: ${s.startAction}`);
-    if (i > 0) assert.equal(s.startAction, ep.scenes[i - 1].endState);
+    // Same place: starts exactly where the previous scene ended. Another place: a fresh start,
+    // never the previous place's last action (user rule: continuous clips only within one place)
+    if (i > 0 && s.location === ep.scenes[i - 1].location) assert.equal(s.startAction, ep.scenes[i - 1].endState);
+    if (i > 0 && s.location !== ep.scenes[i - 1].location) assert.notEqual(s.startAction, ep.scenes[i - 1].endState, `scene ${i + 1} new place`);
   });
   assert.ok(ep.scenes[0].endState.includes('พี่ต้นหยุดเขี่ยกองไฟ'), ep.scenes[0].endState);
   // Ends on a line: who spoke, never the words again (the next clip starts from this state and would repeat them)

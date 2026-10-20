@@ -11,7 +11,7 @@
  * - keeps Location, Atmosphere, Core action, Cinematography and the Thai Dialogue verbatim
  * - adds clip length, aspect ratio, "speak Thai exactly as written" and "no on-screen text"
  */
-import { findSections, removeSections, insertBlock, tidy, dropEmptyCues, ensureDialoguesInPrompt } from './promptSections';
+import { findSections, removeSections, insertBlock, tidy, dropEmptyCues, ensureDialoguesInPrompt, isEmptyLine } from './promptSections';
 
 interface PoseForMeta {
   name?: string;
@@ -200,8 +200,8 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   prompt = prompt.replace(/ผูกพรอมต์นี้กับฉากที่[^.]*\.\s*/g, '');
 
   const sections = findSections(prompt);
-  const core = sections.find(s => s.label === 'Core action');
-  const coreBody = core ? sectionBody(core.text, 'Core action') : '';
+  const core = sections.find(s => s.label === 'Core action' || s.label === 'Scene Action' || s.label === 'Script action');
+  const coreBody = core ? sectionBody(core.text, core.label) : '';
 
   // Character Lock -> uploaded photo mapping, placed where the lock was
   const names = charactersInClip(clip, opts.knownCharacters || []);
@@ -216,10 +216,10 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
       .filter(Boolean).join(' | ');
     const parts: string[] = [];
     if (photoNames.length) {
-      parts.push(`ตัวละคร (ใช้รูปที่อัปโหลดเป็นต้นแบบ): ${photoNames.map(n => `รูปที่ ${order.get(n)} = ${n}`).join(', ')} — ใบหน้า ทรงผม รูปร่าง และชุดต้องเหมือนในรูปทุกช็อต`);
+      parts.push(`ตัวละคร (ใช้รูปที่อัปโหลดเป็นต้นแบบ): ${photoNames.map(n => `รูปที่ ${order.get(n)} = ${n}`).join(', ')} — ใบหน้า ทรงผม รูปร่าง และชุดต้องเหมือนในรูปทุกช็อต เสียงพูดของแต่ละคนเหมือนเดิมทุกคลิป`);
     }
     if (others.length) {
-      parts.push(`ตัวละคร${photoNames.length ? 'อื่น' : ''}ในคลิป: ${others.join(', ')} — หน้าตาและชุดของแต่ละคนต้องเหมือนเดิมทุกคลิป`);
+      parts.push(`ตัวละคร${photoNames.length ? 'อื่น' : ''}ในคลิป: ${others.join(', ')} — หน้าตา ชุด และเสียงพูดของแต่ละคนต้องเหมือนเดิมทุกคลิป`);
     }
     // Animal characters drift into people most: say so explicitly for them
     const animal = /anthropomorphic|animal|reptile|gecko|lizard|buffalo|creature|สัตว์|เกล็ด|ตุ๊กแก|ตัวเหี้ย|กิ้งก่า|ควาย/i.test(notes);
@@ -245,7 +245,8 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
       if (b.length >= 6 && prevText.includes(b)) return true;
     }
     if ((s.label === 'Starting moment' || s.label === 'Ending momentum') && coreBody) {
-      return coreBody.includes(sectionBody(s.text, s.label));
+      // the same action again (only "กำลัง" added) would be played twice
+      return squashed(coreBody).includes(squashed(sectionBody(s.text, s.label)));
     }
     return false;
   }).prompt;
@@ -278,7 +279,7 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
     lockLines.push(`ท่าจบคลิป (ค้างไว้ส่งต่อคลิปถัดไป): ${end || clean(clip.endAction)}`);
   }
 
-  const hasDialogue = (clip.dialogues || []).some(d => String(d?.line || '').trim());
+  const hasDialogue = (clip.dialogues || []).some(d => String(d?.line || '').trim() && !isEmptyLine(d?.line));
   const head: string[] = [];
   if (clip.durationSeconds) head.push(`วิดีโอยาว ${clip.durationSeconds} วินาที`);
   if (opts.aspectRatio) head.push(`สัดส่วนภาพ ${opts.aspectRatio}`);

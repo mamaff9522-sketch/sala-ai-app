@@ -8,6 +8,7 @@
  */
 import type { StoryContinuationPayload, StoryContinuationResponse } from '../types';
 import { normalizeStoryScript } from './storyNormalize';
+import { isEmptyLine } from './promptSections';
 
 export interface StoryClip {
   clipNumber: number;
@@ -52,7 +53,7 @@ export function sceneToClip(sc: any, clipSeconds: number): StoryClip {
     generatedPrompt: String(sc?.visualPrompt || ''),
     dialogues: (Array.isArray(sc?.dialogues) ? sc.dialogues : [])
       .map((d: any) => ({ speaker: String(d?.speaker || ''), line: String(d?.dialogue ?? d?.line ?? '') }))
-      .filter((d: any) => d.line),
+      .filter((d: any) => d.line && !isEmptyLine(d.line)),
     charactersPresent: Array.isArray(sc?.characters) ? sc.characters : undefined,
     locationName: sc?.location && !/^ไม่ระบุ/.test(sc.location) ? sc.location : undefined,
     timeOfDay: sc?.timeOfDay && !/^ไม่ระบุ/.test(sc.timeOfDay) ? sc.timeOfDay : undefined,

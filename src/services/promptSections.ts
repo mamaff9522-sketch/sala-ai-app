@@ -105,8 +105,12 @@ export function countOccurrences(haystack: string, needle: string): number {
  * - a speech cue without its line: `น้ำฟ้า speaks: ;`, `she replies with dignity:.`
  * - an empty label: `Continuity Flow:.`, `Dialogue:` at the end
  */
+/** "ไม่มี", "-", "(เงียบ)": a line that says the character says nothing */
+export const isEmptyLine = (line: unknown) => /^\s*["“]?\s*\(?\s*(?:ไม่มี(?:บทพูด|เสียงพูด)?|ไม่พูด|เงียบ|-+|—|…|\.{3}|none|no dialogue|n\/a)?\s*\)?\s*["”]?\s*$/i.test(String(line ?? ''));
+
 export function dropEmptyCues(prompt: string): string {
-  let p = String(prompt || '');
+  // ธนา speaks: "ไม่มี" → nothing (the video model would make him say "ไม่มี")
+  let p = String(prompt || '').replace(/(^|[.;:]\s*)[^.;:"“”]{0,60}\b(?:speaks|says)\b[^.;:"“”]{0,40}[:：]\s*["“]\s*\(?\s*(?:ไม่มี(?:บทพูด|เสียงพูด)?|ไม่พูด|เงียบ|-+|—|…|none)\s*\)?\s*["”]\s*[;.]?/gi, '$1');
   const CUE = /(?:^|(?<=[.;"”]\s?)|(?<=\s))[^.;:"“”\[\]]{0,60}\b(?:speaks|says|shouts|yells|replies|asks|whispers|answers|responds)\b[^.;:"“”\[\]]{0,40}[:：]\s*(?=[.;]|$)[.;]?/gi;
   const EMPTY_LABEL = /(^|[.;"”]\s*)(?:[A-Za-z][A-Za-z /&-]{1,30}|[ก-๙][ก-๙ /]{0,30})[:：]\s*(?=[.;](?:\s|$)|$)[.;]?/g;
   for (let i = 0; i < 3; i++) {
@@ -130,7 +134,7 @@ export function ensureDialoguesInPrompt(prompt: string, dialogues: { speaker?: s
   const have = squash(p);
   const missing = (dialogues || [])
     .map(d => ({ speaker: String(d?.speaker || '').trim(), line: String(d?.line ?? d?.dialogue ?? '').trim(), how: String(d?.emotionOrAction || '').trim() }))
-    .filter(d => d.line && !have.includes(squash(d.line)));
+    .filter(d => d.line && !isEmptyLine(d.line) && !have.includes(squash(d.line)));
   if (missing.length === 0) return p;
   const cue = missing.map(d => `${d.speaker || 'Character'}${d.how ? ` ${d.how}` : ''} speaks: "${d.line}"`).join('; ');
   const body = p.replace(/[.\s]+$/, '');

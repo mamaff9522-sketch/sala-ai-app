@@ -23,7 +23,7 @@ const fakeServer = (failFirst: boolean) => {
   };
 };
 
-for (const file of ['faiklaen-story.txt', 'avatar-story.txt', 't67-story.txt', 'nongnam-clips-story.txt']) {
+for (const file of ['faiklaen-story.txt', 'avatar-story.txt', 't67-story.txt', 'nongnam-clips-story.txt', 'moradok-notes-story.txt']) {
   await check(`${file}: whole story, every line in exactly one Meta AI prompt`, async () => {
     const story = rd(file);
     const r = await runWholeStory(story, { aspectRatio: '9:16', clipSeconds: 8 }, fakeServer(true));
@@ -95,6 +95,27 @@ await check('"คลิป 4 — title" is not an action; "ฉาก: ต่อ�
   assert.ok(!meta.includes('เปลี่ยนสถานที่ ท่าเริ่มคลิป'), 'same place, so no "new place"');
   assert.equal((meta.match(/สถานที่ ห้องโถงบ้าน เวลา กลางวัน/g) || []).length, r.clips.length);
   assert.ok(!/กำลัง\S{0,6}กำลัง/.test(meta), 'no doubled "กำลัง"');
+});
+
+await check('review points: real cast per clip, no "ไม่มี" lines, no "บท" speaker, no mixing of places', async () => {
+  const story = rd('moradok-notes-story.txt');
+  const r = await runWholeStory(story, { offline: true, clipSeconds: 8 }, fakeServer(false));
+  assert.ok(!r.error, r.error);
+  const clips = formatAllClipsForMetaAi(r.clips as any, metaOptionsForStory(story, [], characterNote)).split('\n\n');
+  const all = clips.join('\n');
+  assert.ok(!/speaks:\s*"ไม่มี"/.test(all) && !all.includes('บทพูด:') && !all.includes('ตัวละครในฉาก'), 'notes are not played');
+  assert.ok(!/(^|[\s.;])บท speaks/.test(all), '"บท" is never a speaker');
+  assert.ok(all.includes('มะลิ speaks: "หนูจะดูแลที่ดินของแม่ให้ดีที่สุดค่ะ"'), 'unnamed "บท:" line goes to the scene speaker');
+  const cast = (c: string) => (c.match(/ตัวละครในคลิป: ([^—]+)/)?.[1] || '').trim();
+  assert.equal(cast(clips[0]), 'ธนา', 'only who is in the shot');
+  assert.ok(!cast(clips[2]).includes('ธนา') && !cast(clips[2]).includes('มะลิ'), `living room: not the people of the study (${cast(clips[2])})`);
+  assert.ok(!clips[2].includes('ห้องทำงาน') && !clips[2].includes('ธนาสะดุ้ง'), 'new place starts fresh');
+  assert.ok(clips[0].includes('ไม่มีบทพูดในคลิปนี้'), 'clip without lines says so');
+  for (const c of clips) {
+    assert.ok(c.includes('เสียงพูด'), 'voice locked');
+    const act = c.match(/Scene Action: ([^.]+)/)?.[1] || '';
+    if (act) assert.equal(c.split(act.slice(0, 15)).length - 1, 1, `action written once: ${act}`);
+  }
 });
 
 console.log(`\nwhole story: ${passed} passed`);

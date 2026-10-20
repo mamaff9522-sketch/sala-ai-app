@@ -53,7 +53,7 @@ import { registerTransferRoutes } from './serverTransfer';
 import { loadVeoReferenceImages, resolveVeoReferenceModel, veoDurationSeconds } from './serverVeo';
 import { OMNI_VIDEO_MODEL, extractLastFrame, generateOmniVideo } from './serverOmni';
 import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson, splitDenseDialogueScenes, restoreMissingStoryBeats, offlineContinuation, storyCursorFor, lockForScript, fixDialogueSpeakers } from './src/services/storyProgress';
-import { ensureDialoguesInPrompt } from './src/services/promptSections';
+import { ensureDialoguesInPrompt, isEmptyLine, dropEmptyCues } from './src/services/promptSections';
 import { normalizeStoryScript } from './src/services/storyNormalize';
 
 dotenv.config();
@@ -3233,7 +3233,8 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
 13. หัวข้อฉากที่เป็นชื่อตอน/อารมณ์ หรือ "หน้าบ้านต่อเนื่อง" ไม่ใช่สถานที่: "location" ต้องเป็นสถานที่จริงของฉากก่อนหน้า และ "timeOfDay" เดิม
 14. ท่าทาง/ตำแหน่งตอนเริ่มฉาก ต้องเท่ากับตอนจบฉากก่อนหน้า เว้นแต่บทบอกว่าขยับ
 15. "speaker" และ "characters" ต้องเป็นชื่อตัวละครล้วนๆ ห้ามมีคำกริยาต่อท้าย ให้ใส่กริยา/อารมณ์ไว้ใน "emotionOrAction" แทน
-16. ใน "visualPrompt" ให้เขียนชื่อตัวละครเป็นภาษาไทยตามบทเท่านั้น ห้ามถอดเป็นอักษรอังกฤษ (เช่น เขียน "แพรวา" ไม่ใช่ "Phrae-wa") และต้องมีบทพูดของฉากนั้นครบตามต้นฉบับในรูป Dialogue: ชื่อ speaks: "บทพูด"${declaredNames.length > 0 ? `\n17. ใช้ชื่อตัวละครตามที่ประกาศไว้เท่านั้น: ${declaredNames.join(', ')}` : ''}`;
+16. "characters" ของแต่ละฉาก = เฉพาะตัวละครที่อยู่ในช็อตจริง (ทำการกระทำหรือพูดในฉากนั้น) ห้ามใส่ตัวละครทั้งเรื่องทุกฉาก ชื่อที่ถูกพูดถึงในบทพูดไม่นับว่าอยู่ในฉาก ฉากที่ไม่มีบทพูดให้ "dialogues" เป็น [] ห้ามใส่บทพูดว่า "ไม่มี" และห้ามใช้คำว่า "บท" เป็นชื่อผู้พูด
+16.1 ใน "visualPrompt" ให้เขียนชื่อตัวละครเป็นภาษาไทยตามบทเท่านั้น ห้ามถอดเป็นอักษรอังกฤษ (เช่น เขียน "แพรวา" ไม่ใช่ "Phrae-wa") และต้องมีบทพูดของฉากนั้นครบตามต้นฉบับในรูป Dialogue: ชื่อ speaks: "บทพูด"${declaredNames.length > 0 ? `\n17. ใช้ชื่อตัวละครตามที่ประกาศไว้เท่านั้น: ${declaredNames.join(', ')}` : ''}`;
 
     const storySceneSchema = {
       type: Type.OBJECT,
@@ -3396,7 +3397,8 @@ ${JSON.stringify(resolveCharacterProfiles(declaredNames, Array.isArray(character
       console.log(`[story continue] restored ${restored.restoredActions} action and ${restored.restoredDialogues} dialogue line(s)`);
     }
     parsed.scenes = restored.scenes
-      .map((s: any) => ({ ...s, visualPrompt: ensureDialoguesInPrompt(s.visualPrompt, s.dialogues) }))
+      .map((s: any) => ({ ...s, dialogues: (Array.isArray(s.dialogues) ? s.dialogues : []).filter((d: any) => !isEmptyLine(d?.dialogue)) }))
+      .map((s: any) => ({ ...s, visualPrompt: dropEmptyCues(ensureDialoguesInPrompt(s.visualPrompt, s.dialogues)) }))
       .map((s: any) => s.scriptFormattedText ? s : {
       ...s,
       scriptFormattedText: [

@@ -10,6 +10,10 @@
  *   คลิป 4 — น้องน้ำสวนกลับ                   → (removed: a clip title, was written into the video as an action)
  *   ฉาก: ต่อเนื่องจากคลิปที่ 3 ตำแหน่งเดิม       → ฉากที่ 2 — ห้องโถงบ้าน / กลางวัน   (same place and time as before,
  *                                              was taken as the NAME of a new place)
+ *   ตัวละครในฉาก: ธนา, มะลิ                   → (removed: a note, was played as an action)
+ *   บทพูด: ไม่มี   /   ธนา: ไม่มี              → (removed: was "ธนา speaks: "ไม่มี"")
+ *   บท: มะลิ: "…"  /  บทพูดของมะลิ: "…"        → มะลิ: "…"
+ *   บท: "…"  (no name)                         → <the scene's speaker>: "…"   (was a character called "บท")
  */
 
 const TIME_WORDS = [
@@ -27,6 +31,14 @@ const EPISODE_RE = /^ตอนที่\s*\d+\s*(?:[:：.\-–—]\s*.*)?$/;
 const CLIP_LABEL_RE = /^[ \t#*_\[【(]*(?:คลิป(?:ที่)?|clip)\s*\d+\s*(?:[:：.\-–—]\s*.*)?$/i;
 /** Heading text that means "same place as before" rather than naming a place */
 const SAME_PLACE_RE = /^(?:ต่อเนื่อง|ต่อจาก|ฉากเดิม|สถานที่เดิม|ที่เดิม|same (?:place|location)|continu)/i;
+/** "ตัวละครในฉาก: …", "ตัวละครในคลิป: …" — who is in the scene (a note, not an action) */
+const CAST_RE = /^[ \t*_\-•(\[]*(?:ตัวละคร(?:ในฉาก|ในคลิป|ที่ปรากฏ|ที่อยู่ในฉาก)?|นักแสดง(?:ในฉาก)?|cast|characters? in (?:scene|clip))\s*[:：]\s*(.+?)[)\]]*$/i;
+/** A line that says "no dialogue" */
+const NO_DIALOGUE_RE = /^[ \t*_\-•(\[]*(?:(?:บทพูด|บท|เสียงพูด|dialogue)\s*[:：]\s*(?:\(?\s*(?:ไม่มี(?:บทพูด|เสียงพูด)?|ไม่พูด|เงียบ|-+|—|none|no dialogue)\s*\)?)?|ไม่มีบทพูด|ไม่มีเสียงพูด|\(?\s*ไม่มีบทพูด\s*\)?)\s*[.)\]]*$/i;
+/** "บท: …", "บทพูด: …", "บทพูดของมะลิ: …", "บทพูด (มะลิ): …" */
+const LINE_LABEL_RE = /^[ \t*_\-•]*(?:บทพูด|บท|dialogue)\s*(?:ของ\s*([^:：()"“]{1,30})|\(\s*([^)]{1,30})\s*\)|\s([^:："“]{1,30}))?\s*[:：]\s*(.*)$/i;
+/** "ธนา: ไม่มี", "ธนา: (เงียบ)", "ธนา: -" — a character with nothing to say */
+const EMPTY_LINE_RE = /^[^:："“]{1,30}[:：]\s*["“]?\s*\(?\s*(?:ไม่มี(?:บทพูด)?|ไม่พูด|เงียบ|-+|—|…|\.{3})\s*\)?\s*["”]?\s*$/;
 const CHAR_HEADER_RE = /^(?:ตัวละคร(?:หลัก)?|รายชื่อตัวละคร|นักแสดง|characters?)\s*[:：]?\s*$/i;
 
 /** "คฤหาสน์หรู กลางคืน ฝนตกหนัก" → "คฤหาสน์หรู / กลางคืน ฝนตกหนัก" (only when there is no "/" yet). */
@@ -56,9 +68,35 @@ export function normalizeStoryScript(raw: string): string {
   let inChars = false;
   let charEntries = 0;
   let lastPlace = '';
+  let inScene = false;
+  const declared: string[] = [];
+  let cast: string[] = [];
+  let lastNamed = '';
+  const namesIn = (text: string) => declared.filter(n => text.includes(n)).sort((a, b) => text.indexOf(a) - text.indexOf(b));
   for (const original of lines) {
     const t = original.trim();
     if (CLIP_LABEL_RE.test(t)) continue;
+    if (inScene && t) {
+      const castLine = t.match(CAST_RE);
+      if (castLine) {
+        cast = castLine[1].split(/[,，、/]|\s+และ\s+|\s+/).map(x => x.trim()).filter(Boolean);
+        continue;
+      }
+      if (NO_DIALOGUE_RE.test(t) || EMPTY_LINE_RE.test(t)) continue;
+      const label = t.match(LINE_LABEL_RE);
+      if (label) {
+        const named = (label[1] || label[2] || label[3] || '').trim();
+        const rest = label[4].trim();
+        if (!rest) continue; // "บทพูด:" heading; the lines follow on their own
+        if (/^[^:："“]{1,30}[:：]/.test(rest)) { out.push(rest); continue; } // "บท: มะลิ: "…""
+        const who = named || (cast.length === 1 ? cast[0] : '') || lastNamed || cast[0] || '';
+        out.push(who ? `${who}: ${rest}` : rest);
+        continue;
+      }
+      const speaker = t.match(/^([^:："“]{1,30})[:：]/);
+      if (speaker && !/^(?:ฉาก|เวลา|สถานที่)/.test(speaker[1])) lastNamed = speaker[1].trim();
+      else { const n = namesIn(t)[0]; if (n) lastNamed = n; }
+    }
     const numbered = t.match(NUMBERED_HEADING_RE);
     if (numbered) {
       sceneNo = Math.max(sceneNo, Number(numbered[1]) || 0);
@@ -69,6 +107,7 @@ export function normalizeStoryScript(raw: string): string {
         continue;
       }
       if (rest && !SAME_PLACE_RE.test(rest)) lastPlace = rest;
+      inScene = true; cast = []; lastNamed = '';
       out.push(original);
       continue;
     }
@@ -79,6 +118,7 @@ export function normalizeStoryScript(raw: string): string {
       const text = unnumbered[1].trim();
       const place = SAME_PLACE_RE.test(text) && lastPlace ? lastPlace : splitPlaceAndTime(text);
       if (!SAME_PLACE_RE.test(text)) lastPlace = place;
+      inScene = true; cast = []; lastNamed = '';
       out.push(`ฉากที่ ${sceneNo} — ${place}`);
       continue;
     }
@@ -108,6 +148,8 @@ export function normalizeStoryScript(raw: string): string {
         inChars = false;
       } else {
         charEntries++;
+        const nm = t.replace(/^[-*•]\s*/, '').match(/^(\S+)/);
+        if (nm && !declared.includes(nm[1])) declared.push(nm[1]);
         if (/^[-*•]/.test(t)) {
           out.push(original);
         } else {

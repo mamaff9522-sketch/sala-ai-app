@@ -880,6 +880,12 @@ export function generateEpisodeLocally({
   const scenes: any[] = [];
   const introduced = new Set<string>();
   let prevEnd: string = lastSceneState?.endAction || '';
+  let prevLoc: string = String(lastSceneState?.location || '');
+  // A scene at another place never starts from the last action of the previous place
+  const samePlaceAs = (a: string, b: string) => {
+    const x = String(a || '').replace(/\s+/g, ''); const y = String(b || '').replace(/\s+/g, '');
+    return !x || !y || x === UNSPECIFIED || y === UNSPECIFIED || x.includes(y) || y.includes(x);
+  };
   const locks = buildStoryLocks({ parsedStory, libraryCharacters: characters, continuityLock, storyText: originalStory });
 
   // Pose / Position Lock handoff across the episode (start of scene N = end of scene N-1).
@@ -888,8 +894,9 @@ export function generateEpisodeLocally({
     ? normalizePoseList(lastSceneState?.endPoses)
     : normalizePoseList(continuityLock?.characterPositionLocks);
   const continuity = analyzeClipContinuity({
+    resetOnNewLocation: true,
     lockedCharacters: allKnownCharacters,
-    initialPoses,
+    initialPoses: samePlaceAs(episodeUnits[0]?.location || '', prevLoc) ? initialPoses : [],
     clips: episodeUnits.map(u => ({
       text: [...u.actionBeats].join(' ') || u.actionText,
       speakers: u.dialogues.filter(d => !d.offScreen).map(d => d.speaker),
@@ -918,7 +925,9 @@ export function generateEpisodeLocally({
       dialogue: d.dialogue,
       ...(d.offScreen ? { offScreen: true } : {})
     }));
-    const sceneText = cleanAction + ' ' + dialogues.map(d => d.speaker + ' ' + d.dialogue).join(' ');
+    // Who is in the scene: named in the action, or speaking. A name said INSIDE a line of dialogue
+    // ("…เป็นของคุณมะลิครับ") does not put that person in the shot.
+    const sceneText = cleanAction + ' ' + dialogues.map(d => d.speaker).join(' ');
     // Ordered by first appearance in the scene so the scene's subject becomes the main character
     const mentioned = allKnownCharacters
       .filter(n => sceneText.includes(n))
@@ -939,11 +948,12 @@ export function generateEpisodeLocally({
       sceneActiveChars,
       location,
       timeOfDay,
-      prevSceneEndState: prevEnd,
+      prevSceneEndState: samePlaceAs(location, prevLoc) ? prevEnd : '',
       endsWithDialogue: unit.endsWithDialogue,
       actionBeats: unit.actionBeats.map(a => a.replace(ENDING_MARKER_GLOBAL, '').trim())
     });
     prevEnd = endState;
+    prevLoc = location;
 
     const actionDescription = `[ช็อตความยาวประมาณ ${clipDurationSeconds} วินาที] ${cleanAction}${pos ? ` (ล็อคตำแหน่ง: ${pos})` : ''}`;
     const charLockPart = characterLocks.length > 0 ? ` Character Lock: ${characterLocks.map(c => c.lock).join(' | ')} — identical face, hair and outfit in every clip.` : '';
@@ -1123,7 +1133,10 @@ export function applyEpisodeLocks(scenes: any[], params: {
   });
   // Story Lock: the first new scene starts from the previous episode's end state
   const prevEndAction = String(params.lastSceneState?.endAction || params.lastSceneState?.endState || '').trim();
-  if (fixed.length > 0 && prevEndAction && !String(fixed[0].startAction || '').trim()) fixed[0] = { ...fixed[0], startAction: prevEndAction };
+  const prevLocation = String(params.lastSceneState?.location || '').replace(/\s+/g, '');
+  const firstLocation = String(fixed[0]?.location || '').replace(/\s+/g, '');
+  const sameStartPlace = !prevLocation || !firstLocation || firstLocation === UNSPECIFIED || prevLocation.includes(firstLocation) || firstLocation.includes(prevLocation);
+  if (fixed.length > 0 && prevEndAction && sameStartPlace && !String(fixed[0].startAction || '').trim()) fixed[0] = { ...fixed[0], startAction: prevEndAction };
   const storyWarnings = checkStoryRepeats(fixed, params.existingScenes || []);
 
   const known = Array.from(new Set([
@@ -1135,8 +1148,9 @@ export function applyEpisodeLocks(scenes: any[], params: {
     ? normalizePoseList(params.lastSceneState?.endPoses)
     : normalizePoseList(params.continuityLock?.characterPositionLocks);
   const continuity = analyzeClipContinuity({
+    resetOnNewLocation: true,
     lockedCharacters: known,
-    initialPoses,
+    initialPoses: sameStartPlace ? initialPoses : [],
     clips: fixed.map((sc: any) => ({
       text: String(sc.actionDescription || '').replace(/^\[[^\]]*\]\s*/, ''),
       speakers: (sc.dialogues || []).filter((d: any) => !d.offScreen).map((d: any) => d.speaker),

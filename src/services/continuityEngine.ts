@@ -238,6 +238,8 @@ export function analyzeClipContinuity(params: {
   clips: ClipContinuityInput[];
   lockedCharacters: string[];
   initialPoses?: CharacterPoseState[];
+  /** Clip locations are real scene places (from scene headings): a new place starts with nobody carried over */
+  resetOnNewLocation?: boolean;
 }): ContinuityAnalysis {
   const names = Array.from(new Set(expandCombinedCharacterNames(params.lockedCharacters || []).map(n => (n || '').trim()).filter(n => n.length >= 2)))
     .sort((a, b) => b.length - a.length);
@@ -252,10 +254,19 @@ export function analyzeClipContinuity(params: {
   const warnings: ContinuityWarning[] = [];
   const out: ClipContinuityState[] = [];
 
+  let prevLocation = '';
   params.clips.forEach((clip, idx) => {
     const clipNumber = idx + 1;
     const text = clip.text || '';
     const speakers = (clip.speakers || []).filter(Boolean);
+    // New place = new set-up: nobody and no position is carried over from the previous place
+    // (people from the old room were listed in every later clip, with their old positions)
+    const here = String(clip.location || '').replace(/\s+/g, '');
+    if (params.resetOnNewLocation && idx > 0 && here && prevLocation && here !== prevLocation && !here.includes(prevLocation) && !prevLocation.includes(here)) {
+      present = [];
+      state.clear();
+    }
+    if (here) prevLocation = here;
     const carried = [...present];
     const startMap = new Map<string, CharacterPoseState>();
     carried.forEach(n => startMap.set(n, { ...(state.get(n) || { name: n, posture: 'unknown', place: '' }) }));
