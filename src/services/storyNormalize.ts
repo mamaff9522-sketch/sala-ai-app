@@ -7,6 +7,9 @@
  *   ตัวละคร / คุณหญิงมณี แม่สามีผู้ร่ำรวย…    → - คุณหญิงมณี — แม่สามีผู้ร่ำรวย…  (list without dashes was an action)
  *   ฉาก: คฤหาสน์หรู กลางคืน ฝนตกหนัก        → ฉากที่ 1 — คฤหาสน์หรู / กลางคืน ฝนตกหนัก
  *                                              (heading without a number was not a scene; place and time split)
+ *   คลิป 4 — น้องน้ำสวนกลับ                   → (removed: a clip title, was written into the video as an action)
+ *   ฉาก: ต่อเนื่องจากคลิปที่ 3 ตำแหน่งเดิม       → ฉากที่ 2 — ห้องโถงบ้าน / กลางวัน   (same place and time as before,
+ *                                              was taken as the NAME of a new place)
  */
 
 const TIME_WORDS = [
@@ -20,6 +23,10 @@ const NUMBERED_HEADING_RE = /^[ \t#*_\[【(]*(?:ฉากที่|ฉาก|sce
 const UNNUMBERED_HEADING_RE = /^[ \t#*_\[【(]*(?:ฉาก|scene)\s*[:：\-–—]\s*(.+?)[\]】)*_]*$/i;
 const TITLE_RE = /^(?:ละครเรื่อง|ละคร|นิยายเรื่อง|ซีรีส์เรื่อง|เรื่อง)\s*[:：]?\s*[“"«「]\s*(.+?)\s*[”"»」]\s*$/;
 const EPISODE_RE = /^ตอนที่\s*\d+\s*(?:[:：.\-–—]\s*.*)?$/;
+/** "คลิป 4 — น้องน้ำสวนกลับ", "คลิปที่ 2: …" — a label for the writer, not something that happens */
+const CLIP_LABEL_RE = /^[ \t#*_\[【(]*(?:คลิป(?:ที่)?|clip)\s*\d+\s*(?:[:：.\-–—]\s*.*)?$/i;
+/** Heading text that means "same place as before" rather than naming a place */
+const SAME_PLACE_RE = /^(?:ต่อเนื่อง|ต่อจาก|ฉากเดิม|สถานที่เดิม|ที่เดิม|same (?:place|location)|continu)/i;
 const CHAR_HEADER_RE = /^(?:ตัวละคร(?:หลัก)?|รายชื่อตัวละคร|นักแสดง|characters?)\s*[:：]?\s*$/i;
 
 /** "คฤหาสน์หรู กลางคืน ฝนตกหนัก" → "คฤหาสน์หรู / กลางคืน ฝนตกหนัก" (only when there is no "/" yet). */
@@ -48,12 +55,20 @@ export function normalizeStoryScript(raw: string): string {
   let sceneNo = 0;
   let inChars = false;
   let charEntries = 0;
+  let lastPlace = '';
   for (const original of lines) {
     const t = original.trim();
+    if (CLIP_LABEL_RE.test(t)) continue;
     const numbered = t.match(NUMBERED_HEADING_RE);
     if (numbered) {
       sceneNo = Math.max(sceneNo, Number(numbered[1]) || 0);
       inChars = false;
+      const rest = t.replace(NUMBERED_HEADING_RE, '').replace(/^[\s:：.\-–—]+/, '').replace(/[\]】)*_]+$/, '').trim();
+      if (rest && SAME_PLACE_RE.test(rest) && lastPlace) {
+        out.push(`ฉากที่ ${numbered[1]} — ${lastPlace}`);
+        continue;
+      }
+      if (rest && !SAME_PLACE_RE.test(rest)) lastPlace = rest;
       out.push(original);
       continue;
     }
@@ -61,7 +76,10 @@ export function normalizeStoryScript(raw: string): string {
     if (unnumbered) {
       inChars = false;
       sceneNo += 1;
-      out.push(`ฉากที่ ${sceneNo} — ${splitPlaceAndTime(unnumbered[1])}`);
+      const text = unnumbered[1].trim();
+      const place = SAME_PLACE_RE.test(text) && lastPlace ? lastPlace : splitPlaceAndTime(text);
+      if (!SAME_PLACE_RE.test(text)) lastPlace = place;
+      out.push(`ฉากที่ ${sceneNo} — ${place}`);
       continue;
     }
     const title = t.match(TITLE_RE);

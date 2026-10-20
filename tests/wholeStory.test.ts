@@ -23,7 +23,7 @@ const fakeServer = (failFirst: boolean) => {
   };
 };
 
-for (const file of ['faiklaen-story.txt', 'avatar-story.txt', 't67-story.txt']) {
+for (const file of ['faiklaen-story.txt', 'avatar-story.txt', 't67-story.txt', 'nongnam-clips-story.txt']) {
   await check(`${file}: whole story, every line in exactly one Meta AI prompt`, async () => {
     const story = rd(file);
     const r = await runWholeStory(story, { aspectRatio: '9:16', clipSeconds: 8 }, fakeServer(true));
@@ -84,6 +84,17 @@ await check('poses: "เผชิญหน้ากับ…" is not a place, pl
 await check('character note: whole parts only, nothing "not visible"', () => {
   const n = characterNote({ appearance: 'ประเภท: reptile (กิ้งก่า), ผิว/เกล็ด: เกล็ดสีเขียว มีจุดดำ, รูปหน้า: หัวกิ้งก่า ตาโต, ทรงผม: ไม่มี (ไม่เห็นในภาพ)', outfit: 'ท่อนบน: ไม่เห็นชัดในภาพ • ท่อนล่าง: ไม่เห็นในภาพ' });
   assert.equal(n, 'ประเภท: reptile (กิ้งก่า), ผิว/เกล็ด: เกล็ดสีเขียว มีจุดดำ, รูปหน้า: หัวกิ้งก่า ตาโต');
+});
+
+await check('"คลิป 4 — title" is not an action; "ฉาก: ต่อเนื่อง…" keeps the place and the pose', async () => {
+  const story = rd('nongnam-clips-story.txt');
+  const r = await runWholeStory(story, { offline: true, clipSeconds: 10 }, fakeServer(false));
+  const meta = formatAllClipsForMetaAi(r.clips as any, metaOptionsForStory(story, [], characterNote));
+  assert.ok(!meta.includes('น้องน้ำสวนกลับ') && !meta.includes('แพรวาเข้าข้างแม่สามี'), 'clip titles never reach the video');
+  assert.ok(!meta.includes('ต่อเนื่องจากคลิปที่'), 'not used as a place name');
+  assert.ok(!meta.includes('เปลี่ยนสถานที่ ท่าเริ่มคลิป'), 'same place, so no "new place"');
+  assert.equal((meta.match(/สถานที่ ห้องโถงบ้าน เวลา กลางวัน/g) || []).length, r.clips.length);
+  assert.ok(!/กำลัง\S{0,6}กำลัง/.test(meta), 'no doubled "กำลัง"');
 });
 
 console.log(`\nwhole story: ${passed} passed`);

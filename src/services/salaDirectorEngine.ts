@@ -1749,6 +1749,10 @@ export function formatActionAsHappeningEvent(actionText: string): string {
 
   // ขจัด "กำลัง" ที่ซ้ำซ้อน เช่น กำลังกำลัง
   clean = clean.replace(/(?:กำลัง)+/g, 'กำลัง');
+  // one "กำลัง" per verb chain: "กำลังหันมากำลังมอง" -> "กำลังหันมามอง", "กำลังยืนกำลังมอง" -> "กำลังยืนมอง"
+  for (let i = 0; i < 3; i++) {
+    clean = clean.replace(/กำลัง(หันมา|หันไป|เดินไป|เดินมา|เดินเข้า|เดิน|วิ่งไป|วิ่งมา|วิ่ง|ยืน|นั่ง|ก้มลง|ก้ม|ก้าวเข้า|ก้าวไป|ก้าวมา)กำลัง/g, 'กำลัง$1');
+  }
 
   return clean.trim();
 }

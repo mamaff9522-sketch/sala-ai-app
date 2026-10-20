@@ -228,9 +228,22 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
     prompt = lockCut.firstIndex >= 0 ? insertBlock(prompt, lockCut.firstIndex, block) : `${block}. ${prompt}`;
   }
 
+  // What already happened in the previous clip of the same place (its start is carried by the pose lock)
+  const squashed = (t: string) => String(t || '').replace(/กำลัง/g, '').replace(/[\s"'“”‘’.,!?…:;()\[\]\-–—~]/g, '');
+  const prevSamePlace = !!opts.previous && (() => {
+    const a = ownPlace(clip).location || opts.inheritedPlace?.location || '';
+    const b = opts.previous!.place.location;
+    return !a || !b || samePlace(a, b);
+  })();
+  const prevText = prevSamePlace ? squashed(opts.previous!.clip.generatedPrompt || '') : '';
+
   // Internal continuity blocks and repeats of the core action
   prompt = removeSections(prompt, s => {
     if (DROP_LABELS.has(s.label)) return true;
+    if (s.label === 'Starting moment' && prevText) {
+      const b = squashed(sectionBody(s.text, s.label));
+      if (b.length >= 6 && prevText.includes(b)) return true;
+    }
     if ((s.label === 'Starting moment' || s.label === 'Ending momentum') && coreBody) {
       return coreBody.includes(sectionBody(s.text, s.label));
     }
@@ -259,7 +272,7 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   const carried = continuous && prev ? posesText(prev.clip.endPoses, true) : '';
   const own = (clip.startPoses || []).map(p => poseText(p, !p.entering)).filter(Boolean).join(', ');
   const end = posesText(clip.endPoses, true);
-  if (carried) lockLines.push(`ท่าเริ่มคลิป (ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ): ${carried}`);
+  if (carried) lockLines.push(`ท่าเริ่มคลิป (ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ ห้ามเล่นเหตุการณ์ของคลิปก่อนซ้ำ): ${carried}`);
   else if (own) lockLines.push(prev && !continuous ? `เปลี่ยนสถานที่ ท่าเริ่มคลิป: ${own}` : `ท่าเริ่มคลิป: ${own}`);
   if (end || clean(clip.endAction)) {
     lockLines.push(`ท่าจบคลิป (ค้างไว้ส่งต่อคลิปถัดไป): ${end || clean(clip.endAction)}`);

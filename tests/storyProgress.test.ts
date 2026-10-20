@@ -135,7 +135,7 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
     assert.ok(!/ท่าจบคลิป[^.]*เดิน/.test(b), 'no one is still walking at the hand-off');
   }
   const endOf = (b: string) => (b.match(/ท่าจบคลิป \(ค้างไว้ส่งต่อคลิปถัดไป\): ([^.]*)\./) || [])[1];
-  const startOf = (b: string) => (b.match(/ท่าเริ่มคลิป \(ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ\): ([^.]*)\./) || [])[1];
+  const startOf = (b: string) => (b.match(/ท่าเริ่มคลิป \(ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ[^)]*\): ([^.]*)\./) || [])[1];
   for (let i = 1; i < blocks.length; i++) assert.equal(startOf(blocks[i]), endOf(blocks[i - 1]), `clip ${i + 1} starts where clip ${i} ends`);
   console.log('  ✔ Meta AI prompts lock the set and hand the end pose to the next clip');
   // A clip at a new place starts fresh: nothing carried from the previous clip
