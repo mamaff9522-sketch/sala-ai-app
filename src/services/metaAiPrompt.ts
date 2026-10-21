@@ -189,6 +189,74 @@ export function characterNote(c: any): string {
   return [body, outfit ? `ชุด: ${outfit}` : ''].filter(Boolean).join(', ');
 }
 
+/** Who is in the clip: photo numbers, the others, and what must never change about them. */
+function identityBlock(names: string[], opts: MetaAiFormatOptions, kind: 'video' | 'image'): string {
+  const order0 = photoNumbers(withPhotoIn(names, opts), opts);
+  const photoNames = withPhotoIn(names, opts).sort((a, b) => (order0.get(a) || 0) - (order0.get(b) || 0));
+  const order = order0;
+  const others = names.filter(n => !photoNames.includes(n));
+  const notes = names
+    .map(n => (opts.characterNotes?.[n] ? `${n}: ${opts.characterNotes[n]}` : ''))
+    .filter(Boolean).join(' | ');
+  const parts: string[] = [];
+  if (photoNames.length) {
+    parts.push(`ตัวละคร (ใช้รูปที่อัปโหลดเป็นต้นแบบ): ${photoNames.map(n => `รูปที่ ${order.get(n)} = ${n}`).join(', ')} — ใบหน้า ทรงผม รูปร่าง และชุดต้องเหมือนในรูป${kind === 'video' ? 'ทุกช็อต เสียงพูดของแต่ละคนเหมือนเดิมทุกคลิป' : ''}`);
+  }
+  if (others.length) {
+    parts.push(kind === 'video'
+      ? `ตัวละคร${photoNames.length ? 'อื่น' : ''}ในคลิป: ${others.join(', ')} — หน้าตา ชุด และเสียงพูดของแต่ละคนต้องเหมือนเดิมทุกคลิป`
+      : `ตัวละคร${photoNames.length ? 'อื่น' : ''}ในภาพ: ${others.join(', ')} — หน้าตาและชุดเหมือนเดิมทุกภาพ`);
+  }
+  // Animal characters drift into people most: say so explicitly for them
+  const animal = /anthropomorphic|animal|reptile|gecko|lizard|buffalo|creature|สัตว์|เกล็ด|ตุ๊กแก|ตัวเหี้ย|กิ้งก่า|ควาย/i.test(notes);
+  if (notes) parts.push(`ลักษณะที่ห้ามเปลี่ยน (${animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}): ${notes}`);
+  return parts.join('. ');
+}
+
+/**
+ * Still-image prompt for one clip (made first, then turned into the clip's video): same place, time,
+ * light, photo numbers and identity notes as the video prompt; the moment the clip is about with the
+ * characters in their starting positions; no dialogue, mouths closed (it is the clip's first frame).
+ */
+export function formatClipImagePrompt(clip: ClipForMeta, opts: MetaAiFormatOptions = {}): string {
+  const prompt = String(clip.generatedPrompt || '').replace(/ผูกพรอมต์นี้กับฉากที่[^.]*\.\s*/g, '');
+  const sections = findSections(prompt);
+  const body = (label: string) => {
+    const sec = sections.find(x => x.label === label);
+    return sec ? sectionBody(sec.text, label).replace(/[.;\s]+$/, '') : '';
+  };
+  const own = ownPlace(clip);
+  const place = {
+    location: own.location || opts.inheritedPlace?.location || '',
+    timeOfDay: own.timeOfDay || opts.inheritedPlace?.timeOfDay || ''
+  };
+  const prev = opts.previous;
+  const continuous = !!prev && (!place.location || !prev.place.location || samePlace(place.location, prev.place.location));
+  const poses = (continuous && prev ? posesText(prev.clip.endPoses, true) : '')
+    || (clip.startPoses || []).map(p => poseText(p, true)).filter(Boolean).join(', ');
+  const cutAtNextLabel = (t: string) => t.replace(/\s*(?:Continuity Flow|Starting moment|Ending momentum|Dialogue|Continuity Handoff|Stance\/Position Lock|Spatial Position Lock)\s*:.*$/, '').replace(/[.;\s]+$/, '');
+  const action = cutAtNextLabel([body('Core action'), body('Scene Action'), body('Script action')].filter(Boolean).join(' ')
+    || clean(clip.startAction));
+  const lightMatch = prompt.match(/Lighting Lock:\s*([^.]*)/);
+  const lighting = (lightMatch?.[1] || clean(clip.lighting) || clean(clip.continuityLock?.lighting))
+    .replace(/\s*\(identical set[^)]*\)?/, '').trim();
+  const names = charactersInClip(clip, opts.knownCharacters || []);
+  const parts = [
+    `ภาพนิ่ง${opts.aspectRatio ? ` สัดส่วน ${opts.aspectRatio}` : ''} ภาพถ่ายสมจริงแบบฉากในภาพยนตร์ ไม่ใช่ภาพวาดหรือการ์ตูน`,
+    place.location || place.timeOfDay
+      ? `สถานที่: ${[place.location, place.timeOfDay ? `เวลา ${place.timeOfDay}` : ''].filter(Boolean).join(' ')} — ฉาก เครื่องเรือน และแสงต้องเหมือนกันทุกภาพของสถานที่นี้`
+      : '',
+    lighting ? `แสง: ${lighting}` : '',
+    names.length ? identityBlock(names, opts, 'image') : '',
+    action ? `เหตุการณ์ในภาพ: ${action}` : '',
+    poses ? `ตำแหน่งและท่าทาง: ${poses}` : '',
+    names.length ? 'สีหน้าและอารมณ์ของตัวละครตรงกับเหตุการณ์ ทุกคนปิดปาก ยังไม่พูด' : '',
+    'ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำในภาพ'
+  ];
+  return tidy(parts.filter(Boolean).map(x => x.replace(/[.\s]+$/, '')).join('. ') + '.')
+    .replace(/(?:เวลา|สถานที่)\s*ไม่ระบุ(?:จากต้นฉบับ)?[,.]?\s*/g, '');
+}
+
 function sectionBody(text: string, label: string): string {
   return text.slice(label.length + 1).trim().replace(/[.\s]+$/, '');
 }
@@ -208,23 +276,7 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   const lockCut = removeSections(prompt, s => s.label === 'Character Lock');
   prompt = lockCut.prompt;
   if (names.length > 0) {
-    const photoNames = withPhotoIn(names, opts);
-    const order = photoNumbers(photoNames, opts);
-    const others = names.filter(n => !photoNames.includes(n));
-    const notes = names
-      .map(n => (opts.characterNotes?.[n] ? `${n}: ${opts.characterNotes[n]}` : ''))
-      .filter(Boolean).join(' | ');
-    const parts: string[] = [];
-    if (photoNames.length) {
-      parts.push(`ตัวละคร (ใช้รูปที่อัปโหลดเป็นต้นแบบ): ${photoNames.map(n => `รูปที่ ${order.get(n)} = ${n}`).join(', ')} — ใบหน้า ทรงผม รูปร่าง และชุดต้องเหมือนในรูปทุกช็อต เสียงพูดของแต่ละคนเหมือนเดิมทุกคลิป`);
-    }
-    if (others.length) {
-      parts.push(`ตัวละคร${photoNames.length ? 'อื่น' : ''}ในคลิป: ${others.join(', ')} — หน้าตา ชุด และเสียงพูดของแต่ละคนต้องเหมือนเดิมทุกคลิป`);
-    }
-    // Animal characters drift into people most: say so explicitly for them
-    const animal = /anthropomorphic|animal|reptile|gecko|lizard|buffalo|creature|สัตว์|เกล็ด|ตุ๊กแก|ตัวเหี้ย|กิ้งก่า|ควาย/i.test(notes);
-    if (notes) parts.push(`ลักษณะที่ห้ามเปลี่ยน (${animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}): ${notes}`);
-    const block = parts.join('. ');
+    const block = identityBlock(names, opts, 'video');
     prompt = lockCut.firstIndex >= 0 ? insertBlock(prompt, lockCut.firstIndex, block) : `${block}. ${prompt}`;
   }
 

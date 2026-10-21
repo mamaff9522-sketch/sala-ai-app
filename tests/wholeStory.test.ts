@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { runWholeStory } from '../src/services/wholeStoryRunner';
 import { offlineContinuation, isLineCovered, metaOptionsForStory } from '../src/services/storyProgress';
 import { parseStoryStructure } from '../src/services/storyEpisodeEngine';
-import { formatAllClipsForMetaAi, formatClipForMetaAi, characterNote } from '../src/services/metaAiPrompt';
+import { formatAllClipsForMetaAi, formatClipForMetaAi, formatClipImagePrompt, metaContextFor, characterNote } from '../src/services/metaAiPrompt';
 import { analyzeClipContinuity } from '../src/services/continuityEngine';
 import { isClipByClipScript } from '../src/services/storyNormalize';
 
@@ -143,6 +143,27 @@ await check('ไฟแค้นซ่อนรัก 225 clips: the writer\'s cl
   assert.ok(clips[0].includes('เวลา กลางวัน'), 'day time read from "วันที่ 1 ช่วงกลางวัน"');
   assert.ok(clips[0].includes('เฉพาะคุณหญิงมณีที่ขยับปากพูด'), 'only the speaker moves their lips');
   assert.ok(/ตัวละครในคลิป: [^—]*ทนายกฤต/.test(clips[32]), '"กฤต" in an action is ทนายกฤต');
+});
+
+await check('image prompt per clip: same place, time, light and photos as the video; no dialogue; mouths closed', async () => {
+  const story = rd('faiklaen-225-clips.txt');
+  const r = await runWholeStory(story, { offline: true, clipSeconds: 8, maxSteps: 400 }, fakeServer(false));
+  const lib = [{ name: 'คุณหญิงมณี', appearance: 'หญิงไทยวัย 60', referenceImageUrl: '/u/a.png' }, { name: 'น้ำฟ้า', appearance: 'หญิงสาววัย 25', referenceImageUrl: '/u/b.png' }];
+  const opts = { ...metaOptionsForStory(story, lib, characterNote), aspectRatio: '9:16' };
+  const lines = Array.from(story.matchAll(/^บทพูด \[[^\]]+\]: “(.+)”$/gm)).map(m => m[1]);
+  r.clips.forEach((c, i) => {
+    const ctx = { ...opts, ...metaContextFor(r.clips as any, i) };
+    const img = formatClipImagePrompt(c as any, ctx);
+    const vid = formatClipForMetaAi(c as any, ctx);
+    assert.ok(img.startsWith('ภาพนิ่ง สัดส่วน 9:16'), img.slice(0, 60));
+    const placeOf = (t: string) => t.match(/สถานที่:? (\S+)/)?.[1];
+    assert.equal(placeOf(img), placeOf(vid), `clip ${i + 1} same place`);
+    assert.ok(/แสง: \S/.test(img), `clip ${i + 1} light`);
+    assert.ok(!/speaks|Dialogue|Continuity Flow|Starting moment|Ending momentum|:\s*\./.test(img), `clip ${i + 1}: ${img}`);
+    for (const l of lines) assert.ok(!img.includes(l.slice(0, 20)), `clip ${i + 1} has no dialogue`);
+    for (const m of vid.matchAll(/รูปที่ (\d) = (\S+)/g)) assert.ok(img.includes(`รูปที่ ${m[1]} = ${m[2]}`), `clip ${i + 1} photo ${m[1]}`);
+    if (/ตัวละคร/.test(img)) assert.ok(img.includes('ทุกคนปิดปาก'));
+  });
 });
 
 console.log(`\nwhole story: ${passed} passed`);

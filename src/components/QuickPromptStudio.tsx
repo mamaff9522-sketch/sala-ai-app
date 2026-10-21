@@ -5,7 +5,7 @@ import { api } from '../services/api';
 import { runWholeStory, type StoryClip } from '../services/wholeStoryRunner';
 import { metaOptionsForStory, offlineContinuation } from '../services/storyProgress';
 import { isClipByClipScript } from '../services/storyNormalize';
-import { formatClipForMetaAi, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
+import { formatClipForMetaAi, formatClipImagePrompt, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
 import { toCharacterLockPayload } from '../services/characterAppearance';
 
 /**
@@ -59,6 +59,11 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
     () => clips.map((c, i) => formatClipForMetaAi(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) })),
     [clips, metaOpts]
   );
+  // Box 1 of every card: a still image that matches the clip (made first, then animated)
+  const imagePrompts = useMemo(
+    () => clips.map((c, i) => formatClipImagePrompt(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) })),
+    [clips, metaOpts]
+  );
   const photoLine = (c: StoryClip) => {
     const names = charactersInClip(c as any, metaOpts.knownCharacters).filter(n => metaOpts.withPhoto.includes(n));
     const nums = photoNumbers(names, metaOpts);
@@ -83,7 +88,7 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
   const copyAll = () => {
     const all = clips.map((c, i) => {
       const photos = photoLine(c);
-      return `=== คลิป ${i + 1}/${clips.length} ===${photos ? `\n(อัปโหลดรูป: ${photos})` : ''}\n${prompts[i]}`;
+      return `=== คลิป ${i + 1}/${clips.length} ===${photos ? `\n(อัปโหลดรูป: ${photos})` : ''}\n[พรอมต์สร้างภาพ]\n${imagePrompts[i]}\n[พรอมต์วิดีโอ]\n${prompts[i]}`;
     }).join('\n\n');
     copy(all, 'all');
   };
@@ -234,6 +239,17 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                     </button>
                   </div>
                   {photos && <div className="mt-1.5 text-[12px] text-cyan-300">อัปโหลดรูปใน Meta AI: {photos}</div>}
+                  <div className="mt-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[12px] font-semibold text-amber-300">1. พรอมต์สร้างภาพ</div>
+                      <button type="button" onClick={() => copy(imagePrompts[i], `img${i}`)}
+                        className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-amber-500/50 bg-slate-900 px-2.5 py-1 text-[12px]">
+                        {copied === `img${i}` ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> คัดลอกแล้ว</> : <><Copy className="w-3.5 h-3.5" /> คัดลอกภาพ</>}
+                      </button>
+                    </div>
+                    <p className="mt-1 text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words line-clamp-3">{imagePrompts[i]}</p>
+                  </div>
+                  <div className="mt-2 text-[12px] font-semibold text-indigo-300">2. พรอมต์วิดีโอ <span className="font-normal text-slate-400">(ปุ่มคัดลอกด้านบน)</span></div>
                   {c.dialogues.length > 0 && (
                     <div className="mt-2 space-y-0.5 text-[13px] text-slate-200">
                       {c.dialogues.map((d, j) => <div key={j}><span className="text-slate-400">{d.speaker}:</span> “{d.line}”</div>)}
