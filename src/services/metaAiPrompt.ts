@@ -60,6 +60,16 @@ export interface MetaAiFormatOptions {
   inheritedPlace?: { location: string; timeOfDay: string };
   /** The clip before this one, with ITS place: same place = continuous (start pose = its end pose) */
   previous?: { clip: ClipForMeta; place: { location: string; timeOfDay: string } };
+  /** This clip's camera (planned over the whole list, see planCameras) */
+  camera?: CameraShot;
+}
+
+export interface CameraShot {
+  kind: 'script' | 'wide' | 'medium' | 'ots' | 'close' | 'two' | 'insert';
+  /** Shot size / angle / who is framed and where they stand on screen */
+  framing: string;
+  /** One camera movement for the whole clip */
+  movement: string;
 }
 
 const samePlace = (a: string, b: string) => {
@@ -67,12 +77,144 @@ const samePlace = (a: string, b: string) => {
   return !!n(a) && !!n(b) && (n(a) === n(b) || n(a).includes(n(b)) || n(b).includes(n(a)));
 };
 
-/** Options for clip i of a list: carried place and the previous clip (for the pose hand-off). */
-export function metaContextFor(clips: ClipForMeta[], index: number): Pick<MetaAiFormatOptions, 'inheritedPlace' | 'previous'> {
+/** Options for clip i of a list: carried place, the previous clip (for the pose hand-off) and its camera. */
+export function metaContextFor(clips: ClipForMeta[], index: number): Pick<MetaAiFormatOptions, 'inheritedPlace' | 'previous' | 'camera'> {
   return {
     inheritedPlace: sceneOfClip(clips, index),
-    previous: index > 0 ? { clip: clips[index - 1], place: sceneOfClip(clips, index - 1) } : undefined
+    previous: index > 0 ? { clip: clips[index - 1], place: sceneOfClip(clips, index - 1) } : undefined,
+    camera: planCameras(clips)[index]
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Camera: every clip used to say only "35mm lens, film still", so Meta AI picked the same angle
+// every time. Each clip now gets a shot chosen from what happens in it, never the same shot size
+// as the clip before, with each character kept on their side of the frame while the place stays.
+// ---------------------------------------------------------------------------------------------
+
+/** "[มุมกล้อง …]" written by the user in the script (see storyNormalize) */
+const SCRIPT_CAMERA_RE = /\[มุมกล้อง\s+([^\]]+)\]/;
+/** The script already says where the camera looks ("กล้องจับสีหน้าคุณหญิงมณี", "ภาพใกล้จดหมาย") */
+const SCRIPT_CAMERA_WORDS_RE = /(?:^|\s)((?:กล้อง|ภาพใกล้|ภาพกว้าง|โคลสอัพ|close-?up|wide shot)[^\s]*(?:\s+(?:ๆ|ค่อย|ช้า|จาก|ไป|มา|ที่)[^\s]*)*)/i;
+const PROP_RE = /(แฟ้ม|เอกสาร|จดหมาย|กุญแจ|โทรศัพท์|ซอง|ปากกา|กรอบรูป|รูปถ่าย|ลายเซ็น|กระเป๋า|แหวน|กระดาษ|โฉนด|พินัยกรรม)/;
+const MOVING_RE = /(?:เดิน|ก้าว|วิ่ง|เข้ามา|ออกไป|ขับ|walks?|runs?)/;
+const camCache = new WeakMap<object, CameraShot[]>();
+
+const LABEL_CUT_RE = /\s*(?:Continuity Flow|Starting moment|Ending momentum|Dialogue|Continuity Handoff|Stance\/Position Lock|Spatial Position Lock|Location Lock|Lighting Lock)\s*:.*$/;
+function clipAction(clip: ClipForMeta): string {
+  const prompt = String(clip.generatedPrompt || '');
+  const secs = findSections(prompt);
+  const parts = ['Core action', 'Scene Action', 'Script action']
+    .map(l => secs.find(x => x.label === l))
+    .filter(Boolean)
+    .map(x => sectionBody(x!.text, x!.label).replace(LABEL_CUT_RE, '').replace(/[.;\s]+$/, ''));
+  return parts.join(' ') || clean(clip.startAction);
+}
+
+export function planCameras(clips: ClipForMeta[]): CameraShot[] {
+  const hit = camCache.get(clips);
+  if (hit && hit.length === clips.length) return hit;
+  const plan: CameraShot[] = [];
+  let sides: string[] = [];
+  let screen = new Map<string, string>();
+  let prevPlace = '';
+  clips.forEach((clip, i) => {
+    const place = sceneOfClip(clips, i).location;
+    const newPlace = i === 0 || !samePlace(place, prevPlace);
+    if (newPlace) { sides = []; screen = new Map(); }
+    if (place) prevPlace = place;
+    const names = charactersInClip(clip, []);
+    names.forEach(n => { if (!sides.includes(n)) sides.push(n); });
+    // Each character keeps the side of the frame they were first shown on, while the place stays
+    // (180-degree rule: no jumping from left to right between clips)
+    const opposite = (x: string) => (x === 'ซ้ายจอ' ? 'ขวาจอ' : 'ซ้ายจอ');
+    const sidesText = (who: string[]) => {
+      const list = who.filter(Boolean).sort((x, y) => sides.indexOf(x) - sides.indexOf(y)).slice(0, 4);
+      if (list.length < 2) return '';
+      if (list.length === 2) {
+        const [a, b] = list;
+        let sa = screen.get(a); let sb = screen.get(b);
+        // both already on the same side (three or more people in the room): say nothing rather than move one
+        if (sa && sb && sa === sb) return '';
+        {
+          if (!sa && !sb) { sa = 'ซ้ายจอ'; sb = 'ขวาจอ'; }
+          else if (!sa) sa = opposite(sb!);
+          else if (!sb) sb = opposite(sa);
+          screen.set(a, sa!); screen.set(b, sb!);
+        }
+        return sa === 'ซ้ายจอ' ? ` (${a}อยู่ซ้ายจอ, ${b}อยู่ขวาจอ)` : ` (${b}อยู่ซ้ายจอ, ${a}อยู่ขวาจอ)`;
+      }
+      const used = new Set(list.map(n => screen.get(n)).filter(Boolean));
+      return ` (${list.map(n => {
+        let sd = screen.get(n);
+        if (!sd) {
+          sd = !used.has('ซ้ายจอ') ? 'ซ้ายจอ' : !used.has('ขวาจอ') ? 'ขวาจอ' : 'กลางจอ';
+          used.add(sd);
+          if (sd !== 'กลางจอ') screen.set(n, sd);
+        }
+        return `${n}อยู่${sd}`;
+      }).join(', ')})`;
+    };
+    const action = clipAction(clip);
+    const lines = (clip.dialogues || []).filter(d => String(d?.line || '').trim() && !isEmptyLine(d?.line));
+    const speaker = String(lines[0]?.speaker || '').trim();
+    const subject = [...names].sort((a, b) => {
+      const ia = action.indexOf(a); const ib = action.indexOf(b);
+      return (ia < 0 ? 1e9 : ia) - (ib < 0 ? 1e9 : ib);
+    })[0] || speaker || '';
+    const prev = plan[i - 1];
+    const moving = MOVING_RE.test(action);
+    const emotional = lines.some(d => /[!！]/.test(String(d.line)));
+    const shot = (kind: CameraShot['kind'], framing: string, movement: string): CameraShot => ({ kind, framing, movement });
+    const scriptCam = String(clip.generatedPrompt || '').match(SCRIPT_CAMERA_RE)?.[1]?.trim()
+      || action.match(SCRIPT_CAMERA_WORDS_RE)?.[1]?.trim();
+    let cam: CameraShot;
+    if (scriptCam) {
+      cam = shot('script', `ตามบท: ${scriptCam}`, /ดัน|ถอย|เลื่อน|แพน|ตาม|ซูม|push|pull|pan|dolly/i.test(scriptCam) ? '' : 'กล้องนิ่ง');
+    } else if (newPlace) {
+      cam = names.length >= 2
+        ? shot('wide', `ภาพกว้าง เห็นทั้ง${place || 'สถานที่'}และทุกคนในฉาก${sidesText(names)}`, 'กล้องค่อยๆ เลื่อนเข้าช้าๆ')
+        : shot('medium', `ภาพครึ่งตัว ${subject} เห็นพื้นหลังของ${place || 'สถานที่'}`, 'กล้องค่อยๆ เลื่อนเข้าช้าๆ');
+    } else if (lines.length === 0) {
+      const prop = action.match(PROP_RE)?.[1];
+      if (prop && prev?.kind !== 'insert') {
+        cam = shot('insert', `ภาพใกล้${prop}${subject ? `ในมือ${subject}` : ''} แล้วเห็นสีหน้า${subject || 'ตัวละคร'}`, 'กล้องนิ่ง');
+      } else if (prev?.kind !== 'close' && subject) {
+        cam = shot('close', `ภาพใกล้หน้า ${subject} เห็นอารมณ์ชัด`, 'กล้องค่อยๆ ดันเข้าช้าๆ');
+      } else {
+        cam = shot('medium', `ภาพครึ่งตัว ${subject || names[0] || ''}`.trim(), moving ? 'กล้องเลื่อนตามช้าๆ' : 'กล้องนิ่ง');
+      }
+    } else {
+      const listeners = names.filter(n => n !== speaker);
+      const listener = listeners.find(n => action.includes(n)) || (prev && plan.length ? listeners.find(n => String(clips[i - 1].dialogues?.[0]?.speaker || '') === n) : '') || listeners[0] || '';
+      const options: CameraShot[] = listener
+        ? [
+            shot('ots', `ภาพใกล้ระดับไหล่ ถ่ายข้ามไหล่${listener}ไปที่${speaker}${sidesText([listener, speaker])}`, 'กล้องนิ่ง'),
+            shot('close', `ภาพใกล้หน้า ${speaker} ขณะพูด`, emotional ? 'กล้องค่อยๆ ดันเข้าช้าๆ' : 'กล้องนิ่ง'),
+            shot('two', `ภาพสองคน ${speaker} และ ${listener} อยู่ในเฟรม${sidesText([speaker, listener])}`, 'กล้องนิ่ง')
+          ]
+        : [
+            shot('medium', `ภาพครึ่งตัว ${speaker}`, 'กล้องนิ่ง'),
+            shot('close', `ภาพใกล้หน้า ${speaker} ขณะพูด`, emotional ? 'กล้องค่อยๆ ดันเข้าช้าๆ' : 'กล้องนิ่ง')
+          ];
+      if (emotional && listener) options.unshift(options.splice(1, 1)[0]);
+      if (moving) options.unshift(shot('medium', `ภาพครึ่งตัว ${subject || speaker} ขณะเคลื่อนที่`, 'กล้องเลื่อนตามช้าๆ'));
+      cam = options.find(o => o.kind !== prev?.kind) || options[0];
+    }
+    plan.push(cam);
+  });
+  camCache.set(clips, plan);
+  return plan;
+}
+
+/** "มุมกล้อง: …" line for a prompt (video: with the movement; image: framing only). */
+export function cameraLine(cam: CameraShot | undefined, kind: 'video' | 'image', aspectRatio?: string): string {
+  if (!cam) return '';
+  const vertical = aspectRatio === '9:16' ? 'จัดภาพแนวตั้ง ใบหน้าตัวละครอยู่ช่วงบนของจอ' : '';
+  // the still is the clip's first frame: nobody is talking yet
+  const framing = kind === 'image' ? cam.framing.replace(/\s*ขณะ(?:พูด|เคลื่อนที่)/g, '') : cam.framing;
+  const bits = [framing, kind === 'video' ? cam.movement : '', vertical].filter(Boolean);
+  return `มุมกล้อง: ${bits.join(', ')}`;
 }
 
 const BLANK_PLACE = /^(?:|ไม่ระบุ.*|unknown|n\/a|none|-)$/i;
@@ -234,7 +376,7 @@ export function formatClipImagePrompt(clip: ClipForMeta, opts: MetaAiFormatOptio
   const continuous = !!prev && (!place.location || !prev.place.location || samePlace(place.location, prev.place.location));
   const poses = (continuous && prev ? posesText(prev.clip.endPoses, true) : '')
     || (clip.startPoses || []).map(p => poseText(p, true)).filter(Boolean).join(', ');
-  const cutAtNextLabel = (t: string) => t.replace(/\s*(?:Continuity Flow|Starting moment|Ending momentum|Dialogue|Continuity Handoff|Stance\/Position Lock|Spatial Position Lock)\s*:.*$/, '').replace(/[.;\s]+$/, '');
+  const cutAtNextLabel = (t: string) => t.replace(/\s*\[มุมกล้อง\s+[^\]]+\]\s*/g, ' ').trim().replace(LABEL_CUT_RE, '').replace(/[.;\s]+$/, '');
   const action = cutAtNextLabel([body('Core action'), body('Scene Action'), body('Script action')].filter(Boolean).join(' ')
     || clean(clip.startAction));
   const lightMatch = prompt.match(/Lighting Lock:\s*([^.]*)/);
@@ -247,6 +389,7 @@ export function formatClipImagePrompt(clip: ClipForMeta, opts: MetaAiFormatOptio
       ? `สถานที่: ${[place.location, place.timeOfDay ? `เวลา ${place.timeOfDay}` : ''].filter(Boolean).join(' ')} — ฉาก เครื่องเรือน และแสงต้องเหมือนกันทุกภาพของสถานที่นี้`
       : '',
     lighting ? `แสง: ${lighting}` : '',
+    cameraLine(opts.camera, 'image', opts.aspectRatio),
     names.length ? identityBlock(names, opts, 'image') : '',
     action ? `เหตุการณ์ในภาพ: ${action}` : '',
     poses ? `ตำแหน่งและท่าทาง: ${poses}` : '',
@@ -314,6 +457,9 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
       timeOfDay: own.timeOfDay || opts.inheritedPlace?.timeOfDay || ''
     };
   })();
+  // Camera: the user's "[มุมกล้อง …]" note becomes the camera line, never an action
+  prompt = prompt.replace(/\s*\[มุมกล้อง\s+[^\]]+\]\s*/g, ' ')
+    .replace(/,?\s*35mm lens, photorealistic film still/g, ', photorealistic cinematic video, natural motion');
   const lockLines: string[] = [];
   if (place.location || place.timeOfDay) {
     lockLines.push(`ล็อกฉาก: ${[place.location ? `สถานที่ ${place.location}` : '', place.timeOfDay ? `เวลา ${place.timeOfDay}` : ''].filter(Boolean).join(' ')} — ฉาก พื้นหลัง และแสงเหมือนเดิมทุกช็อต ห้ามเปลี่ยนสถานที่`);
@@ -344,7 +490,8 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   tail.push('ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำบนจอ');
 
   const body = ensureDialoguesInPrompt(dropEmptyCues(tidy(prompt)), clip.dialogues).replace(/[.;\s]+$/, '');
-  return tidy([head.join(', '), ...lockLines.slice(0, 1), body, ...lockLines.slice(1), ...tail].filter(Boolean).map(s => s.replace(/[.\s]+$/, '')).join('. ') + '.');
+  const camLine = cameraLine(opts.camera, 'video', opts.aspectRatio);
+  return tidy([head.join(', '), ...lockLines.slice(0, 1), camLine, body, ...lockLines.slice(1), ...tail].filter(Boolean).map(s => s.replace(/[.\s]+$/, '')).join('. ') + '.');
 }
 
 export function formatAllClipsForMetaAi(clips: ClipForMeta[], opts: MetaAiFormatOptions = {}): string {

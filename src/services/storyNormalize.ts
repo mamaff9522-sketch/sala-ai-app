@@ -48,6 +48,8 @@ const SETUP_KEY_RE = /^[ \t*_\-•]*(?:ความยาว|แนว|อัต
 const MAIN_CAST_RE = /^[ \t*_\-•]*(?:ตัวละครหลัก|ตัวละครทั้งหมด|รายชื่อตัวละคร|ตัวละคร)\s*[:：]\s*(.+)$/;
 /** "ธนา: ไม่มี", "ธนา: (เงียบ)", "ธนา: -" — a character with nothing to say */
 const EMPTY_LINE_RE = /^[^:："“]{1,30}[:：]\s*["“]?\s*\(?\s*(?:ไม่มี(?:บทพูด)?|ไม่พูด|เงียบ|-+|—|…|\.{3})\s*\)?\s*["”]?\s*$/;
+/** "มุมกล้อง: ภาพใกล้หน้าคุณหญิงมณี" — the user's own camera for this clip (kept as a note, never played) */
+const CAMERA_LINE_RE = /^[ \t*_\-•(\[]*(?:มุมกล้อง|กล้อง|ช็อต|camera|shot)\s*[:：]\s*(.+?)[)\]]*$/i;
 const CHAR_HEADER_RE = /^(?:ตัวละคร(?:หลัก)?|รายชื่อตัวละคร|นักแสดง|characters?)\s*[:：]?\s*$/i;
 
 const isHeading = (t: string) => NUMBERED_HEADING_RE.test(t) || UNNUMBERED_HEADING_RE.test(t);
@@ -160,6 +162,8 @@ function preNormalizeLayout(lines: string[]): string[] {
       continue;
     }
     if (clipMode && t) openScene();
+    const cam = t.match(CAMERA_LINE_RE);
+    if (cam && i > firstHeading) { out.push(`[มุมกล้อง ${cam[1].trim()}]`); continue; }
     const al = t.match(ACTION_LABEL_RE);
     if (al && i > firstHeading) { out.push(al[1].trim()); continue; }
     out.push(lines[i]);

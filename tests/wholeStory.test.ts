@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { runWholeStory } from '../src/services/wholeStoryRunner';
 import { offlineContinuation, isLineCovered, metaOptionsForStory } from '../src/services/storyProgress';
 import { parseStoryStructure } from '../src/services/storyEpisodeEngine';
-import { formatAllClipsForMetaAi, formatClipForMetaAi, formatClipImagePrompt, metaContextFor, characterNote } from '../src/services/metaAiPrompt';
+import { formatAllClipsForMetaAi, formatClipForMetaAi, formatClipImagePrompt, metaContextFor, characterNote, planCameras } from '../src/services/metaAiPrompt';
 import { analyzeClipContinuity } from '../src/services/continuityEngine';
 import { isClipByClipScript } from '../src/services/storyNormalize';
 
@@ -162,8 +162,44 @@ await check('image prompt per clip: same place, time, light and photos as the vi
     assert.ok(!/speaks|Dialogue|Continuity Flow|Starting moment|Ending momentum|:\s*\./.test(img), `clip ${i + 1}: ${img}`);
     for (const l of lines) assert.ok(!img.includes(l.slice(0, 20)), `clip ${i + 1} has no dialogue`);
     for (const m of vid.matchAll(/รูปที่ (\d) = (\S+)/g)) assert.ok(img.includes(`รูปที่ ${m[1]} = ${m[2]}`), `clip ${i + 1} photo ${m[1]}`);
-    if (/ตัวละคร/.test(img)) assert.ok(img.includes('ทุกคนปิดปาก'));
+    if (/ตัวละคร(?:ในภาพ| \()/.test(img)) assert.ok(img.includes('ทุกคนปิดปาก'));
   });
+});
+
+await check('camera: varies every clip, sides never jump within a place, the script\'s own camera wins', async () => {
+  const story = rd('faiklaen-225-clips.txt')
+    .replace('คลิป 002/225 | 8 วินาที | 9:16\n', 'คลิป 002/225 | 8 วินาที | 9:16\nมุมกล้อง: ภาพใกล้หน้าน้ำฟ้า มุมต่ำเล็กน้อย\n');
+  const r = await runWholeStory(story, { offline: true, clipSeconds: 8, maxSteps: 400 }, fakeServer(false));
+  assert.equal(r.clips.length, 225);
+  const plan = planCameras(r.clips as any);
+  plan.forEach((c, i) => { if (i && c.kind !== 'script') assert.notEqual(c.kind, plan[i - 1].kind, `clip ${i + 1} same shot as clip ${i}`); });
+  assert.ok(new Set(plan.map(c => c.kind)).size >= 5, 'several kinds of shot');
+  assert.equal(plan[0].kind, 'wide', 'a new place opens wide');
+  assert.equal(plan[1].kind, 'script');
+  assert.ok(plan[1].framing.includes('ภาพใกล้หน้าน้ำฟ้า มุมต่ำเล็กน้อย'));
+  assert.equal(plan[9].kind, 'script', 'the script\'s "กล้องจับสีหน้าคุณหญิงมณี" is used');
+  // sides: within one place a character never moves from left to right
+  let side = new Map<string, string>();
+  plan.forEach((c, i) => {
+    if (c.kind === 'wide' || c.framing.includes('เห็นพื้นหลังของ')) side = new Map();
+    for (const m of c.framing.matchAll(/([^\s(,]+)อยู่(ซ้ายจอ|ขวาจอ)(?=[,)])/g)) {
+      if (side.has(m[1])) assert.equal(side.get(m[1]), m[2], `clip ${i + 1}: ${m[1]} jumped sides`);
+      side.set(m[1], m[2]);
+    }
+  });
+  const opts = { ...metaOptionsForStory(story, [], characterNote), aspectRatio: '9:16' };
+  const ctx = (i: number) => ({ ...opts, ...metaContextFor(r.clips as any, i) });
+  const vid = formatClipForMetaAi(r.clips[1] as any, ctx(1));
+  const img = formatClipImagePrompt(r.clips[1] as any, ctx(1));
+  assert.ok(vid.includes('มุมกล้อง: ตามบท: ภาพใกล้หน้าน้ำฟ้า') && img.includes('มุมกล้อง: ตามบท: ภาพใกล้หน้าน้ำฟ้า'));
+  assert.ok(!vid.includes('[มุมกล้อง') && !img.includes('[มุมกล้อง'), 'the note is never played as an action');
+  for (let i = 0; i < 225; i++) {
+    const v = formatClipForMetaAi(r.clips[i] as any, ctx(i));
+    const im = formatClipImagePrompt(r.clips[i] as any, ctx(i));
+    assert.ok(/มุมกล้อง: \S/.test(v) && /มุมกล้อง: \S/.test(im), `clip ${i + 1} has a camera`);
+    assert.ok(!v.includes('film still'), 'video, not a still');
+    assert.ok(!/ขณะพูด/.test(im), 'the still is before anyone speaks');
+  }
 });
 
 console.log(`\nwhole story: ${passed} passed`);
