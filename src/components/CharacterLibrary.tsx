@@ -1062,8 +1062,9 @@ export const CharacterLibrary: React.FC<CharacterLibraryProps> = ({
                     if (note) note.style.display = 'flex';
                   }}
                 />
-                <div data-photo-missing style={{ display: 'none' }} className="absolute inset-0 items-center justify-center bg-white text-slate-900 text-[11px] font-semibold text-center px-1 leading-tight">
-                  {char.name || 'ไม่มีรูป'}
+                <div data-photo-missing style={{ display: 'none' }} className="absolute inset-0 flex-col items-center justify-center gap-0.5 bg-white text-slate-900 text-[11px] font-semibold text-center px-1 leading-tight">
+                  <span>{char.name || 'ไม่มีรูป'}</span>
+                  <span className="text-[10px] font-bold text-rose-600">รูปหาย แตะเพื่อใส่รูปใหม่</span>
                 </div>
               </div>
               <span className="w-full text-[13px] leading-tight font-semibold text-slate-100 line-clamp-2 break-words">

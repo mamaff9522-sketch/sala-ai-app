@@ -731,7 +731,7 @@ export function metaOptionsForStory(story: string, library: any[] = [], noteOf: 
   const text = normalizeStoryScript(String(story || ''));
   const lib = (Array.isArray(library) ? library : []).filter(c => c?.name && text.includes(String(c.name)));
   lib.forEach(c => add(c.name));
-  const hasPhoto = (c: any) => !!(c?.referenceImageUrl || c?.referenceMetadata?.referenceImageUrl || c?.visualProfile?.referenceImageUrl || c?.avatarUrl || (Array.isArray(c?.referenceImages) && c.referenceImages.length));
+  const hasPhoto = (c: any) => !c?.photoBroken && !!(c?.referenceImageBackup || c?.referenceImageUrl || c?.referenceMetadata?.referenceImageUrl || c?.visualProfile?.referenceImageUrl || c?.avatarUrl || (Array.isArray(c?.referenceImages) && c.referenceImages.length));
   const withPhoto = storyNames.filter(n => lib.some(c => c.name === n && hasPhoto(c)));
   const characterNotes: Record<string, string> = {};
   for (const n of storyNames) {

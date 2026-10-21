@@ -13,6 +13,9 @@ import { isNativeApp } from './appAccess';
 export const CLOUD_RUN_API_ORIGIN =
   'https://sala-ai-cinematic-ai-video-short-drama-studio-84189743559.asia-southeast1.run.app';
 
+/** Files under /uploads that ship inside the app itself (everything else lives on the server) */
+const BUNDLED_UPLOADS = new Set(['/uploads/characters/ref_prae_master.jpg']);
+
 export function isApiPath(pathname: string): boolean {
   return pathname === '/api' || pathname.startsWith('/api/');
 }
@@ -28,10 +31,15 @@ export function prefixApiUrl(input: string, native: boolean, pageOrigin = ''): s
   if (input.startsWith('/api/') || input === '/api' || input.startsWith('/api?')) {
     return CLOUD_RUN_API_ORIGIN + input;
   }
+  // Uploaded photos are on the server, not in the app: "/uploads/characters/ref_…" loaded from
+  // https://localhost inside the app never showed (blank character cards)
+  if (input.startsWith('/uploads/') && !BUNDLED_UPLOADS.has(input.split('?')[0])) {
+    return CLOUD_RUN_API_ORIGIN + input;
+  }
   if (input.startsWith('http://') || input.startsWith('https://')) {
     try {
       const url = new URL(input);
-      if (pageOrigin && url.origin === pageOrigin && isApiPath(url.pathname)) {
+      if (pageOrigin && url.origin === pageOrigin && (isApiPath(url.pathname) || (url.pathname.startsWith('/uploads/') && !BUNDLED_UPLOADS.has(url.pathname)))) {
         return CLOUD_RUN_API_ORIGIN + url.pathname + url.search + url.hash;
       }
     } catch {

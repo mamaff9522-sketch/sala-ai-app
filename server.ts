@@ -54,6 +54,7 @@ import { loadVeoReferenceImages, resolveVeoReferenceModel, veoDurationSeconds } 
 import { OMNI_VIDEO_MODEL, extractLastFrame, generateOmniVideo } from './serverOmni';
 import { findResumePoint, checkEpisodeOrder, salvageEpisodeJson, splitDenseDialogueScenes, restoreMissingStoryBeats, offlineContinuation, storyCursorFor, lockForScript, fixDialogueSpeakers } from './src/services/storyProgress';
 import { ensureDialoguesInPrompt, isEmptyLine, dropEmptyCues } from './src/services/promptSections';
+import { restoreUpload, backupUploadInBackground } from './serverImageStore';
 import { normalizeStoryScript } from './src/services/storyNormalize';
 
 dotenv.config();
@@ -112,6 +113,16 @@ try {
 } catch (e) {
   console.warn('Could not create uploads directory:', e);
 }
+
+// A character / location photo the wiped disk lost: put it back from Firestore, then serve it
+app.get('/uploads/:dir/:file', async (req, res, next) => {
+  const dir = String(req.params.dir || '');
+  if (dir !== 'characters' && dir !== 'locations') return next();
+  const file = await restoreUpload(UPLOADS_DIR, `${dir}/${req.params.file}`);
+  if (!file) return next();
+  res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+  return res.sendFile(file);
+});
 
 // Serve /uploads statically from public/uploads
 app.use('/uploads', express.static(UPLOADS_DIR, {
@@ -2194,6 +2205,7 @@ app.post('/api/director/generate-multi-clip-prompts', requireAuth, async (req: a
       });
     }
     // Library cards with server-side reference check (lost /uploads files -> re-upload warning)
+    await restoreUploadReferences([...(Array.isArray(characters) ? characters : []), ...(Array.isArray(locations) ? locations : [])]);
     const libraryChars = markMissingUploadReferences(Array.isArray(characters) ? characters : []);
     // Location library (lock payloads) with the same reference check; undefined = client sent no library
     const libraryLocs: any[] | undefined = Array.isArray(locations) ? markMissingUploadReferences(locations.filter((l: any) => l && l.name)) : undefined;
@@ -2615,6 +2627,21 @@ app.post('/api/director/regenerate-single-clip', requireAuth, async (req: any, r
   }
 });
 
+// Lost /uploads files of these cards are put back from Firestore first (at most ~4 s in all),
+// so only photos that are really gone get marked missing.
+async function restoreUploadReferences(list: any[]): Promise<void> {
+  const urls = new Set<string>();
+  for (const c of Array.isArray(list) ? list : []) {
+    const url = String(c?.referenceImageUrl || c?.referenceMetadata?.referenceImageUrl || c?.visualProfile?.referenceImageUrl || '');
+    if (url.startsWith('/uploads/')) urls.add(decodeURIComponent(url.slice('/uploads/'.length).split('?')[0]));
+  }
+  if (urls.size === 0) return;
+  await Promise.race([
+    Promise.all(Array.from(urls).map(rel => restoreUpload(UPLOADS_DIR, rel))),
+    new Promise(r => setTimeout(r, 4000))
+  ]);
+}
+
 // A library card whose reference image is a /uploads file that no longer exists (ephemeral disk)
 // is marked referenceStatus 'missing' so the prompts carry a re-upload warning instead of a dead reference.
 function markMissingUploadReferences(chars: any[]): any[] {
@@ -2693,6 +2720,7 @@ app.post('/api/script/split', async (req: express.Request, res: express.Response
     // Only this story's characters / place: a lock left over from another story is not sent to Gemini
     const continuityLock: any = lockForScript(rawContinuityLock, scriptText);
     const offlineMode = req.body?.offlineMode === true || req.body?.offline === true;
+    await restoreUploadReferences(Array.isArray(characters) ? characters : []);
     const libChars = markMissingUploadReferences(Array.isArray(characters) ? characters : []);
     if (!scriptText || typeof scriptText !== 'string' || !scriptText.trim()) {
       return res.status(400).json({
@@ -3502,6 +3530,8 @@ function persistReferenceImage(imageData: string, customId?: string): {
 
   const buffer = Buffer.from(parsed.base64Data, 'base64');
   fs.writeFileSync(filepath, buffer);
+  // The disk is wiped on restart: keep a permanent copy (restored by GET /uploads/...)
+  backupUploadInBackground(`characters/${filename}`, parsed.base64Data, parsed.mimeType);
 
   const referenceImageUrl = `/uploads/characters/${filename}`;
   return {
@@ -4169,6 +4199,7 @@ function persistLocationReferenceImage(imageData: string, customId?: string): {
 
   const buffer = Buffer.from(parsed.base64Data, 'base64');
   fs.writeFileSync(filepath, buffer);
+  backupUploadInBackground(`locations/${filename}`, parsed.base64Data, parsed.mimeType);
 
   const referenceImageUrl = `/uploads/locations/${filename}`;
   return {

@@ -50,11 +50,43 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
 
   useEffect(() => { saveJson(DRAFT_KEY, story); }, [story]);
 
+  // A photo address is not a photo: check that each library character's picture really loads.
+  // One that does not (file lost on the server) is not used as a reference and is reported.
+  const [brokenPhotos, setBrokenPhotos] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const sourcesOf = (c: any): string[] => [c?.referenceImageBackup, c?.referenceImageUrl, c?.visualProfile?.referenceImageUrl,
+      c?.visualProfile?.referenceImage, c?.avatarUrl, Array.isArray(c?.referenceImages) ? c.referenceImages[0] : '']
+      .filter((u: any) => typeof u === 'string' && u.trim());
+    const loads = (src: string) => new Promise<boolean>(resolve => {
+      const img = new Image();
+      const t = setTimeout(() => resolve(false), 10000);
+      img.onload = () => { clearTimeout(t); resolve(img.naturalWidth > 0); };
+      img.onerror = () => { clearTimeout(t); resolve(false); };
+      img.src = src;
+    });
+    (async () => {
+      const broken: string[] = [];
+      for (const c of characters || []) {
+        const srcs = sourcesOf(c);
+        if (!c?.name || srcs.length === 0) continue;
+        let ok = false;
+        for (const src of srcs) { if (await loads(src)) { ok = true; break; } }
+        if (!ok) broken.push(c.name);
+      }
+      if (!cancelled) setBrokenPhotos(broken);
+    })();
+    return () => { cancelled = true; };
+  }, [characters]);
+
   // Meta AI copy for each clip: only this story's characters, fixed photo numbers, scene / pose locks
   const metaOpts = useMemo(() => {
-    const lib = (characters || []).map(c => ({ ...toCharacterLockPayload(c), avatarUrl: (c as any).avatarUrl, referenceImages: (c as any).referenceImages }));
+    const lib = (characters || []).map(c => ({
+      ...toCharacterLockPayload(c), avatarUrl: (c as any).avatarUrl, referenceImages: (c as any).referenceImages,
+      referenceImageBackup: (c as any).referenceImageBackup, photoBroken: brokenPhotos.includes(c.name)
+    }));
     return { ...metaOptionsForStory(resultStory, lib, characterNote), aspectRatio: aspect };
-  }, [characters, resultStory, aspect]);
+  }, [characters, resultStory, aspect, brokenPhotos]);
   const prompts = useMemo(
     () => clips.map((c, i) => formatClipForMetaAi(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) })),
     [clips, metaOpts]
@@ -250,8 +282,13 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                     {(() => {
                       // Spec: no reference image -> say so (the prompt never invents a look for them)
                       const missing = charactersInClip(c as any, metaOpts.knownCharacters).filter(n => !metaOpts.withPhoto.includes(n));
+                      const lost = missing.filter(n => brokenPhotos.includes(n));
+                      const none = missing.filter(n => !brokenPhotos.includes(n));
                       return missing.length > 0
-                        ? <div className="mt-1 flex items-start gap-1 text-[12px] text-amber-200"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />ยังไม่มีรูปอ้างอิง: {missing.join(', ')} — เพิ่มรูปในคลังตัวละครเพื่อล็อกหน้าตาและชุด</div>
+                        ? <div className="mt-1 space-y-0.5 text-[12px] text-amber-200">
+                            {lost.length > 0 && <div className="flex items-start gap-1"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />รูปอ้างอิงหาย โหลดไม่ได้: {lost.join(', ')} — อัปโหลดรูปใหม่ในคลังตัวละคร</div>}
+                            {none.length > 0 && <div className="flex items-start gap-1"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />ยังไม่มีรูปอ้างอิง: {none.join(', ')} — เพิ่มรูปในคลังตัวละครเพื่อล็อกหน้าตาและชุด</div>}
+                          </div>
                         : null;
                     })()}
                     <p className="mt-1 text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words line-clamp-3">{imagePrompts[i]}</p>

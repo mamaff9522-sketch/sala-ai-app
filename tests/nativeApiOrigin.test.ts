@@ -55,11 +55,18 @@ check('native rewrites only same-document absolute /api URLs', () => {
   );
 });
 
-check('native does not rewrite the bundled page, uploads, or data URLs', () => {
+check('native does not rewrite the bundled page, bundled uploads, or data URLs', () => {
   assert.equal(prefixApiUrl('/', true), '/');
   assert.equal(prefixApiUrl('/index.html', true), '/index.html');
   assert.equal(prefixApiUrl('/uploads/characters/ref_prae_master.jpg', true), '/uploads/characters/ref_prae_master.jpg');
   assert.equal(prefixApiUrl('data:image/png;base64,abc', true), 'data:image/png;base64,abc');
+});
+
+check('native loads uploaded photos from the server (they are not in the app)', () => {
+  const up = '/uploads/characters/ref_abc123_1700000000000.jpg';
+  assert.equal(prefixApiUrl(up, true), CLOUD_RUN_API_ORIGIN + up);
+  assert.equal(prefixApiUrl(up, false), up, 'the website keeps relative URLs');
+  assert.equal(prefixApiUrl('https://localhost' + up, true, 'https://localhost'), CLOUD_RUN_API_ORIGIN + up);
 });
 
 check('capacitor server.url is not set and webDir/androidScheme stay put', () => {
