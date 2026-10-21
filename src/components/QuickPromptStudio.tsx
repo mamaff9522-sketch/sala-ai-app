@@ -247,6 +247,13 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                         {copied === `img${i}` ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> คัดลอกแล้ว</> : <><Copy className="w-3.5 h-3.5" /> คัดลอกภาพ</>}
                       </button>
                     </div>
+                    {(() => {
+                      // Spec: no reference image -> say so (the prompt never invents a look for them)
+                      const missing = charactersInClip(c as any, metaOpts.knownCharacters).filter(n => !metaOpts.withPhoto.includes(n));
+                      return missing.length > 0
+                        ? <div className="mt-1 flex items-start gap-1 text-[12px] text-amber-200"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />ยังไม่มีรูปอ้างอิง: {missing.join(', ')} — เพิ่มรูปในคลังตัวละครเพื่อล็อกหน้าตาและชุด</div>
+                        : null;
+                    })()}
                     <p className="mt-1 text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words line-clamp-3">{imagePrompts[i]}</p>
                   </div>
                   <div className="mt-2 text-[12px] font-semibold text-indigo-300">2. พรอมต์วิดีโอ <span className="font-normal text-slate-400">(ปุ่มคัดลอกด้านบน)</span></div>

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { runWholeStory } from '../src/services/wholeStoryRunner';
 import { offlineContinuation, isLineCovered, metaOptionsForStory } from '../src/services/storyProgress';
 import { parseStoryStructure } from '../src/services/storyEpisodeEngine';
-import { formatAllClipsForMetaAi, formatClipForMetaAi, formatClipImagePrompt, metaContextFor, characterNote, planCameras } from '../src/services/metaAiPrompt';
+import { formatAllClipsForMetaAi, formatClipForMetaAi, formatClipImagePrompt, metaContextFor, characterNote, planCameras, imagePromptProblems } from '../src/services/metaAiPrompt';
 import { analyzeClipContinuity } from '../src/services/continuityEngine';
 import { isClipByClipScript } from '../src/services/storyNormalize';
 
@@ -155,9 +155,10 @@ await check('image prompt per clip: same place, time, light and photos as the vi
     const ctx = { ...opts, ...metaContextFor(r.clips as any, i) };
     const img = formatClipImagePrompt(c as any, ctx);
     const vid = formatClipForMetaAi(c as any, ctx);
-    assert.ok(img.startsWith('ภาพนิ่ง สัดส่วน 9:16'), img.slice(0, 60));
-    const placeOf = (t: string) => t.match(/สถานที่:? (\S+)/)?.[1];
+    assert.ok(img.includes('ภาพนิ่ง สัดส่วน 9:16'), img.slice(0, 60));
+    const placeOf = (t: string) => t.match(/(?:สถานที่|Location & Lighting Lock:) (\S+)/)?.[1];
     assert.equal(placeOf(img), placeOf(vid), `clip ${i + 1} same place`);
+    assert.deepEqual(imagePromptProblems(img, ctx.camera), [], `clip ${i + 1} consistent`);
     assert.ok(/แสง: \S/.test(img), `clip ${i + 1} light`);
     assert.ok(!/speaks|Dialogue|Continuity Flow|Starting moment|Ending momentum|:\s*\./.test(img), `clip ${i + 1}: ${img}`);
     for (const l of lines) assert.ok(!img.includes(l.slice(0, 20)), `clip ${i + 1} has no dialogue`);
@@ -191,15 +192,62 @@ await check('camera: varies every clip, sides never jump within a place, the scr
   const ctx = (i: number) => ({ ...opts, ...metaContextFor(r.clips as any, i) });
   const vid = formatClipForMetaAi(r.clips[1] as any, ctx(1));
   const img = formatClipImagePrompt(r.clips[1] as any, ctx(1));
-  assert.ok(vid.includes('มุมกล้อง: ตามบท: ภาพใกล้หน้าน้ำฟ้า') && img.includes('มุมกล้อง: ตามบท: ภาพใกล้หน้าน้ำฟ้า'));
+  assert.ok(vid.includes('มุมกล้อง: ตามบท: ภาพใกล้หน้าน้ำฟ้า') && img.includes('Camera Direction Lock: ตามบท "ภาพใกล้หน้าน้ำฟ้า มุมต่ำเล็กน้อย"'));
   assert.ok(!vid.includes('[มุมกล้อง') && !img.includes('[มุมกล้อง'), 'the note is never played as an action');
   for (let i = 0; i < 225; i++) {
     const v = formatClipForMetaAi(r.clips[i] as any, ctx(i));
     const im = formatClipImagePrompt(r.clips[i] as any, ctx(i));
-    assert.ok(/มุมกล้อง: \S/.test(v) && /มุมกล้อง: \S/.test(im), `clip ${i + 1} has a camera`);
+    assert.ok(/มุมกล้อง: \S/.test(v) && /Camera Direction Lock: \S/.test(im) && /Shot Size Lock: \S/.test(im), `clip ${i + 1} has a camera`);
     assert.ok(!v.includes('film still'), 'video, not a still');
     assert.ok(!/ขณะพูด/.test(im), 'the still is before anyone speaks');
   }
+});
+
+await check('image prompt spec: strict camera direction and shot size from the script, staging per character', async () => {
+  const story = rd('faiklaen-camera-cases.txt');
+  const r = await runWholeStory(story, { offline: true, clipSeconds: 8 }, fakeServer(false));
+  const opts = { ...metaOptionsForStory(story, [], characterNote), aspectRatio: '9:16' };
+  const img = (i: number) => { const ctx = { ...opts, ...metaContextFor(r.clips as any, i) }; return { p: formatClipImagePrompt(r.clips[i] as any, ctx), cam: ctx.camera! }; };
+  const order = ['Character Reference Lock', 'Costume Lock', 'Location & Lighting Lock', 'Camera Direction Lock', 'Shot Size Lock', 'Character Position & Action', 'Scene Continuity', 'Photorealistic Cinematic Quality'];
+  const sec = (p: string, l: string) => p.slice(p.indexOf(l + ':'), p.indexOf(order[order.indexOf(l) + 1] + ':') > 0 ? p.indexOf(order[order.indexOf(l) + 1] + ':') : undefined);
+  for (let i = 0; i < r.clips.length; i++) {
+    const { p, cam } = img(i);
+    const at = order.map(l => p.indexOf(l + ':')).filter(x => x >= 0);
+    assert.deepEqual(at, [...at].sort((a, b) => a - b), `clip ${i + 1}: sections in order`);
+    assert.deepEqual(imagePromptProblems(p, cam), [], `clip ${i + 1}`);
+    assert.ok(p.includes('ห้ามขยายภาพจากครึ่งตัวเป็นเต็มตัว') && p.includes('ห้ามหมุนตัวละครจากด้านหลังมาเป็นด้านหน้า'));
+  }
+  // 1. ภาคิน half body, front
+  let { p, cam } = img(4);
+  assert.equal(cam.size, 'MS'); assert.equal(cam.angle, 'front'); assert.equal(cam.subject, 'ภาคิน');
+  assert.ok(sec(p, 'Shot Size Lock').includes('ศีรษะถึงเอวของภาคินเท่านั้น ห้ามเห็นขาหรือรองเท้าภาคิน'));
+  assert.ok(sec(p, 'Shot Size Lock').includes('ตัวละครรอง (คุณหญิงมณี, น้ำฟ้า, แพรวา) ปรากฏเพียงบางส่วนหรืออยู่ฉากหลัง'), '4 people, half body kept');
+  assert.ok(p.includes('กำลังก้าว') && p.includes('ให้เห็นบริเวณประตู'), 'walking in through the door, not posing');
+  // 2. ภาคิน half body, from behind
+  ({ p, cam } = img(5));
+  assert.equal(cam.angle, 'rear'); assert.equal(cam.size, 'MS');
+  assert.ok(p.includes('เห็นแผ่นหลังและด้านหลังศีรษะ ห้ามหมุนหน้าภาคินเข้าหากล้อง'));
+  assert.ok(/ภาคิน: [^|]*หันหลังให้กล้อง/.test(p));
+  // 3. น้ำฟ้า side
+  ({ p, cam } = img(3));
+  assert.equal(cam.angle, 'side'); assert.equal(cam.subject, 'น้ำฟ้า');
+  assert.ok(p.includes('ไม่ใช่มุมหน้าตรง') && /น้ำฟ้า: [^|]*หันข้างให้กล้อง/.test(p));
+  // 4. คุณหญิงมณี low angle
+  ({ p, cam } = img(7));
+  assert.equal(cam.angle, 'low'); assert.equal(cam.subject, 'คุณหญิงมณี');
+  assert.ok(p.includes('กล้องอยู่ต่ำกว่าคุณหญิงมณีและเงยขึ้น'));
+  // 5. four people, ภาคิน half body
+  ({ p, cam } = img(6));
+  assert.equal(cam.size, 'MS'); assert.equal(cam.subject, 'ภาคิน');
+  assert.ok(/ภาคิน: [^|]*ฉากหน้า/.test(p) && /น้ำฟ้า: [^|]*ฉากหลัง/.test(p));
+  // 6. wide, everyone in the hall; the action's own "กล้องจับสีหน้า…" does not fight it
+  ({ p, cam } = img(9));
+  assert.equal(cam.size, 'WS');
+  assert.ok(sec(p, 'Shot Size Lock').includes('เห็นพื้นที่ฉากและตัวละครทุกคน'));
+  assert.ok(!sec(p, 'Character Position & Action').includes('กล้องจับสีหน้า'));
+  for (const n of ['คุณหญิงมณี', 'น้ำฟ้า', 'แพรวา', 'ภาคิน']) assert.ok(new RegExp(`${n}: (?:ซ้าย|ขวา|กลาง)จอ, ฉากกลาง`).test(p), n);
+  // no reference photo: said so, never invented
+  assert.ok(p.includes('ยังไม่มีภาพอ้างอิง'));
 });
 
 console.log(`\nwhole story: ${passed} passed`);

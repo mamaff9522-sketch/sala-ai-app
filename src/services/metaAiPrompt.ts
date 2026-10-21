@@ -64,13 +64,73 @@ export interface MetaAiFormatOptions {
   camera?: CameraShot;
 }
 
+export type ShotSize = 'CU' | 'MCU' | 'MS' | 'MLS' | 'FS' | 'WS' | 'EWS';
+export type CameraAngle = 'front' | 'front34' | 'side' | 'rear' | 'rear34' | 'high' | 'low' | 'ots' | 'eye';
+
 export interface CameraShot {
   kind: 'script' | 'wide' | 'medium' | 'ots' | 'close' | 'two' | 'insert';
-  /** Shot size / angle / who is framed and where they stand on screen */
+  /** Shot size / angle / who is framed and where they stand on screen (one line, for the video prompt) */
   framing: string;
   /** One camera movement for the whole clip */
   movement: string;
+  /** Strict shot size and camera direction (from the script when it gives them, never changed) */
+  size: ShotSize;
+  angle: CameraAngle;
+  /** Main character the size / angle apply to; partner = the shoulder in an over-the-shoulder */
+  subject: string;
+  partner?: string;
+  prop?: string;
+  /** What the script itself said about the camera (kept word for word) */
+  scriptText?: string;
+  /** Left / right / centre of frame per character, kept while the place stays */
+  staging: Record<string, string>;
+  moving: boolean;
 }
+
+/** Thai / English camera words in the script → strict shot size and direction */
+export function parseCameraText(text: string, names: string[] = []): { size?: ShotSize; angle?: CameraAngle; subject?: string } {
+  const t = String(text || '');
+  const out: { size?: ShotSize; angle?: CameraAngle; subject?: string } = {};
+  if (/เฉียงหลัง|rear three[- ]?quarter|ด้านหลังเฉียง/i.test(t)) out.angle = 'rear34';
+  else if (/เฉียงหน้า|front three[- ]?quarter|three[- ]?quarter/i.test(t)) out.angle = 'front34';
+  else if (/ข้ามไหล่|over[- ]the[- ]shoulder|\bOTS\b/i.test(t)) out.angle = 'ots';
+  else if (/ด้านหลัง|มุมหลัง|จากข้างหลัง|ข้างหลัง|rear view|from behind|back view/i.test(t)) out.angle = 'rear';
+  else if (/ด้านข้าง|มุมข้าง|หันข้าง|side profile|side view|profile/i.test(t)) out.angle = 'side';
+  else if (/มุมสูง|กดลง|มองลงมา|high angle|bird/i.test(t)) out.angle = 'high';
+  else if (/มุมต่ำ|เงยขึ้น|low angle/i.test(t)) out.angle = 'low';
+  else if (/ด้านหน้า|หน้าตรง|มุมหน้า|front view/i.test(t)) out.angle = 'front';
+  if (/กว้างมาก|extreme wide|establishing/i.test(t)) out.size = 'EWS';
+  else if (/ภาพกว้าง|มุมกว้าง|wide shot|\bwide\b|long shot/i.test(t) && !/medium long/i.test(t)) out.size = 'WS';
+  else if (/เต็มตัว|full shot|full body/i.test(t)) out.size = 'FS';
+  else if (/ถึงเข่า|ศีรษะถึงเข่า|medium long|สามส่วน/i.test(t)) out.size = 'MLS';
+  else if (/ครึ่งตัว|medium shot|\bMS\b/i.test(t)) out.size = 'MS';
+  else if (/ระดับอก|ถึงอก|ระดับไหล่|medium close/i.test(t)) out.size = 'MCU';
+  else if (/ใกล้หน้า|ภาพใกล้|โคลสอัพ|close-?up|สีหน้า|ใกล้มาก/i.test(t)) out.size = 'CU';
+  const named = names.filter(n => n && t.includes(n)).sort((a, b) => t.indexOf(a) - t.indexOf(b));
+  if (named.length) out.subject = named[0];
+  return out;
+}
+
+const SIZE_TEXT: Record<ShotSize, (who: string) => string> = {
+  CU: w => `ภาพระยะใกล้ (Close-up) เฟรมเฉพาะใบหน้าและไหล่ของ${w}`,
+  MCU: w => `ภาพระยะใกล้ปานกลาง (Medium Close-up) เฟรมตั้งแต่ศีรษะถึงช่วงอกของ${w}`,
+  MS: w => `ภาพครึ่งตัว (Medium Shot) เฟรมตั้งแต่ศีรษะถึงเอวของ${w}เท่านั้น ห้ามเห็นขาหรือรองเท้า${w} ห้ามเป็นภาพเต็มตัว`,
+  MLS: w => `ภาพระยะศีรษะถึงเข่า (Medium Long Shot) ของ${w} ห้ามเห็นเท้า`,
+  FS: w => `ภาพเต็มตัว (Full Shot) เห็น${w}ตั้งแต่ศีรษะถึงเท้า`,
+  WS: () => 'ภาพกว้าง (Wide Shot) เห็นพื้นที่ฉากและตัวละครทุกคนตามบท',
+  EWS: () => 'ภาพกว้างมาก (Extreme Wide Shot) เน้นภาพรวมของสถานที่ ตัวละครมีขนาดเล็กในภาพ'
+};
+const ANGLE_TEXT: Record<CameraAngle, (who: string, partner?: string) => string> = {
+  front: w => `มุมกล้องด้านหน้า (Front View) มองเห็น${w}จากด้านหน้า`,
+  front34: w => `มุมกล้องเฉียงหน้า (Front Three-Quarter) มองเห็นใบหน้า${w}จากมุมเฉียง`,
+  side: w => `มุมกล้องด้านข้าง (Side Profile) กล้องอยู่ด้านข้าง${w}จริง เห็นใบหน้าด้านข้างและลำตัวด้านข้าง ไม่ใช่มุมหน้าตรง`,
+  rear: w => `มุมกล้องด้านหลัง (Rear View) กล้องอยู่ด้านหลัง${w}จริง เห็นแผ่นหลังและด้านหลังศีรษะ ห้ามหมุนหน้า${w}เข้าหากล้อง`,
+  rear34: w => `มุมกล้องเฉียงหลัง (Rear Three-Quarter) เห็นแผ่นหลัง${w}เป็นหลักและเห็นด้านข้างบางส่วน ห้ามหันหน้าเข้าหากล้อง`,
+  high: w => `มุมสูง (High Angle) กล้องอยู่สูงกว่า${w}และกดมุมลง`,
+  low: w => `มุมต่ำ (Low Angle) กล้องอยู่ต่ำกว่า${w}และเงยขึ้น`,
+  ots: (w, p) => `มุมข้ามไหล่ (Over-the-Shoulder) มองผ่านไหล่${p || 'ตัวละครอีกคน'}ไปยัง${w} ไหล่และด้านหลังศีรษะของ${p || 'ตัวละครอีกคน'}อยู่ฉากหน้า`,
+  eye: () => 'กล้องระดับสายตา (Eye Level)'
+};
 
 const samePlace = (a: string, b: string) => {
   const n = (x: string) => String(x || '').replace(/\s|ต่อเนื่อง|ที่/g, '').toLowerCase();
@@ -165,7 +225,8 @@ export function planCameras(clips: ClipForMeta[]): CameraShot[] {
     const prev = plan[i - 1];
     const moving = MOVING_RE.test(action);
     const emotional = lines.some(d => /[!！]/.test(String(d.line)));
-    const shot = (kind: CameraShot['kind'], framing: string, movement: string): CameraShot => ({ kind, framing, movement });
+    const shot = (kind: CameraShot['kind'], framing: string, movement: string): CameraShot =>
+      ({ kind, framing, movement, size: 'MS', angle: 'front34', subject: '', staging: {}, moving: false });
     const scriptCam = String(clip.generatedPrompt || '').match(SCRIPT_CAMERA_RE)?.[1]?.trim()
       || action.match(SCRIPT_CAMERA_WORDS_RE)?.[1]?.trim();
     let cam: CameraShot;
@@ -200,6 +261,35 @@ export function planCameras(clips: ClipForMeta[]): CameraShot[] {
       if (emotional && listener) options.unshift(options.splice(1, 1)[0]);
       if (moving) options.unshift(shot('medium', `ภาพครึ่งตัว ${subject || speaker} ขณะเคลื่อนที่`, 'กล้องเลื่อนตามช้าๆ'));
       cam = options.find(o => o.kind !== prev?.kind) || options[0];
+      if (cam.kind === 'ots' || cam.kind === 'two') cam.partner = listener;
+      if (cam.kind !== 'medium' || !moving) cam.subject = speaker;
+    }
+    // Strict size / direction: the script's words win and are never changed; the rest from the shot kind
+    const fromScript = scriptCam ? parseCameraText(scriptCam, names) : {};
+    const AUTO: Record<CameraShot['kind'], { size: ShotSize; angle: CameraAngle }> = {
+      wide: { size: 'WS', angle: 'eye' }, medium: { size: 'MS', angle: 'front34' }, close: { size: 'CU', angle: 'front34' },
+      ots: { size: 'MCU', angle: 'ots' }, two: { size: 'MS', angle: 'front' }, insert: { size: 'CU', angle: 'high' },
+      script: { size: 'MS', angle: 'front34' }
+    };
+    const auto = AUTO[cam.kind];
+    cam.size = fromScript.size || auto.size;
+    cam.angle = fromScript.angle || (fromScript.size === 'WS' || fromScript.size === 'EWS' ? 'eye' : auto.angle);
+    cam.subject = fromScript.subject || cam.subject || subject || speaker || names[0] || '';
+    if (cam.angle === 'ots' && !cam.partner) cam.partner = names.find(n => n !== cam.subject) || '';
+    if (cam.kind === 'insert') cam.prop = action.match(PROP_RE)?.[1];
+    if (scriptCam) cam.scriptText = scriptCam;
+    cam.moving = moving;
+    // Every character in the shot gets a side of the frame, remembered while the place stays
+    const taken = new Set(names.map(n => screen.get(n)).filter(Boolean));
+    cam.staging = {};
+    for (const n of names) {
+      let sd = screen.get(n);
+      if (!sd) {
+        sd = !taken.has('ซ้ายจอ') ? 'ซ้ายจอ' : !taken.has('ขวาจอ') ? 'ขวาจอ' : 'กลางจอ';
+        taken.add(sd);
+        if (sd !== 'กลางจอ') screen.set(n, sd);
+      }
+      cam.staging[n] = sd;
     }
     plan.push(cam);
   });
@@ -210,7 +300,8 @@ export function planCameras(clips: ClipForMeta[]): CameraShot[] {
 /** "มุมกล้อง: …" line for a prompt (video: with the movement; image: framing only). */
 export function cameraLine(cam: CameraShot | undefined, kind: 'video' | 'image', aspectRatio?: string): string {
   if (!cam) return '';
-  const vertical = aspectRatio === '9:16' ? 'จัดภาพแนวตั้ง ใบหน้าตัวละครอยู่ช่วงบนของจอ' : '';
+  const fromBehind = cam.angle === 'rear' || cam.angle === 'rear34';
+  const vertical = aspectRatio === '9:16' ? (fromBehind ? 'จัดภาพแนวตั้ง' : 'จัดภาพแนวตั้ง ใบหน้าตัวละครอยู่ช่วงบนของจอ') : '';
   // the still is the clip's first frame: nobody is talking yet
   const framing = kind === 'image' ? cam.framing.replace(/\s*ขณะ(?:พูด|เคลื่อนที่)/g, '') : cam.framing;
   const bits = [framing, kind === 'video' ? cam.movement : '', vertical].filter(Boolean);
@@ -356,17 +447,15 @@ function identityBlock(names: string[], opts: MetaAiFormatOptions, kind: 'video'
 }
 
 /**
- * Still-image prompt for one clip (made first, then turned into the clip's video): same place, time,
- * light, photo numbers and identity notes as the video prompt; the moment the clip is about with the
- * characters in their starting positions; no dialogue, mouths closed (it is the clip's first frame).
+ * Still-image prompt for one clip (Image Prompt Generator). Built from the same camera plan, place,
+ * light and photo numbers as the video prompt, in this order:
+ *   Character Reference Lock, Costume Lock, Location & Lighting Lock, Camera Direction Lock,
+ *   Shot Size Lock, Character Position & Action, Scene Continuity, Photorealistic Cinematic Quality,
+ *   then the priority rules. Camera direction and shot size from the script are never changed;
+ *   the result is checked for contradictions before it is returned (see imagePromptProblems).
  */
 export function formatClipImagePrompt(clip: ClipForMeta, opts: MetaAiFormatOptions = {}): string {
   const prompt = String(clip.generatedPrompt || '').replace(/ผูกพรอมต์นี้กับฉากที่[^.]*\.\s*/g, '');
-  const sections = findSections(prompt);
-  const body = (label: string) => {
-    const sec = sections.find(x => x.label === label);
-    return sec ? sectionBody(sec.text, label).replace(/[.;\s]+$/, '') : '';
-  };
   const own = ownPlace(clip);
   const place = {
     location: own.location || opts.inheritedPlace?.location || '',
@@ -374,30 +463,132 @@ export function formatClipImagePrompt(clip: ClipForMeta, opts: MetaAiFormatOptio
   };
   const prev = opts.previous;
   const continuous = !!prev && (!place.location || !prev.place.location || samePlace(place.location, prev.place.location));
-  const poses = (continuous && prev ? posesText(prev.clip.endPoses, true) : '')
-    || (clip.startPoses || []).map(p => poseText(p, true)).filter(Boolean).join(', ');
-  const cutAtNextLabel = (t: string) => t.replace(/\s*\[มุมกล้อง\s+[^\]]+\]\s*/g, ' ').trim().replace(LABEL_CUT_RE, '').replace(/[.;\s]+$/, '');
-  const action = cutAtNextLabel([body('Core action'), body('Scene Action'), body('Script action')].filter(Boolean).join(' ')
-    || clean(clip.startAction));
+  const startPoses: PoseForMeta[] = (continuous && prev?.clip.endPoses?.length ? prev.clip.endPoses : clip.startPoses) || [];
+  // The user's own "มุมกล้อง:" line wins: a camera phrase inside the action would contradict it
+  const userCamera = SCRIPT_CAMERA_RE.test(String(clip.generatedPrompt || ''));
+  let action = clipAction(clip).replace(/\s*\[มุมกล้อง\s+[^\]]+\]\s*/g, ' ').trim();
+  if (userCamera) action = action.replace(new RegExp(SCRIPT_CAMERA_WORDS_RE.source, 'gi'), ' ').replace(/\s+/g, ' ').trim();
   const lightMatch = prompt.match(/Lighting Lock:\s*([^.]*)/);
   const lighting = (lightMatch?.[1] || clean(clip.lighting) || clean(clip.continuityLock?.lighting))
-    .replace(/\s*\(identical set[^)]*\)?/, '').trim();
+    .replace(/\s*\(identical set[^)]*\)?/, '').replace(/,?\s*consistent across clips/i, '').trim();
   const names = charactersInClip(clip, opts.knownCharacters || []);
-  const parts = [
-    `ภาพนิ่ง${opts.aspectRatio ? ` สัดส่วน ${opts.aspectRatio}` : ''} ภาพถ่ายสมจริงแบบฉากในภาพยนตร์ ไม่ใช่ภาพวาดหรือการ์ตูน`,
-    place.location || place.timeOfDay
-      ? `สถานที่: ${[place.location, place.timeOfDay ? `เวลา ${place.timeOfDay}` : ''].filter(Boolean).join(' ')} — ฉาก เครื่องเรือน และแสงต้องเหมือนกันทุกภาพของสถานที่นี้`
-      : '',
-    lighting ? `แสง: ${lighting}` : '',
-    cameraLine(opts.camera, 'image', opts.aspectRatio),
-    names.length ? identityBlock(names, opts, 'image') : '',
-    action ? `เหตุการณ์ในภาพ: ${action}` : '',
-    poses ? `ตำแหน่งและท่าทาง: ${poses}` : '',
-    names.length ? 'สีหน้าและอารมณ์ของตัวละครตรงกับเหตุการณ์ ทุกคนปิดปาก ยังไม่พูด' : '',
-    'ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำในภาพ'
+  const cam: CameraShot = opts.camera || {
+    kind: 'medium', framing: '', movement: '', size: names.length > 1 ? 'WS' : 'MS', angle: 'eye',
+    subject: names[0] || '', staging: {}, moving: false
+  };
+  const main = cam.subject || names[0] || '';
+  const others = names.filter(n => n !== main);
+  const close = ['CU', 'MCU', 'MS'].includes(cam.size);
+  const backTurned = (n: string) => (n === main && (cam.angle === 'rear' || cam.angle === 'rear34')) || (cam.angle === 'ots' && n === cam.partner);
+
+  // 1-2. Character reference + costume
+  const photoNames = withPhotoIn(names, opts);
+  const order = photoNumbers(photoNames, opts);
+  const sortedPhotos = [...photoNames].sort((a, b) => (order.get(a) || 0) - (order.get(b) || 0));
+  const noPhoto = names.filter(n => !photoNames.includes(n));
+  const refParts: string[] = [];
+  if (sortedPhotos.length) refParts.push(`${sortedPhotos.map(n => `รูปที่ ${order.get(n)} = ${n}`).join(', ')} — ใช้ภาพที่ผูกกับหมายเลขเป็นภาพอ้างอิงหลักของแต่ละคน รักษาใบหน้าและโครงหน้าตามต้นฉบับ`);
+  if (noPhoto.length) refParts.push(`${noPhoto.map(n => `${n}${opts.characterNotes?.[n] ? ` (${opts.characterNotes[n]})` : ''}`).join(', ')} — ยังไม่มีภาพอ้างอิง`);
+  refParts.push('ห้ามสลับหน้าระหว่างตัวละคร ห้ามเพิ่มตัวละครอื่นที่ไม่มีในบท');
+  const costume = sortedPhotos.length
+    ? 'ทรงผม สีผม เสื้อผ้า สีชุด เนื้อผ้า ลวดลาย รองเท้า และเครื่องประดับของแต่ละคนตามภาพอ้างอิง ห้ามเปลี่ยนชุด ห้ามสลับเสื้อผ้าระหว่างตัวละคร'
+    : 'ชุดและทรงผมของแต่ละคนเหมือนเดิมทุกภาพ ห้ามสลับเสื้อผ้าระหว่างตัวละคร';
+  const animal = /anthropomorphic|animal|reptile|gecko|lizard|buffalo|creature|สัตว์|เกล็ด|ตุ๊กแก|ตัวเหี้ย|กิ้งก่า|ควาย/i
+    .test(names.map(n => opts.characterNotes?.[n] || '').join(' '));
+
+  // 4-5. Camera direction + shot size (the script's own words first, word for word)
+  const direction = [
+    cam.scriptText ? `ตามบท "${cam.scriptText}"` : '',
+    ANGLE_TEXT[cam.angle](main, cam.partner),
+    cam.angle !== 'eye' && cam.angle !== 'high' && cam.angle !== 'low' ? 'ระดับกล้องเท่าสายตา' : ''
+  ].filter(Boolean).join(' — ');
+  const sizeText = cam.kind === 'insert' && cam.prop
+    ? `ภาพระยะใกล้ (Close-up) ที่${cam.prop}${main ? `ในมือ${main}` : ''} เห็นมือและ${cam.prop}ชัด`
+    : SIZE_TEXT[cam.size](main || 'ตัวละครหลัก');
+  const secondary = close && others.length
+    ? `ตัวละครรอง (${others.join(', ')}) ปรากฏเพียงบางส่วนหรืออยู่ฉากหลังได้ ไม่ต้องเห็นเต็มตัว`
+    : '';
+
+  // 6. Position and action per character
+  const poseOf = (n: string) => startPoses.find(p => p?.name === n);
+  const lines = (clip.dialogues || []).filter(d => String(d?.line || '').trim() && !isEmptyLine(d?.line));
+  const speaker = String(lines[0]?.speaker || '').trim();
+  const lookAt = (n: string): string => {
+    const m = action.match(new RegExp(`${n}[^\\s]*?มอง(?:ไปที่|ไปยัง|หา)?(${names.filter(x => x !== n).join('|') || '$^'})`));
+    if (m) return m[1];
+    const g = clean(poseOf(n)?.gesture).match(new RegExp(`มอง(?:ไปที่|ไปยัง|หา)?(${names.filter(x => x !== n).join('|') || '$^'})`));
+    if (g) return g[1];
+    return speaker && n !== speaker && names.includes(speaker) ? speaker : '';
+  };
+  const depthOf = (n: string) => (cam.size === 'WS' || cam.size === 'EWS')
+    ? 'ฉากกลาง'
+    : n === main ? 'ฉากหน้า' : (cam.angle === 'ots' && n === cam.partner ? 'ฉากหน้า (ไหล่และด้านหลังศีรษะ เบลอเล็กน้อย)' : 'ฉากหลัง');
+  const facingOf = (n: string) => {
+    if (backTurned(n)) return 'หันหลังให้กล้อง';
+    if (n === main && cam.angle === 'side') return 'หันข้างให้กล้อง';
+    return '';
+  };
+  const staging = names.map(n => {
+    const p = poseOf(n);
+    // carried from the previous clip's end: whoever was walking has stopped by now
+    const posture = p ? (POSTURE_TH[p.posture === 'walking' && !p.entering ? 'standing' : (p.posture || '')] || '') : '';
+    const bits = [
+      cam.staging?.[n] || '',
+      depthOf(n),
+      facingOf(n),
+      posture,
+      clean(p?.place) ? `ที่${clean(p?.place).replace(/^ที่/, '')}` : '',
+      lookAt(n) ? `มองไปที่${lookAt(n)}` : '',
+      clean(p?.holding) ? `ถือ${clean(p?.holding).replace(/^ถือ/, '')}` : '',
+      clean(p?.gesture) && !/^มอง/.test(clean(p?.gesture)) ? clean(p?.gesture) : ''
+    ].filter(Boolean);
+    return `${n}: ${bits.join(', ')}`;
+  });
+  const setPiece = action.match(/(ประตู|หน้าต่าง|บันได|โต๊ะ|โซฟา|รถ|เตียง|ราวบันได)/)?.[1];
+  const moment = action
+    ? `จังหวะในภาพตามบท: ${action}${cam.moving ? ' (แสดงเป็นจังหวะกำลังเคลื่อนไหว เช่น กำลังก้าว ไม่ใช่ยืนโพสนิ่ง)' : ''}${setPiece ? ` ให้เห็นบริเวณ${setPiece}ในองค์ประกอบภาพเท่าที่ระยะกล้องอนุญาต` : ''}`
+    : '';
+  const expression = names.length
+    ? (names.some(backTurned) ? 'ตัวละครที่หันหลังแสดงอารมณ์ผ่านท่าทางและภาษากาย ' : '') + 'สีหน้าและอารมณ์ตรงกับเหตุการณ์ ทุกคนปิดปาก ยังไม่พูด'
+    : '';
+
+  // 7. Scene continuity / location and light
+  const where = [place.location, place.timeOfDay ? `เวลา ${place.timeOfDay}` : ''].filter(Boolean).join(' ');
+  const locationLock = where
+    ? `${where} — ผังห้อง ประตู หน้าต่าง บันได เครื่องเรือน ตำแหน่งและทิศทางแสง โทนสีและบรรยากาศ เหมือนเดิมทุกภาพของสถานที่และช่วงเวลานี้ เปลี่ยนได้เฉพาะมุมมองของกล้อง ห้ามสร้างสถานที่ใหม่${lighting ? `. แสง: ${lighting}` : ''}`
+    : (lighting ? `แสง: ${lighting}` : '');
+  const continuity = continuous && prev
+    ? 'ต่อเนื่องจากภาพของคลิปก่อนหน้า ตัวละครอยู่ตำแหน่งเดิม ชุดเดิม ฉากเดิม'
+    : (prev ? 'เริ่มฉากใหม่ตามบท' : '');
+
+  const sections: [string, string][] = [
+    ['Character Reference Lock', names.length ? refParts.join('. ') + (animal ? '. ตัวละครที่เป็นสัตว์ต้องเป็นสัตว์ตามภาพ ห้ามกลายเป็นมนุษย์' : '') : ''],
+    ['Costume Lock', names.length ? costume : ''],
+    ['Location & Lighting Lock', locationLock],
+    ['Camera Direction Lock', direction],
+    ['Shot Size Lock', [sizeText, secondary].filter(Boolean).join('. ')],
+    ['Character Position & Action', [staging.join(' | '), moment, expression].filter(Boolean).join('. ')],
+    ['Scene Continuity', continuity],
+    ['Photorealistic Cinematic Quality', `ภาพนิ่ง${opts.aspectRatio ? ` สัดส่วน ${opts.aspectRatio}` : ''} ภาพถ่ายสมจริงแบบฉากในภาพยนตร์ ไม่ใช่ภาพวาดหรือการ์ตูน ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำในภาพ`]
   ];
-  return tidy(parts.filter(Boolean).map(x => x.replace(/[.\s]+$/, '')).join('. ') + '.')
+  const priority = 'ลำดับความสำคัญ: มุมกล้อง ระยะภาพ ตัวละคร และท่าทาง เป็นข้อบังคับหลัก ความสวยงามต้องไม่ทำให้ละเมิดข้อบังคับเหล่านี้ ห้ามขยายภาพจากครึ่งตัวเป็นเต็มตัวเพื่อให้เห็นทุกคน ห้ามหมุนตัวละครจากด้านหลังมาเป็นด้านหน้าเพื่อให้เห็นใบหน้า ห้ามคิดท่าทางใหม่ที่ไม่ตรงบท หากขัดแย้งกันให้รักษามุมกล้องของตัวละครหลัก';
+  return tidy(sections.filter(([, v]) => v).map(([k, v]) => `${k}: ${v.replace(/[.\s]+$/, '')}`).join('. ') + '. ' + priority + '.')
     .replace(/(?:เวลา|สถานที่)\s*ไม่ระบุ(?:จากต้นฉบับ)?[,.]?\s*/g, '');
+}
+
+/**
+ * Contradictions in an image prompt that would make the model ignore the camera
+ * (empty = consistent). Used by the tests on every clip.
+ */
+export function imagePromptProblems(img: string, cam?: CameraShot): string[] {
+  const out: string[] = [];
+  if (!cam) return out;
+  if (['CU', 'MCU', 'MS'].includes(cam.size) && /(Full Shot|ภาพเต็มตัว \(|ศีรษะถึงเท้า)/.test(img)) out.push('ระยะใกล้แต่สั่งเต็มตัว');
+  if ((cam.angle === 'rear' || cam.angle === 'rear34') && new RegExp(`${cam.subject}: [^|]*หันหน้า`).test(img)) out.push('มุมหลังแต่สั่งหันหน้า');
+  if (cam.size === 'MS' && !/ห้ามเห็นขาหรือรองเท้า/.test(img)) out.push('ครึ่งตัวไม่ได้ห้ามเห็นขา');
+  if (/ขณะพูด/.test(img)) out.push('ภาพนิ่งแต่สั่งให้พูด');
+  for (const label of ['Camera Direction Lock', 'Shot Size Lock', 'Photorealistic Cinematic Quality']) if (!img.includes(label + ':')) out.push(`ไม่มี ${label}`);
+  return out;
 }
 
 function sectionBody(text: string, label: string): string {
