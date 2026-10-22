@@ -283,4 +283,41 @@ await check('prompt standard: Thai first, each fact once, no conflicts, shared l
   }
 });
 
+await check('image prompts by place: one prompt for up to 4 images, shared locks once, every shot kept', async () => {
+  const { groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, checkPromptProblems, planCameras } = await import('../src/services/metaAiPrompt');
+  const story = rd('faiklaen-225-clips.txt');
+  const r = await runWholeStory(story, { offline: true, clipSeconds: 8, maxSteps: 400 }, fakeServer(false));
+  const lib = [{ name: 'คุณหญิงมณี', appearance: 'หญิงไทยวัย 60', referenceImageUrl: '/u/a.png' }, { name: 'น้ำฟ้า', appearance: 'หญิงสาววัย 25', referenceImageUrl: '/u/b.png' }];
+  const opts = { ...metaOptionsForStory(story, lib, characterNote), aspectRatio: '9:16' };
+  const groups = groupClipsByPlace(r.clips as any);
+  assert.equal(groups.reduce((n, g) => n + g.clips.length, 0), 225, 'every clip in exactly one group');
+  assert.ok(groups.every(g => g.clips.every((i, k) => k === 0 || i > g.clips[k - 1])), 'story order');
+  const hall = groups[0];
+  assert.equal(hall.location, 'ห้องโถงคฤหาสน์'); assert.equal(hall.timeOfDay, 'กลางวัน วันที่ 1');
+  const both = groups.find(g => g.location === 'ห้องรับแขกคฤหาสน์' && g.timeOfDay === 'บ่าย วันที่ 2')!;
+  assert.equal(both.clips.length, 30, 'two scenes at the same place and time are one group');
+  const plan = planCameras(r.clips as any);
+  for (const g of groups) {
+    for (let k = 0; k < g.clips.length; k += IMAGE_BATCH_SIZE) {
+      const ch = g.clips.slice(k, k + IMAGE_BATCH_SIZE);
+      const b = formatPlaceImageBatch(r.clips as any, ch, opts);
+      assert.ok(b.startsWith(`สร้างภาพนิ่ง ${ch.length} ภาพแยกกัน`));
+      for (const label of ['ตัวละครและภาพอ้างอิง:', 'สถานที่และแสง:', 'รูปแบบและสัดส่วนภาพ:']) assert.equal(b.split(label).length - 1, 1, `${label} once`);
+      const shots = b.split(/\n\nภาพที่ \d+ \(คลิป \d+\):\n/).slice(1);
+      assert.equal(shots.length, ch.length);
+      shots.forEach((shot, j) => {
+        const i = ch[j];
+        assert.ok(shot.includes('มุมกล้องและระยะภาพ:') && shot.includes('ตำแหน่งและการกระทำ:'), `clip ${i + 1}`);
+        if (plan[i].subject) assert.ok(shot.includes(plan[i].subject), `clip ${i + 1} camera subject`);
+        assert.deepEqual(checkPromptProblems(shot, 'image', plan[i]).filter(p => !p.startsWith('ไม่มี รูปแบบ')), [], `clip ${i + 1}`);
+      });
+      for (const d of ch.flatMap(i => r.clips[i].dialogues)) assert.ok(!b.includes(d.line), 'no dialogue in images');
+    }
+  }
+  const first = formatPlaceImageBatch(r.clips as any, hall.clips.slice(0, 4), opts);
+  assert.ok(first.includes('(อัปโหลดรูป: รูปที่ 1 คุณหญิงมณี  รูปที่ 2 น้ำฟ้า)'));
+  const singles = hall.clips.slice(0, 4).reduce((n, i) => n + formatClipImagePrompt(r.clips[i] as any, { ...opts, ...metaContextFor(r.clips as any, i) }).length, 0);
+  assert.ok(first.length < singles * 0.8, `batch ${first.length} vs singles ${singles}`);
+});
+
 console.log(`\nwhole story: ${passed} passed`);

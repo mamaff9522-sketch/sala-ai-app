@@ -659,12 +659,26 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   return withoutRepeats(parts);
 }
 
-/**
- * Still-image prompt for one clip (made first, then animated): same facts as the video prompt,
- * in the order: characters + references, costume, place + light, camera + shot size,
- * positions + action, format. Camera direction / shot size from the script are never changed.
- */
-export function formatClipImagePrompt(clip: ClipForMeta, opts: MetaAiFormatOptions = {}): string {
+/** The pieces of one clip's image prompt, by role (the location batch shares some of them). */
+interface ImageParts {
+  refs?: string; looks?: string; place?: string; camera?: string; staging?: string;
+  continuity?: string; format?: string; rules: string[]; names?: string[]; facts?: ClipFacts;
+}
+
+/** "ตัวละครและภาพอ้างอิง" + "เสื้อผ้าและรูปลักษณ์" for a cast (one clip, or every clip of a batch). */
+function castBlocks(f: Pick<ClipFacts, 'photoNames' | 'photoNo' | 'noPhoto' | 'notes' | 'animal'>): { refs: string; looks: string } {
+  const refs = [
+    f.photoNames.length ? `${f.photoNames.map(n => `รูปที่ ${f.photoNo.get(n)} = ${n}`).join(', ')} ใช้รูปเป็นต้นแบบหลักของใบหน้าและโครงหน้า` : '',
+    f.noPhoto.length ? `${f.noPhoto.map(n => `${n}${f.notes[n] ? ` (${f.notes[n]})` : ''}`).join(', ')} ยังไม่มีภาพอ้างอิง` : ''
+  ].filter(Boolean).join('; ');
+  const looks = f.photoNames.filter(n => f.notes[n]).map(n => `${n} (${f.notes[n]})`).join(', ');
+  return {
+    refs: `ตัวละครและภาพอ้างอิง: ${refs} — ห้ามสลับหน้าระหว่างตัวละคร ห้ามเพิ่มตัวละครที่ไม่มีในบท${f.animal ? ' ตัวละครที่เป็นสัตว์ต้องเป็นสัตว์ตามภาพ ห้ามกลายเป็นมนุษย์' : ''}`,
+    looks: `เสื้อผ้าและรูปลักษณ์: ${looks ? looks + ' — ' : ''}${f.photoNames.length ? 'ทรงผม สีผม ชุด สี ลวดลาย รองเท้า และเครื่องประดับตามภาพอ้างอิง ' : ''}ห้ามเปลี่ยนชุดหรือสลับเสื้อผ้าระหว่างตัวละคร`
+  };
+}
+
+function imagePromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): ImageParts {
   const f = clipFacts(clip, opts);
   const cam: CameraShot = f.cam || {
     kind: 'medium', framing: '', movement: '', size: f.names.length > 1 ? 'WS' : 'MS', angle: 'eye',
@@ -675,27 +689,22 @@ export function formatClipImagePrompt(clip: ClipForMeta, opts: MetaAiFormatOptio
   const close = ['CU', 'MCU', 'MS'].includes(cam.size);
   const fromBehind = cam.angle === 'rear' || cam.angle === 'rear34';
   const backTurned = (n: string) => (n === main && fromBehind) || (cam.angle === 'ots' && n === cam.partner);
-  const parts: string[] = [];
+  const parts: ImageParts = { rules: [] };
 
-  // 1. characters + reference photos
+  // 1-2. characters + reference photos, costume and looks
   if (f.names.length) {
-    const refs = [
-      f.photoNames.length ? `${f.photoNames.map(n => `รูปที่ ${f.photoNo.get(n)} = ${n}`).join(', ')} ใช้รูปเป็นต้นแบบหลักของใบหน้าและโครงหน้า` : '',
-      f.noPhoto.length ? `${f.noPhoto.map(n => `${n}${f.notes[n] ? ` (${f.notes[n]})` : ''}`).join(', ')} ยังไม่มีภาพอ้างอิง` : ''
-    ].filter(Boolean).join('; ');
-    parts.push(`ตัวละครและภาพอ้างอิง: ${refs} — ห้ามสลับหน้าระหว่างตัวละคร ห้ามเพิ่มตัวละครที่ไม่มีในบท${f.animal ? ' ตัวละครที่เป็นสัตว์ต้องเป็นสัตว์ตามภาพ ห้ามกลายเป็นมนุษย์' : ''}`);
-    // 2. costume and looks (notes of characters with a photo; the others' notes are above)
-    const looks = f.photoNames.filter(n => f.notes[n]).map(n => `${n} (${f.notes[n]})`).join(', ');
-    parts.push(`เสื้อผ้าและรูปลักษณ์: ${looks ? looks + ' — ' : ''}${f.photoNames.length ? 'ทรงผม สีผม ชุด สี ลวดลาย รองเท้า และเครื่องประดับตามภาพอ้างอิง ' : ''}ห้ามเปลี่ยนชุดหรือสลับเสื้อผ้าระหว่างตัวละคร`);
+    const cast = castBlocks(f);
+    parts.refs = cast.refs;
+    parts.looks = cast.looks;
   }
   // 3. place + light
   const where = placeText(f, false);
-  if (where) parts.push(`สถานที่และแสง: ${where} — ผังห้อง ประตู หน้าต่าง เครื่องเรือน ทิศแสง และโทนสีคงเดิมในสถานที่นี้ เปลี่ยนได้เฉพาะมุมกล้อง`);
+  if (where) parts.place = (`สถานที่และแสง: ${where} — ผังห้อง ประตู หน้าต่าง เครื่องเรือน ทิศแสง และโทนสีคงเดิมในสถานที่นี้ เปลี่ยนได้เฉพาะมุมกล้อง`);
   // 4. camera direction + shot size
   const sizeText = cam.kind === 'insert' && cam.prop
     ? `Close-up: ${cam.prop}${main ? `ในมือ${main}` : ''} เห็นมือและ${cam.prop}ชัด`
     : SIZE_TEXT[cam.size](main || 'ตัวละครหลัก');
-  parts.push(`มุมกล้องและระยะภาพ: ${[cam.scriptText ? `ตามบท "${cam.scriptText}"` : '', ANGLE_TEXT[cam.angle](main, cam.partner), sizeText,
+  parts.camera = (`มุมกล้องและระยะภาพ: ${[cam.scriptText ? `ตามบท "${cam.scriptText}"` : '', ANGLE_TEXT[cam.angle](main, cam.partner), sizeText,
     close && others.length ? `ตัวละครรอง (${others.join(', ')}) อยู่ฉากหลังหรือเห็นเพียงบางส่วนได้` : ''].filter(Boolean).join('; ')}`);
   // 5. positions + action
   const poseOf = (n: string) => f.startPoses.find(p => p?.name === n);
@@ -731,18 +740,104 @@ export function formatClipImagePrompt(clip: ClipForMeta, opts: MetaAiFormatOptio
   const face = f.names.length
     ? `${f.names.some(backTurned) ? 'ตัวละครที่หันหลังแสดงอารมณ์ผ่านท่าทาง ' : ''}สีหน้าและอารมณ์ตรงกับเหตุการณ์ ทุกคนปิดปาก ยังไม่พูด`
     : '';
-  parts.push(`ตำแหน่งและการกระทำ: ${[staging.join(' | '), moment, face].filter(Boolean).join('. ')}`);
-  if (f.continuous && f.hasPrevious) parts.push('ความต่อเนื่อง: ต่อจากภาพของคลิปก่อน ตำแหน่ง ชุด และฉากเดิม');
+  parts.staging = (`ตำแหน่งและการกระทำ: ${[staging.join(' | '), moment, face].filter(Boolean).join('. ')}`);
+  if (f.continuous && f.hasPrevious) parts.continuity = 'ความต่อเนื่อง: ต่อจากภาพของคลิปก่อน ตำแหน่ง ชุด และฉากเดิม';
   // 6. format + the rules that matter for this shot
-  parts.push(`รูปแบบและสัดส่วนภาพ: ภาพนิ่ง${opts.aspectRatio ? ` ${opts.aspectRatio}` : ''} ภาพถ่ายสมจริงแบบฉากในภาพยนตร์ ไม่ใช่ภาพวาดหรือการ์ตูน${opts.aspectRatio === '9:16' && !fromBehind ? ' ใบหน้าอยู่ช่วงบนของจอ' : ''} ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำ`);
-  const rules = [
+  parts.format = (`รูปแบบและสัดส่วนภาพ: ภาพนิ่ง${opts.aspectRatio ? ` ${opts.aspectRatio}` : ''} ภาพถ่ายสมจริงแบบฉากในภาพยนตร์ ไม่ใช่ภาพวาดหรือการ์ตูน${opts.aspectRatio === '9:16' && !fromBehind ? ' ใบหน้าอยู่ช่วงบนของจอ' : ''} ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำ`);
+  parts.rules = [
     'มุมกล้อง ระยะภาพ ตัวละคร และท่าทางสำคัญกว่าความสวยงาม',
     close ? 'ห้ามขยายเป็นภาพเต็มตัวเพื่อให้เห็นทุกคน' : '',
     f.names.some(backTurned) ? 'ห้ามหมุนตัวละครที่หันหลังมาเป็นด้านหน้า' : '',
     'ห้ามคิดท่าทางใหม่ที่ไม่ตรงบท'
   ].filter(Boolean);
-  parts.push(`ข้อบังคับ: ${rules.join(' ')}`);
-  return withoutRepeats(parts).replace(/(?:เวลา|สถานที่)\s*ไม่ระบุ(?:จากต้นฉบับ)?[,.]?\s*/g, '');
+  parts.names = f.names;
+  parts.facts = f;
+  return parts;
+}
+
+const cleanUnspecified = (t: string) => t.replace(/(?:เวลา|สถานที่)\s*ไม่ระบุ(?:จากต้นฉบับ)?[,.]?\s*/g, '');
+
+/**
+ * Still-image prompt for one clip (made first, then animated): same facts as the video prompt,
+ * in the order: characters + references, costume, place + light, camera + shot size,
+ * positions + action, format. Camera direction / shot size from the script are never changed.
+ */
+export function formatClipImagePrompt(clip: ClipForMeta, opts: MetaAiFormatOptions = {}): string {
+  const p = imagePromptParts(clip, opts);
+  return cleanUnspecified(withoutRepeats([p.refs, p.looks, p.place, p.camera, p.staging, p.continuity, p.format,
+    p.rules.length ? `ข้อบังคับ: ${p.rules.join(' ')}` : ''].filter(Boolean) as string[]));
+}
+
+export interface PlaceImageGroup {
+  location: string;
+  timeOfDay: string;
+  /** Clip indexes (0-based) at this place and time, in story order */
+  clips: number[];
+}
+
+/** Clips that share one set and one light (same place, same time of day), wherever they are in the story. */
+export function groupClipsByPlace(clips: ClipForMeta[]): PlaceImageGroup[] {
+  const groups: PlaceImageGroup[] = [];
+  clips.forEach((_, i) => {
+    const p = sceneOfClip(clips, i);
+    const g = groups.find(x => (x.location || p.location ? samePlace(x.location, p.location) : true) && x.timeOfDay === p.timeOfDay);
+    if (g) g.clips.push(i);
+    else groups.push({ location: p.location, timeOfDay: p.timeOfDay, clips: [i] });
+  });
+  return groups;
+}
+
+/** How many images one batch prompt asks for (long prompts with many shots are followed less well). */
+export const IMAGE_BATCH_SIZE = 4;
+
+/**
+ * One prompt for several still images at the same place: the shared locks (characters, costume,
+ * place + light, format, rules) written once, then each clip's own shot (cast, camera + shot size,
+ * positions + action, continuity, its own extra rules).
+ */
+export function formatPlaceImageBatch(clips: ClipForMeta[], indexes: number[], opts: MetaAiFormatOptions = {}): string {
+  const items = indexes.map(i => ({ i, p: imagePromptParts(clips[i], { ...opts, ...metaContextFor(clips, i) }) }));
+  if (items.length === 0) return '';
+  // the cast of the whole batch, with the story-wide photo numbers
+  const all = { photoNames: [] as string[], photoNo: new Map<string, number>(), noPhoto: [] as string[], notes: {} as Record<string, string>, animal: false };
+  for (const { p } of items) {
+    const f = p.facts!;
+    f.photoNames.forEach(n => { if (!all.photoNames.includes(n)) { all.photoNames.push(n); all.photoNo.set(n, f.photoNo.get(n)!); } });
+    f.noPhoto.forEach(n => { if (!all.noPhoto.includes(n)) all.noPhoto.push(n); });
+    Object.assign(all.notes, f.notes);
+    all.animal = all.animal || f.animal;
+  }
+  all.photoNames.sort((a, b) => (all.photoNo.get(a) || 0) - (all.photoNo.get(b) || 0));
+  all.noPhoto = all.noPhoto.filter(n => !all.photoNames.includes(n));
+  const shared: string[] = [];
+  if (all.photoNames.length || all.noPhoto.length) {
+    const cast = castBlocks(all);
+    shared.push(cast.refs, cast.looks);
+  }
+  const first = items[0].p;
+  if (first.place) shared.push(first.place);
+  // "ใบหน้าอยู่ช่วงบนของจอ" once for the batch when every shot has it, else per shot
+  const faceEverywhere = items.every(({ p }) => /ใบหน้าอยู่ช่วงบนของจอ/.test(p.format || ''));
+  if (first.format) shared.push(faceEverywhere ? first.format.replace(/\s*ใบหน้าอยู่ช่วงบนของจอ/, '') + ' ใบหน้าอยู่ช่วงบนของจอ' : first.format.replace(/\s*ใบหน้าอยู่ช่วงบนของจอ/, ''));
+  shared.push('ข้อบังคับ: มุมกล้อง ระยะภาพ ตัวละคร และท่าทางสำคัญกว่าความสวยงาม ห้ามคิดท่าทางใหม่ที่ไม่ตรงบท');
+  const COMMON = new Set(['มุมกล้อง ระยะภาพ ตัวละคร และท่าทางสำคัญกว่าความสวยงาม', 'ห้ามคิดท่าทางใหม่ที่ไม่ตรงบท']);
+  const shots = items.map(({ i, p }, k) => {
+    const own = p.rules.filter(r => !COMMON.has(r));
+    const face = !faceEverywhere && /ใบหน้าอยู่ช่วงบนของจอ/.test(p.format || '') ? 'ใบหน้าอยู่ช่วงบนของจอ' : '';
+    const lines = [
+      p.names?.length ? `ตัวละครในภาพ: ${p.names.join(', ')}` : '',
+      p.camera, p.staging, p.continuity,
+      [face, ...own].filter(Boolean).length ? `เฉพาะภาพนี้: ${[face, ...own].filter(Boolean).join(' ')}` : ''
+    ].filter(Boolean) as string[];
+    return `ภาพที่ ${k + 1} (คลิป ${(clips[i].clipNumber as number) || i + 1}):\n${cleanUnspecified(withoutRepeats(lines))}`;
+  });
+  const uploads = all.photoNames.map(n => `รูปที่ ${all.photoNo.get(n)} ${n}`).join('  ');
+  return [
+    `สร้างภาพนิ่ง ${items.length} ภาพแยกกัน ภาพละ 1 ช็อตตามรายการด้านล่าง ทุกภาพอยู่ในสถานที่และเวลาเดียวกัน ใช้ข้อมูลล็อกร่วมเหมือนกันทุกภาพ`,
+    uploads ? `(อัปโหลดรูป: ${uploads})` : '',
+    `ล็อกร่วมทุกภาพ:\n${cleanUnspecified(withoutRepeats(shared))}`,
+    ...shots
+  ].filter(Boolean).join('\n\n');
 }
 
 /** Camera / shot-size terms allowed in English (no Thai word says it as precisely). */
