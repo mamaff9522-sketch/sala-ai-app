@@ -2108,7 +2108,8 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
   if (audioDirectives?.sfx?.enabled) {
     audioParts.push(`SFX: ${audioDirectives.sfx.ambientSounds || 'Natural ambience'}`);
   }
-  const audioSummary = audioParts.length > 0 ? audioParts.join(' | ') : 'Audio: Ambient soundscape';
+  // Default (nothing switched on): the characters' scripted voices only. Music / SFX only when the user turns them on.
+  const audioSummary = audioParts.length > 0 ? audioParts.join(' | ') : 'Audio: character dialogue only, no ambience, no music, no sound effects';
 
   const dedupeKnown = expandCombinedCharacterNames([
     ...(params.knownCharacters || []),
@@ -2324,7 +2325,7 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
     if (isSilentScene) {
       effectiveNegativePrompt += ', speaking, talking, mouth moving, lips moving, opening mouth, mouthing words, voiceover, dialogue, speech, chatter, whispering';
       if (!effectiveAudioSummary) {
-        effectiveAudioSummary = 'Ambient soundscape only (no dialogue)';
+        effectiveAudioSummary = 'Silence: no dialogue, no ambience, no music, no sound effects';
       }
     }
 

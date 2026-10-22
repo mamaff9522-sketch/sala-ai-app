@@ -320,4 +320,24 @@ await check('image prompts by place: one prompt for up to 4 images, shared locks
   assert.ok(first.length < singles * 0.8, `batch ${first.length} vs singles ${singles}`);
 });
 
+await check('video sound: only the scripted voices; silent clips silent; no background sound asked for', async () => {
+  const { VIDEO_SOUND_DIALOGUE, VIDEO_SOUND_SILENT, withoutBackgroundSound, checkPromptProblems } = await import('../src/services/metaAiPrompt');
+  const story = rd('faiklaen-225-clips.txt');
+  const r = await runWholeStory(story, { offline: true, clipSeconds: 8, maxSteps: 400 }, fakeServer(false));
+  const opts = { ...metaOptionsForStory(story, [], characterNote), aspectRatio: '9:16' };
+  let silent = 0;
+  r.clips.forEach((c, i) => {
+    const ctx = { ...opts, ...metaContextFor(r.clips as any, i) };
+    const v = formatClipForMetaAi(c as any, ctx);
+    if (c.dialogues.length) assert.ok(v.includes(`เสียง: ${VIDEO_SOUND_DIALOGUE}`), `clip ${i + 1}`);
+    else { silent++; assert.ok(v.includes(`เสียง: ${VIDEO_SOUND_SILENT}`), `clip ${i + 1}`); }
+    assert.deepEqual(checkPromptProblems(v, 'video', ctx.camera), [], `clip ${i + 1}`);
+  });
+  assert.equal(silent, 35);
+  // the story keeps what a character hears; only a clause that is background sound itself goes
+  assert.equal(withoutBackgroundSound('ฟ้าใสนั่งผิงไฟ เสียงจิ้งหรีดดังรอบตัว'), 'ฟ้าใสนั่งผิงไฟ');
+  assert.equal(withoutBackgroundSound('ด้านนอก ประตูขยับ ป้าสายได้ยินเพียงเสียงเบา ๆ'), 'ด้านนอก ประตูขยับ ป้าสายได้ยินเพียงเสียงเบา ๆ');
+  assert.equal(withoutBackgroundSound('เพลงคลอเบา ๆ ภาคินยิ้ม'), 'ภาคินยิ้ม');
+});
+
 console.log(`\nwhole story: ${passed} passed`);

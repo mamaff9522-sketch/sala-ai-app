@@ -365,13 +365,13 @@ export function buildActionNarrationLockPromptDirectives(block: {
       block.movement ? `Movement: ${block.movement}` : '',
       block.emotionExpression ? `Emotion: ${block.emotionExpression}` : '',
       'STRICT SILENCE PROTOCOL: All characters remain 100% silent, closed mouth, tight lips, no talking, no mouth movement, pure physical acting and body language only.',
-      'Sound: Atmospheric ambient soundscape only, zero dialogue or spoken voice.'
+      'Sound: complete silence, no dialogue, no ambience, no nature sounds, no music, no sound effects.'
     ].filter(Boolean);
 
     return {
       promptDirective: promptParts.join(', '),
       negativeDirective: 'speaking, talking, mouth moving, opening mouth to speak, lips flapping, mouthing words, voiceover, narrator, dialogue, chatter, whispering, speech bubble',
-      audioDirective: 'ACTION & NARRATION LOCK: 100% Silent Characters (Ambient Atmosphere Only)'
+      audioDirective: 'ACTION & NARRATION LOCK: 100% Silent (no ambience, music or sound effects)'
     };
   }
 
@@ -379,6 +379,6 @@ export function buildActionNarrationLockPromptDirectives(block: {
   return {
     promptDirective: `[ACTION & NARRATION LOCK] Action: ${block.action || 'Acting'}, Movement: ${block.movement || 'Natural'}, Emotion: ${block.emotionExpression || 'In character'}. Dialogue delivery matching verbatim script.`,
     negativeDirective: 'unrelated dialogue, invented speech, out of character voice, shouting without script',
-    audioDirective: `Verbatim Dialogue with Ambient Atmosphere: "${block.dialogueText || ''}"`
+    audioDirective: `Verbatim Dialogue only (no ambience, music or sound effects): "${block.dialogueText || ''}"`
   };
 }

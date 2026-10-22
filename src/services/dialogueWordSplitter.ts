@@ -489,11 +489,11 @@ export function applyDialogue20WordSplitToClips(
       if (!negativePrompt.includes('speaking')) {
         negativePrompt += ', speaking, talking, mouth moving, lips moving, opening mouth, mouthing words, voiceover, dialogue, speech, chatter, whispering';
       }
-      audioDirectiveSummary = 'STRICT SILENCE PROTOCOL: 100% Silent Characters (Ambient Atmosphere Only)';
+      audioDirectiveSummary = 'STRICT SILENCE PROTOCOL: 100% Silent (no ambience, music or sound effects)';
     } else {
       if (!audioDirectiveSummary || audioDirectiveSummary.includes('STRICT SILENCE')) {
         const dText = c.dialogues.map(d => `${d.speaker}: "${d.line}"`).join(' ');
-        audioDirectiveSummary = `Verbatim Dialogue with Ambient Atmosphere: ${dText}`;
+        audioDirectiveSummary = `Verbatim Dialogue only (no ambience, music or sound effects): ${dText}`;
       }
     }
 

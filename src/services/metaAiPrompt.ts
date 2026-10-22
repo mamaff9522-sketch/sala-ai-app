@@ -611,6 +611,23 @@ function withoutRepeats(parts: string[]): string {
   return tidy(out.join('. ') + '.');
 }
 
+/** The video's sound: the characters' scripted voices only (user rule). */
+export const VIDEO_SOUND_DIALOGUE = 'มีเฉพาะเสียงพูดของตัวละครตามบทพูดด้านบน ไม่มีเสียงบรรยากาศ เสียงธรรมชาติ ดนตรี หรือเสียงเอฟเฟกต์ใด ๆ';
+export const VIDEO_SOUND_SILENT = 'เงียบทั้งคลิป ไม่มีเสียงพูด เสียงบรรยากาศ เสียงธรรมชาติ ดนตรี หรือเสียงเอฟเฟกต์ใด ๆ';
+/** "เสียงจิ้งหรีดดังรอบตัว", "เสียงฟ้าร้อง", "เพลงคลอเบา ๆ": a clause that asks for background sound */
+const BACKGROUND_SOUND_RE = /^(?:เสียง(?!พูด|ตัวละคร)\S*|เพลง\S*|ดนตรี\S*|ซาวด์\S*)$/;
+export function withoutBackgroundSound(action: string): string {
+  const out: string[] = [];
+  let dropped = false;
+  for (const seg of String(action || '').split(/\s+/).filter(Boolean)) {
+    if (BACKGROUND_SOUND_RE.test(seg)) { dropped = true; continue; }
+    if (dropped && seg === 'ๆ') continue; // the "ๆ" of the clause just left out
+    dropped = false;
+    out.push(seg);
+  }
+  return out.join(' ').trim();
+}
+
 export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions = {}): string {
   const f = clipFacts(clip, opts);
   const cam = f.cam;
@@ -637,9 +654,12 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
     parts.push(`มุมกล้อง: ${cam.framing}${opts.aspectRatio === '9:16' && !fromBehind ? ' ใบหน้าตัวละครอยู่ช่วงบนของจอ' : ''}`);
     if (cam.movement) parts.push(`การเคลื่อนกล้อง: ${cam.movement}`);
   }
-  // 6. what the characters do (the script's own lines)
-  if (f.action) parts.push(`การเคลื่อนไหวของตัวละคร: ${f.action}`);
-  if (f.extra) parts.push(`รายละเอียดฉาก: ${f.extra}`);
+  // 6. what the characters do (the script's own lines); a clause that only describes background
+  // sound ("เสียงจิ้งหรีดดังรอบตัว") is left out: the video has no sound but the dialogue
+  const moves = withoutBackgroundSound(f.action);
+  if (moves) parts.push(`การเคลื่อนไหวของตัวละคร: ${moves}`);
+  const extra = withoutBackgroundSound(f.extra);
+  if (extra) parts.push(`รายละเอียดฉาก: ${extra}`);
   // 7. dialogue, word for word, with who says it
   if (f.lines.length) parts.push(`บทพูด: ${f.lines.map(d => `${d.speaker || 'ตัวละคร'} พูดว่า "${d.line}"`).join('; ')}`);
   // 8. emotion / acting
@@ -655,6 +675,10 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   } else {
     parts.push('ไม่มีบทพูดในคลิปนี้ ตัวละครไม่พูด');
   }
+  // 11. sound: only the characters' scripted voices (no ambience, nature, music or sound effects)
+  parts.push(f.lines.length
+    ? `เสียง: ${VIDEO_SOUND_DIALOGUE}`
+    : `เสียง: ${VIDEO_SOUND_SILENT}`);
   parts.push('ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำบนจอ');
   return withoutRepeats(parts);
 }
@@ -878,7 +902,10 @@ export function checkPromptProblems(text: string, kind: 'image' | 'video', cam?:
     if (speaks && /ไม่มีบทพูดในคลิปนี้/.test(t)) out.push('มีบทพูดแต่สั่งว่าไม่มีบทพูด');
     if (!speaks && /ปากขยับตรงกับเสียง/.test(t)) out.push('ไม่มีบทพูดแต่สั่งให้ขยับปาก');
     if (/ทุกคนปิดปาก/.test(t) && speaks) out.push('มีบทพูดแต่สั่งให้ทุกคนปิดปาก');
-    for (const label of ['วิดีโอ', 'มุมกล้อง', 'อารมณ์และการแสดง']) if (!t.includes(label)) out.push(`ไม่มี ${label}`);
+    for (const label of ['วิดีโอ', 'มุมกล้อง', 'อารมณ์และการแสดง', 'เสียง:']) if (!t.includes(label)) out.push(`ไม่มี ${label}`);
+    if (speaks && t.includes(VIDEO_SOUND_SILENT)) out.push('มีบทพูดแต่สั่งให้เงียบ');
+    const moves = t.match(/การเคลื่อนไหวของตัวละคร: ([^.]*)/)?.[1] || '';
+    if (moves && withoutBackgroundSound(moves) !== moves.trim()) out.push('สั่งเสียงบรรยากาศในวิดีโอ');
   }
   return out;
 }
