@@ -5,7 +5,7 @@ import { api } from '../services/api';
 import { runWholeStory, type StoryClip } from '../services/wholeStoryRunner';
 import { metaOptionsForStory, offlineContinuation } from '../services/storyProgress';
 import { isClipByClipScript } from '../services/storyNormalize';
-import { formatClipForMetaAi, formatClipImagePrompt, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
+import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
 import { toCharacterLockPayload } from '../services/characterAppearance';
 
 /**
@@ -122,7 +122,8 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
       const photos = photoLine(c);
       return `=== คลิป ${i + 1}/${clips.length} ===${photos ? `\n(อัปโหลดรูป: ${photos})` : ''}\n[พรอมต์สร้างภาพ]\n${imagePrompts[i]}\n[พรอมต์วิดีโอ]\n${prompts[i]}`;
     }).join('\n\n');
-    copy(all, 'all');
+    // The story's shared locks once at the top; every clip prompt below still carries what Meta AI needs
+    copy(`${formatSharedLocks(buildSharedLocks(clips as any, metaOpts))}\n\n${all}`, 'all');
   };
 
   const start = async () => {

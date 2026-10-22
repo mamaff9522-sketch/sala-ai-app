@@ -15,7 +15,7 @@ export interface StoryClip {
   title: string;
   durationSeconds: number;
   generatedPrompt: string;
-  dialogues: { speaker: string; line: string }[];
+  dialogues: { speaker: string; line: string; emotion?: string }[];
   charactersPresent?: string[];
   locationName?: string;
   timeOfDay?: string;
@@ -52,7 +52,7 @@ export function sceneToClip(sc: any, clipSeconds: number): StoryClip {
     durationSeconds: clipSeconds,
     generatedPrompt: String(sc?.visualPrompt || ''),
     dialogues: (Array.isArray(sc?.dialogues) ? sc.dialogues : [])
-      .map((d: any) => ({ speaker: String(d?.speaker || ''), line: String(d?.dialogue ?? d?.line ?? '') }))
+      .map((d: any) => ({ speaker: String(d?.speaker || ''), line: String(d?.dialogue ?? d?.line ?? ''), ...(d?.emotionOrAction ? { emotion: String(d.emotionOrAction) } : {}) }))
       .filter((d: any) => d.line && !isEmptyLine(d.line)),
     charactersPresent: Array.isArray(sc?.characters) ? sc.characters : undefined,
     locationName: sc?.location && !/^ไม่ระบุ/.test(sc.location) ? sc.location : undefined,
