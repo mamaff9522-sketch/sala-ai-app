@@ -5,6 +5,7 @@ import { api } from '../services/api';
 import { runWholeStory, type StoryClip } from '../services/wholeStoryRunner';
 import { metaOptionsForStory, offlineContinuation } from '../services/storyProgress';
 import { isClipByClipScript } from '../services/storyNormalize';
+import { packMultiDialogueClips, MULTI_DIALOGUE_SECONDS } from '../services/multiDialogueClips';
 import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
 import { toCharacterLockPayload } from '../services/characterAppearance';
 
@@ -39,6 +40,9 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
   const [story, setStory] = useState<string>(() => loadJson<string>(DRAFT_KEY, saved?.story || ''));
   const [aspect, setAspect] = useState<string>(saved?.aspect || '9:16');
   const [seconds, setSeconds] = useState<number>(saved?.seconds || 8);
+  // Multi-Dialogue Clip switch: several lines / characters per 10-second clip, split automatically
+  const [multi, setMulti] = useState<boolean>(() => loadJson<boolean>('sala_quick_multi_dialogue', false));
+  useEffect(() => { saveJson('sala_quick_multi_dialogue', multi); }, [multi]);
   const [clips, setClips] = useState<StoryClip[]>(saved?.clips || []);
   const [resultStory, setResultStory] = useState<string>(saved?.story || '');
   const [notices, setNotices] = useState<string[]>(saved?.notices || []);
@@ -160,19 +164,28 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
       const r = await runWholeStory(text, {
         characters: lib,
         aspectRatio: aspect,
-        clipSeconds: seconds,
+        clipSeconds: multi ? MULTI_DIALOGUE_SECONDS : seconds,
         offline: exact,
         maxSteps: exact ? 400 : undefined,
         shouldStop: () => stopRef.current,
         onProgress: p => { setProgress(p.message); setClips(p.clips); }
       }, exact ? runLocal : (payload => api.continueStory(payload)));
+      if (multi && r.clips.length > 0) {
+        // pack into 10-second clips with several lines each (never cutting a line)
+        const before = r.clips.length;
+        const packed = packMultiDialogueClips(r.clips, { seconds: MULTI_DIALOGUE_SECONDS });
+        const long = packed.filter(c => c.overLong).map(c => c.clipNumber);
+        r.notices.unshift(`หลายบทพูดต่อคลิป: จัด ${before} ช่วงเป็น ${packed.length} คลิป คลิปละ ${MULTI_DIALOGUE_SECONDS} วินาที ไม่ตัดประโยค`
+          + (long.length ? ` (ประโยคยาวเกิน ${MULTI_DIALOGUE_SECONDS} วินาที อยู่คลิปเดียวของมันเอง: คลิป ${long.join(', ')})` : ''));
+        r.clips = packed;
+      }
       setClips(r.clips);
       const notices = r.notices.filter(n => !exact || !n.includes('ไม่ใช้ AI ตั้งแต่'));
       if (exact) notices.unshift('บทนี้แบ่งคลิปมาแล้ว ระบบใช้คลิปตามบทเป๊ะทุกคลิป สร้างในเครื่อง ไม่ใช้ AI ไม่เสียเครดิต');
       r.notices = notices;
       setNotices(notices);
       if (r.error) setError(`สร้างได้ ${r.clips.length} คลิปแล้วเกิดปัญหา: ${r.error} — กดสร้างใหม่อีกครั้งได้`);
-      saveJson(RESULT_KEY, { story: text, clips: r.clips, notices: r.notices, aspect, seconds });
+      saveJson(RESULT_KEY, { story: text, clips: r.clips, notices: r.notices, aspect, seconds: multi ? MULTI_DIALOGUE_SECONDS : seconds });
     } catch (e: any) {
       setError(String(e?.message || e));
     } finally {
@@ -218,12 +231,19 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
             ))}
             <span className="text-slate-400 ml-2">ความยาวคลิป</span>
             {[8, 10].map(s => (
-              <button key={s} type="button" disabled={running} onClick={() => setSeconds(s)}
-                className={`px-3 py-1.5 rounded-lg border ${seconds === s ? 'border-indigo-400 bg-indigo-600/30 text-white' : 'border-slate-700 text-slate-300'}`}>
+              <button key={s} type="button" disabled={running || (multi && s !== MULTI_DIALOGUE_SECONDS)} onClick={() => setSeconds(s)}
+                className={`px-3 py-1.5 rounded-lg border disabled:opacity-40 ${(multi ? MULTI_DIALOGUE_SECONDS : seconds) === s ? 'border-indigo-400 bg-indigo-600/30 text-white' : 'border-slate-700 text-slate-300'}`}>
                 {s} วิ
               </button>
             ))}
           </div>
+          <label className="flex items-start gap-2.5 rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-[13px] cursor-pointer">
+            <input type="checkbox" checked={multi} disabled={running} onChange={e => setMulti(e.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-500" />
+            <span>
+              <span className="font-semibold text-slate-100">หลายบทพูดต่อคลิป (Multi-Dialogue)</span>
+              <span className="block text-slate-400">แบ่งคลิปอัตโนมัติตามเวลา คลิปละ {MULTI_DIALOGUE_SECONDS} วินาที หลายประโยคและหลายตัวละครในคลิปเดียว ไม่ตัดกลางประโยค พูดไม่ทันย้ายไปคลิปถัดไป</span>
+            </span>
+          </label>
 
           <button
             type="button"

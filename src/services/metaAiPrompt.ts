@@ -38,6 +38,8 @@ interface ClipForMeta {
   endAction?: string;
   startPoses?: PoseForMeta[];
   endPoses?: PoseForMeta[];
+  /** Multi-Dialogue Clip: what happens and who speaks, in order, with rough times (multiDialogueClips.ts) */
+  sequence?: { kind: 'action' | 'line'; text: string; speaker?: string; n?: number; start: number; end: number }[];
 }
 
 export interface MetaAiFormatOptions {
@@ -132,7 +134,7 @@ const ANGLE_TEXT: Record<CameraAngle, (who: string, partner?: string) => string>
   eye: () => 'Eye Level: กล้องระดับสายตา'
 };
 
-const samePlace = (a: string, b: string) => {
+export const samePlace = (a: string, b: string) => {
   const n = (x: string) => String(x || '').replace(/\s|ต่อเนื่อง|ที่/g, '').toLowerCase();
   return !!n(a) && !!n(b) && (n(a) === n(b) || n(a).includes(n(b)) || n(b).includes(n(a)));
 };
@@ -161,7 +163,7 @@ const MOVING_RE = /(?:เดิน|ก้าว|วิ่ง|เข้ามา|
 const camCache = new WeakMap<object, CameraShot[]>();
 
 const LABEL_CUT_RE = /\s*(?:Continuity Flow|Starting moment|Ending momentum|Dialogue|Continuity Handoff|Stance\/Position Lock|Spatial Position Lock|Location Lock|Lighting Lock)\s*:.*$/;
-function clipAction(clip: ClipForMeta): string {
+export function clipAction(clip: ClipForMeta): string {
   const prompt = String(clip.generatedPrompt || '');
   const secs = findSections(prompt);
   const parts = ['Core action', 'Scene Action', 'Script action']
@@ -259,11 +261,20 @@ export function planCameras(clips: ClipForMeta[]): CameraShot[] {
             shot('close', `ภาพใกล้หน้า ${speaker} ขณะพูด`, emotional ? 'กล้องค่อยๆ ดันเข้าช้าๆ' : 'กล้องนิ่ง')
           ];
       if (emotional && listener) options.unshift(options.splice(1, 1)[0]);
+      // two (or more) people talking in one clip: frame them together
+      const talkers = Array.from(new Set(lines.map(d => String(d.speaker || '').trim()).filter(Boolean)));
+      if (talkers.length > 1) {
+        options.unshift(shot('two', `ภาพสองคน ${talkers[0]} และ ${talkers[1]} อยู่ในเฟรม ขณะคุยกัน${sidesText(talkers.slice(0, 2))}`, 'กล้องนิ่ง'));
+        options.splice(1, 0, shot('ots', `ภาพใกล้ระดับไหล่ ถ่ายข้ามไหล่${talkers[1]}ไปที่${talkers[0]}${sidesText([talkers[1], talkers[0]])}`, 'กล้องนิ่ง'));
+      }
       if (moving) options.unshift(shot('medium', `ภาพครึ่งตัว ${subject || speaker} ขณะเคลื่อนที่`, 'กล้องเลื่อนตามช้าๆ'));
       // someone walking cannot be shown in a face close-up
       const fit = moving ? options.filter(o => o.kind !== 'close') : options;
       cam = fit.find(o => o.kind !== prev?.kind) || fit[0];
-      if (cam.kind === 'ots' || cam.kind === 'two') cam.partner = listener;
+      if (cam.kind === 'ots' || cam.kind === 'two') {
+        const talkers = Array.from(new Set(lines.map(d => String(d.speaker || '').trim()).filter(Boolean)));
+        cam.partner = talkers.length > 1 ? talkers[1] : listener;
+      }
       if (cam.kind !== 'medium' || !moving) cam.subject = speaker;
     }
     // Walking again in the same shot size as the clip before: follow the walk in a wide shot instead
@@ -657,11 +668,17 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   // 6. what the characters do (the script's own lines); a clause that only describes background
   // sound ("เสียงจิ้งหรีดดังรอบตัว") is left out: the video has no sound but the dialogue
   const moves = withoutBackgroundSound(f.action);
-  if (moves) parts.push(`การเคลื่อนไหวของตัวละคร: ${moves}`);
+  const seq = (clip.sequence || []).filter(st => st.kind === 'line' || withoutBackgroundSound(st.text));
+  const multi = seq.length > 1 && f.lines.length > 0;
+  const sec = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+  if (multi) {
+    // several beats in one clip: the order (and rough time) of every action and line
+    parts.push(`ลำดับในคลิป: ${seq.map((st, k) => `${k + 1}) ${sec(st.start)}–${sec(st.end)} วิ ${st.kind === 'line' ? `${st.speaker} พูดประโยคที่ ${st.n}` : withoutBackgroundSound(st.text)}`).join(' ')}`);
+  } else if (moves) parts.push(`การเคลื่อนไหวของตัวละคร: ${moves}`);
   const extra = withoutBackgroundSound(f.extra);
   if (extra) parts.push(`รายละเอียดฉาก: ${extra}`);
   // 7. dialogue, word for word, with who says it
-  if (f.lines.length) parts.push(`บทพูด: ${f.lines.map(d => `${d.speaker || 'ตัวละคร'} พูดว่า "${d.line}"`).join('; ')}`);
+  if (f.lines.length) parts.push(`บทพูด: ${f.lines.map((d, k) => `${multi ? `ประโยคที่ ${k + 1} ` : ''}${d.speaker || 'ตัวละคร'} พูดว่า "${d.line}"`).join('; ')}`);
   // 8. emotion / acting
   const felt = f.lines.filter(d => d.emotion).map(d => `${d.speaker} ${d.emotion}`);
   parts.push(`อารมณ์และการแสดง: ${felt.length ? felt.join('; ') + ' ' : ''}สีหน้า ท่าทาง${f.lines.length ? ' และน้ำเสียง' : ''}ตรงกับเหตุการณ์${f.lines.length ? 'และบทพูด' : ''}`);
@@ -672,6 +689,7 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   if (f.lines.length) {
     parts.push('ตัวละครพูดภาษาไทยตามบทพูดด้านบนคำต่อคำ ปากขยับตรงกับเสียง ไม่พูดประโยคอื่นเพิ่ม');
     if (f.speakers.length === 1 && f.names.some(n => n !== f.speakers[0])) parts.push(`เฉพาะ${f.speakers[0]}ที่ขยับปากพูด ตัวละครอื่นปิดปาก ไม่พูดตาม`);
+    if (f.speakers.length > 1) parts.push('พูดตามลำดับประโยคด้านบน แต่ละคนขยับปากเฉพาะตอนพูดประโยคของตัวเอง คนที่ไม่ได้พูดปิดปาก ห้ามพูดแทรก ห้ามสลับคนพูด');
   } else {
     parts.push('ไม่มีบทพูดในคลิปนี้ ตัวละครไม่พูด');
   }
@@ -757,9 +775,12 @@ function imagePromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): ImagePa
       clean(p?.gesture) && !/^มอง/.test(clean(p?.gesture)) ? clean(p?.gesture) : ''
     ].filter(Boolean).join(', ')}`;
   });
-  const setPiece = f.action.match(/(ประตู|หน้าต่าง|บันได|โต๊ะ|โซฟา|รถ|เตียง|ราวบันได)/)?.[1];
-  const moment = f.action
-    ? `จังหวะในภาพ: ${f.action}${cam.moving ? ' (กำลังเคลื่อนไหว เช่น กำลังก้าว ไม่ใช่ยืนโพสนิ่ง)' : ''}${setPiece ? ` ให้เห็น${setPiece}เท่าที่ระยะกล้องอนุญาต` : ''}`
+  // a packed clip (several beats): the still is its first moment
+  const firstAction = (clip.sequence || []).find(st => st.kind === 'action')?.text;
+  const shown = clip.sequence && clip.sequence.length > 1 ? (clip.sequence[0].kind === 'action' ? firstAction || '' : '') : f.action;
+  const setPiece = shown.match(/(ประตู|หน้าต่าง|บันได|โต๊ะ|โซฟา|รถ|เตียง|ราวบันได)/)?.[1];
+  const moment = shown
+    ? `จังหวะในภาพ: ${shown}${cam.moving ? ' (กำลังเคลื่อนไหว เช่น กำลังก้าว ไม่ใช่ยืนโพสนิ่ง)' : ''}${setPiece ? ` ให้เห็น${setPiece}เท่าที่ระยะกล้องอนุญาต` : ''}`
     : '';
   const face = f.names.length
     ? `${f.names.some(backTurned) ? 'ตัวละครที่หันหลังแสดงอารมณ์ผ่านท่าทาง ' : ''}สีหน้าและอารมณ์ตรงกับเหตุการณ์ ทุกคนปิดปาก ยังไม่พูด`
