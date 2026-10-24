@@ -6,7 +6,7 @@ import { runWholeStory, type StoryClip } from '../services/wholeStoryRunner';
 import { metaOptionsForStory, offlineContinuation } from '../services/storyProgress';
 import { isClipByClipScript } from '../services/storyNormalize';
 import { packMultiDialogueClips, MULTI_DIALOGUE_SECONDS } from '../services/multiDialogueClips';
-import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, formatPlaceVideoBatch, VIDEO_BATCH_SIZE, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
+import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, formatPlaceVideoBatch, VIDEO_BATCH_SIZE, attachmentLine, sensitiveWords, formatLocationMasterPrompt, thaiLighting, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
 import { toCharacterLockPayload } from '../services/characterAppearance';
 
 /**
@@ -136,10 +136,12 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
   const copyAll = () => {
     const all = clips.map((c, i) => {
       const photos = photoLine(c);
-      return `=== คลิป ${i + 1}/${clips.length} ===${photos ? `\n(อัปโหลดรูป: ${photos})` : ''}\n[พรอมต์สร้างภาพ]\n${imagePrompts[i]}\n[พรอมต์วิดีโอ]\n${prompts[i]}`;
+      const att = attachmentLine(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) });
+      return `=== คลิป ${i + 1}/${clips.length} ===${att ? `\n(แนบก่อนพิมพ์: ${att})` : ''}\n[พรอมต์สร้างภาพ]\n${imagePrompts[i]}\n[พรอมต์วิดีโอ]\n${prompts[i]}`;
     }).join('\n\n');
     // The story's shared locks once at the top; every clip prompt below still carries what Meta AI needs
-    copy(`${formatSharedLocks(buildSharedLocks(clips as any, metaOpts))}\n\n${all}`, 'all');
+    const tips = 'วิธีใช้กับ Meta AI: แนบไฟล์ตาม "แนบก่อนพิมพ์" ทุกช็อตก่อนพิมพ์ · สร้างภาพนิ่งก่อนแล้วค่อยทำเป็นวิดีโอ · คลิปต่อเนื่องให้แนบเฟรมสุดท้ายของคลิปก่อน · ใช้โหมด Quality · เริ่มแชทใหม่เป็นระยะแล้วแนบมาสเตอร์ใหม่';
+    copy(`${tips}\n\n${formatSharedLocks(buildSharedLocks(clips as any, metaOpts))}\n\n${all}`, 'all');
   };
 
   const start = async () => {
@@ -241,7 +243,7 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
             <input type="checkbox" checked={multi} disabled={running} onChange={e => setMulti(e.target.checked)} className="mt-0.5 h-4 w-4 accent-indigo-500" />
             <span>
               <span className="font-semibold text-slate-100">หลายบทพูดต่อคลิป (Multi-Dialogue)</span>
-              <span className="block text-slate-400">แบ่งคลิปอัตโนมัติตามเวลา คลิปละ {MULTI_DIALOGUE_SECONDS} วินาที หลายประโยคและหลายตัวละครในคลิปเดียว ไม่ตัดกลางประโยค พูดไม่ทันย้ายไปคลิปถัดไป</span>
+              <span className="block text-slate-400">แบ่งคลิปอัตโนมัติตามเวลา คลิปละ {MULTI_DIALOGUE_SECONDS} วินาที หลายประโยคและหลายตัวละครในคลิปเดียว ไม่ตัดกลางประโยค พูดไม่ทันย้ายไปคลิปถัดไป (Meta แนะนำ 1 คนพูดต่อคลิป ปิดไว้จะได้ผลแม่นกว่า)</span>
             </span>
           </label>
 
@@ -289,13 +291,18 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                 </button>
               )}
             </div>
+            {!running && (
+              <div className="rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-[12px] text-slate-300 leading-relaxed">
+                วิธีใช้กับ Meta AI: แนบไฟล์ตาม "แนบก่อนพิมพ์" ทุกช็อตก่อนพิมพ์ · สร้างภาพนิ่งก่อนแล้วค่อยทำเป็นวิดีโอ · คลิปต่อเนื่องให้แนบเฟรมสุดท้ายของคลิปก่อน · ใช้โหมด Quality ไม่ใช่ Instant · เริ่มแชทใหม่เป็นระยะหรือเมื่อภาพเริ่มเพี้ยน แล้วแนบมาสเตอร์ใหม่
+              </div>
+            )}
             {!running && placeGroups.length > 0 && (
               <details className="rounded-2xl border border-amber-500/40 bg-[#0b1224]/90 p-3">
                 <summary className="cursor-pointer text-[13px] font-semibold text-amber-300">
                   คัดลอกพรอมต์ตามสถานที่ (ภาพ / วิดีโอ หลายคลิปพร้อมกัน)
                 </summary>
                 <p className="mt-1.5 text-[12px] text-slate-400">
-                  คลิปที่อยู่สถานที่และเวลาเดียวกัน รวมเป็นพรอมต์เดียว ชุดละไม่เกิน {IMAGE_BATCH_SIZE} ภาพ หรือ {VIDEO_BATCH_SIZE} คลิปวิดีโอ ข้อมูลตัวละคร ชุด สถานที่ แสง และเสียง เขียนครั้งเดียวด้านบน
+                  ทำ "ภาพมาสเตอร์สถานที่" ของแต่ละที่ก่อน แล้วแนบทุกครั้งที่สร้างภาพหรือวิดีโอในที่นั้น คลิปที่อยู่สถานที่และเวลาเดียวกัน รวมเป็นพรอมต์เดียว ชุดละไม่เกิน {IMAGE_BATCH_SIZE} ภาพ หรือ {VIDEO_BATCH_SIZE} คลิปวิดีโอ ข้อมูลตัวละคร ชุด สถานที่ แสง และเสียง เขียนครั้งเดียวด้านบน
                 </p>
                 <div className="mt-2 space-y-2.5">
                   {placeGroups.map((g, gi) => {
@@ -307,6 +314,14 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                       <div key={gi} className="rounded-xl border border-slate-700 p-2">
                         <div className="text-[13px] font-semibold text-slate-100">{[g.location, g.timeOfDay].filter(Boolean).join(' · ') || 'ไม่ระบุสถานที่'}</div>
                         <div className="text-[12px] text-slate-400">คลิป {ranges(g.clips.map(i => i + 1))} ({g.clips.length} ภาพ)</div>
+                        <button type="button"
+                          onClick={() => {
+                            const raw = String((clips[g.clips[0]] as any)?.generatedPrompt || '').match(/Lighting Lock:\s*([^.]*)/)?.[1] || '';
+                            copy(formatLocationMasterPrompt(g.location, g.timeOfDay, thaiLighting(raw, g.timeOfDay), aspect), `master${gi}`);
+                          }}
+                          className="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-slate-900 px-2.5 py-1 text-[12px]">
+                          {copied === `master${gi}` ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> คัดลอกแล้ว</> : <><Copy className="w-3.5 h-3.5" /> ภาพมาสเตอร์สถานที่ (ทำก่อน)</>}
+                        </button>
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                           <span className="text-[11px] font-semibold text-amber-300 w-12">ภาพ</span>
                           {chunks.map((ch, ci) => (
@@ -347,7 +362,14 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                       {copied === `c${i}` ? <><Check className="w-4 h-4 text-emerald-400" /> คัดลอกแล้ว</> : <><Copy className="w-4 h-4" /> คัดลอก</>}
                     </button>
                   </div>
-                  {photos && <div className="mt-1.5 text-[12px] text-cyan-300">อัปโหลดรูปใน Meta AI: {photos}</div>}
+                  {(() => {
+                    const att = attachmentLine(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) });
+                    const risky = sensitiveWords(c as any);
+                    return <>
+                      {att && <div className="mt-1.5 text-[12px] text-cyan-300">แนบใน Meta AI ก่อนพิมพ์: {att}</div>}
+                      {risky.length > 0 && <div className="mt-1 flex items-start gap-1 text-[12px] text-rose-300"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />มีการกระทำที่ Meta อาจปฏิเสธ ({risky.join(', ')}) พรอมต์สั่งให้เป็นดราม่าด้วยคำพูดแทนแล้ว</div>}
+                    </>;
+                  })()}
                   <div className="mt-2 rounded-xl border border-amber-500/40 bg-amber-500/5 p-2">
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-[12px] font-semibold text-amber-300">1. พรอมต์สร้างภาพ</div>

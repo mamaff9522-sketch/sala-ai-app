@@ -237,7 +237,10 @@ export function planCameras(clips: ClipForMeta[]): CameraShot[] {
     } else if (newPlace) {
       cam = names.length >= 2
         ? shot('wide', `ภาพกว้าง เห็นทั้ง${place || 'สถานที่'}และทุกคนในฉาก${sidesText(names)}`, 'กล้องค่อยๆ เลื่อนเข้าช้าๆ')
-        : shot('medium', `ภาพครึ่งตัว ${subject} เห็นพื้นหลังของ${place || 'สถานที่'}`, 'กล้องค่อยๆ เลื่อนเข้าช้าๆ');
+        : names.length === 0
+          // nobody in the shot: an establishing view of the place itself
+          ? shot('wide', `ภาพกว้าง เห็นทั้ง${place || 'สถานที่'}`, 'กล้องค่อยๆ เลื่อนเข้าช้าๆ')
+          : shot('medium', `ภาพครึ่งตัว ${subject} เห็นพื้นหลังของ${place || 'สถานที่'}`, 'กล้องค่อยๆ เลื่อนเข้าช้าๆ');
     } else if (lines.length === 0) {
       const prop = action.match(PROP_RE)?.[1];
       if (prop && prev?.kind !== 'insert') {
@@ -276,6 +279,12 @@ export function planCameras(clips: ClipForMeta[]): CameraShot[] {
         cam.partner = talkers.length > 1 ? talkers[1] : listener;
       }
       if (cam.kind !== 'medium' || !moving) cam.subject = speaker;
+    }
+    // Crying / tears: Meta refuses heavy crying in close-ups with real faces -> medium shot
+    if (cam.kind === 'close' && /ร้องไห้|น้ำตา|สะอื้น/.test(action)) {
+      const alt = [shot('medium', `ภาพครึ่งตัว ${subject || speaker}`, 'กล้องนิ่ง'), shot('two', `ภาพสองคน ${names.slice(0, 2).join(' และ ')} อยู่ในเฟรม${sidesText(names.slice(0, 2))}`, 'กล้องนิ่ง'), shot('wide', `ภาพกว้าง เห็น${subject || speaker || 'ตัวละคร'}ใน${place || 'ฉาก'}${sidesText(names)}`, 'กล้องนิ่ง')]
+        .filter(o => o.kind !== 'two' || names.length > 1);
+      cam = alt.find(o => o.kind !== prev?.kind) || alt[0];
     }
     // Walking again in the same shot size as the clip before: follow the walk in a wide shot instead
     if (moving && cam.kind !== 'script' && cam.kind === prev?.kind) {
@@ -640,69 +649,139 @@ export function withoutBackgroundSound(action: string): string {
 }
 
 /** The pieces of one clip's video prompt, by role (the scene batch writes the shared ones once). */
-interface VideoPart { key: 'head' | 'place' | 'cast' | 'start' | 'camera' | 'action' | 'dialogue' | 'emotion' | 'ending' | 'speech' | 'sound' | 'notext'; text: string }
+interface VideoPart { key: 'head' | 'place' | 'cast' | 'start' | 'camera' | 'action' | 'dialogue' | 'emotion' | 'ending' | 'speech' | 'safety' | 'sound' | 'notext'; text: string }
 
 function videoPromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): VideoPart[] {
   const f = clipFacts(clip, opts);
   const cam = f.cam;
   const parts: VideoPart[] = [];
   const add = (key: VideoPart['key'], text: string) => { if (text) parts.push({ key, text }); };
-  // 1. length + format
-  add('head', [clip.durationSeconds ? `วิดีโอยาว ${clip.durationSeconds} วินาที` : 'วิดีโอ', opts.aspectRatio ? `สัดส่วนภาพ ${opts.aspectRatio}` : '', 'ภาพสมจริงแบบภาพยนตร์ เคลื่อนไหวเป็นธรรมชาติ'].filter(Boolean).join(', '));
-  // 2. place + light
-  const where = placeText(f);
-  if (where) add('place', `ล็อกฉาก: ${where} — ฉากและแสงคงเดิมทั้งคลิป ห้ามเปลี่ยนสถานที่`);
-  // 3. characters + continuity of looks and voices
-  if (f.names.length) {
-    add('cast', `ตัวละคร${f.photoNames.length ? ' (ใช้รูปที่อัปโหลดเป็นต้นแบบ)' : ''}: ${castText(f, 'all')} — ใบหน้า ทรงผม ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป ${f.animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}`);
-  }
-  // 4. where everyone starts
-  // in the same place the clip starts where the previous one ended (said by the pose lock below);
-  // its "starting moment" is the previous clip's last action and would be played twice
+  const att = attachmentsFor(clip, opts, f);
+  // Order Meta AI asked for: story context, location lock + master, character lock + faces + looks,
+  // continuity (last frame), action, dialogue lock + safety.
+  // 1. story context + length + format
+  add('head', `บริบท: ละครดราม่าไทยแต่ง (นิยาย) นักแสดงผู้ใหญ่ที่ยินยอม, ${[clip.durationSeconds ? `วิดีโอยาว ${clip.durationSeconds} วินาที` : 'วิดีโอ', opts.aspectRatio ? `สัดส่วนภาพ ${opts.aspectRatio}` : '', 'ภาพสมจริงแบบภาพยนตร์ เคลื่อนไหวเป็นธรรมชาติ'].filter(Boolean).join(', ')}`);
+  // 2. location lock: attach the master image + the same bible block word for word every time
+  if (f.place.location || f.place.timeOfDay) add('place', `ล็อกฉาก (แนบภาพมาสเตอร์ "${masterName(f.place.location)}"): ${locationBible(f.place.location, f.place.timeOfDay, f.lighting)}`);
+  // 3. character lock: at most two faces attached, a fixed look line for everyone
+  if (f.names.length) add('cast', characterLock(f, att.faces));
+  // 4. continuity: the previous clip's last frame is frame 1
   if (f.startMoment && !f.continuous) add('start', `จังหวะเริ่มคลิป: ${f.startMoment}`);
+  if (f.continuous && f.hasPrevious && att.lastFrameOf) {
+    add('start', `ความต่อเนื่อง: แนบเฟรมสุดท้ายของคลิป ${att.lastFrameOf} เป็นเฟรมแรก continue from this exact frame ท่า ตำแหน่ง ชุด แสง และกล้องเดิม no jump cut`);
+  }
   if (f.carried) add('start', `ท่าเริ่มคลิป (ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ ห้ามเล่นเหตุการณ์ของคลิปก่อนซ้ำ): ${f.carried}`);
   else if (f.ownStart) add('start', f.hasPrevious && !f.continuous ? `เปลี่ยนสถานที่ ท่าเริ่มคลิป: ${f.ownStart}` : `ท่าเริ่มคลิป: ${f.ownStart}`);
-  else if (f.continuous && f.hasPrevious) add('start', 'ท่าเริ่มคลิป: ต่อจากคลิปก่อนทันที ตำแหน่งเดิม ห้ามเล่นเหตุการณ์ของคลิปก่อนซ้ำ');
-  // 5. camera + camera movement
+  // 5. camera (the speaker's mouth clearly visible) + one beat of action
   if (cam) {
     const fromBehind = cam.angle === 'rear' || cam.angle === 'rear34';
-    add('camera', `มุมกล้อง: ${cam.framing}${opts.aspectRatio === '9:16' && !fromBehind ? ' ใบหน้าตัวละครอยู่ช่วงบนของจอ' : ''}`);
+    add('camera', `มุมกล้อง: ${cam.framing}${opts.aspectRatio === '9:16' && !fromBehind ? ' ใบหน้าตัวละครอยู่ช่วงบนของจอ' : ''}${f.lines.length ? ' เห็นปากคนพูดชัด หันหน้าเข้ากล้อง แสงดี' : ''}`);
     if (cam.movement) add('camera', `การเคลื่อนกล้อง: ${cam.movement}`);
   }
-  // 6. what the characters do (the script's own lines); a clause that only describes background
-  // sound ("เสียงจิ้งหรีดดังรอบตัว") is left out: the video has no sound but the dialogue
+  // a clause that only describes background sound ("เสียงจิ้งหรีดดังรอบตัว") is left out:
+  // the video has no sound but the dialogue
   const moves = withoutBackgroundSound(f.action);
   const seq = (clip.sequence || []).filter(st => st.kind === 'line' || withoutBackgroundSound(st.text));
   const multi = seq.length > 1 && f.lines.length > 0;
   const sec = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
   if (multi) {
-    // several beats in one clip: the order (and rough time) of every action and line
     add('action', `ลำดับในคลิป: ${seq.map((st, k) => `${k + 1}) ${sec(st.start)}–${sec(st.end)} วิ ${st.kind === 'line' ? `${st.speaker} พูดประโยคที่ ${st.n}` : withoutBackgroundSound(st.text)}`).join(' ')}`);
   } else if (moves) add('action', `การเคลื่อนไหวของตัวละคร: ${moves}`);
   const extra = withoutBackgroundSound(f.extra);
   if (extra) add('action', `รายละเอียดฉาก: ${extra}`);
-  // 7. dialogue, word for word, with who says it
-  if (f.lines.length) add('dialogue', `บทพูด: ${f.lines.map((d, k) => `${multi ? `ประโยคที่ ${k + 1} ` : ''}${d.speaker || 'ตัวละคร'} พูดว่า "${d.line}"`).join('; ')}`);
-  // 8. emotion / acting
-  const felt = f.lines.filter(d => d.emotion).map(d => `${d.speaker} ${d.emotion}`);
-  add('emotion', `อารมณ์และการแสดง: ${felt.length ? felt.join('; ') + ' ' : ''}สีหน้า ท่าทาง${f.lines.length ? ' และน้ำเสียง' : ''}ตรงกับเหตุการณ์${f.lines.length ? 'และบทพูด' : ''}`);
-  // 9. where the clip ends (handed to the next clip)
-  const ending = [f.end, f.endMoment && !f.end.includes(f.endMoment) ? f.endMoment : ''].filter(Boolean).join('; ');
-  if (ending) add('ending', `ท่าจบคลิป (ค้างไว้ส่งต่อคลิปถัดไป): ${ending}`);
-  // 10. speech rules
+  // 6. dialogue lock (Meta's formula) + who may move their lips
   if (f.lines.length) {
-    add('speech', 'ตัวละครพูดภาษาไทยตามบทพูดด้านบนคำต่อคำ ปากขยับตรงกับเสียง ไม่พูดประโยคอื่นเพิ่ม');
-    if (f.speakers.length === 1 && f.names.some(n => n !== f.speakers[0])) add('speech', `เฉพาะ${f.speakers[0]}ที่ขยับปากพูด ตัวละครอื่นปิดปาก ไม่พูดตาม`);
+    add('dialogue', `บทพูด: ${f.lines.map((d, k) => `${multi ? `ประโยคที่ ${k + 1} ` : ''}${d.speaker || 'ตัวละคร'} ${DIALOGUE_FORMULA}: "${d.line}"`).join('; ')}`);
+    if (f.speakers.length === 1) add('speech', `Only ${f.speakers[0]} speaks, other silent`);
     if (f.speakers.length > 1) add('speech', 'พูดตามลำดับประโยคด้านบน แต่ละคนขยับปากเฉพาะตอนพูดประโยคของตัวเอง คนที่ไม่ได้พูดปิดปาก ห้ามพูดแทรก ห้ามสลับคนพูด');
   } else {
     add('speech', 'ไม่มีบทพูดในคลิปนี้ ตัวละครไม่พูด');
   }
-  // 11. sound: only the characters' scripted voices (no ambience, nature, music or sound effects)
-  add('sound', f.lines.length
-    ? `เสียง: ${VIDEO_SOUND_DIALOGUE}`
-    : `เสียง: ${VIDEO_SOUND_SILENT}`);
-  add('notext', 'ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำบนจอ');
+  add('safety', SAFETY_LINE);
+  // emotion, end pose, sound, no text
+  const felt = f.lines.filter(d => d.emotion).map(d => `${d.speaker} ${d.emotion}`);
+  add('emotion', `อารมณ์และการแสดง: ${felt.length ? felt.join('; ') + ' ' : ''}สีหน้า ท่าทาง${f.lines.length ? ' และน้ำเสียง' : ''}ตรงกับเหตุการณ์${f.lines.length ? 'และบทพูด' : ''}`);
+  const ending = [f.end, f.endMoment && !f.end.includes(f.endMoment) ? f.endMoment : ''].filter(Boolean).join('; ');
+  if (ending) add('ending', `ท่าจบคลิป (ค้างไว้ส่งต่อคลิปถัดไป): ${ending}`);
+  add('sound', f.lines.length ? `เสียง: ${VIDEO_SOUND_DIALOGUE}` : `เสียง: ${VIDEO_SOUND_SILENT}`);
+  add('notext', 'no subtitles ไม่มีตัวหนังสือหรือลายน้ำบนจอ');
   return parts;
+}
+
+// ---- What Meta AI asked for (its own answer, kept in the prompts) --------------------------------
+/** Meta's dialogue formula: name + this + the Thai line in quotes */
+export const DIALOGUE_FORMULA = 'speaks in Thai, exact line, lip-sync, no paraphrase';
+/** Real faces + physical violence / heavy distress are refused: drama in words, emotion without harm */
+export const SAFETY_LINE = 'ความปลอดภัย: ดราม่าด้วยคำพูดเท่านั้น ไม่มีการทำร้ายร่างกาย ไม่ตี ไม่ผลัก แสดงอารมณ์ผ่านน้ำตาคลอและเสียงสั่น ไม่ร้องไห้หนักในภาพใกล้มาก';
+/** Actions Meta may refuse with real faces (shown as a warning on the clip card, the script is not changed) */
+const SENSITIVE_RE = /(ตบ|ตี(?!ความ|ห|ตัว|สอง|หนึ่ง|นิ้ว)|ผลัก|ต่อย|เตะ|ทำร้าย|บีบคอ|แทง|ยิง|เลือด|ฆ่า|ทุบ|กระชาก|จูบ|ถอดเสื้อ|เปลือย)/g;
+export function sensitiveWords(clip: ClipForMeta): string[] {
+  return Array.from(new Set((clipAction(clip).match(SENSITIVE_RE) || [])));
+}
+
+function first0Master(clips: ClipForMeta[], indexes: number[]): string {
+  const p = indexes.length ? sceneOfClip(clips, indexes[0]) : { location: '' };
+  return p.location ? `ภาพมาสเตอร์ ${masterName(p.location)}` : '';
+}
+
+/** "ห้องโถงคฤหาสน์ Master": the empty-set picture attached with every prompt at that place */
+export function masterName(location: string): string {
+  return `${location || 'สถานที่'} Master`;
+}
+
+/**
+ * Location Bible: the same block, word for word, in every prompt at a place (Meta: never rewrite it).
+ * Floor, walls, stairs, curtains, doors, light direction, time, camera height.
+ */
+export function locationBible(location: string, timeOfDay: string, lighting: string): string {
+  let h = 0;
+  for (const ch of String(location || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const side = h % 2 ? 'ซ้าย' : 'ขวา';
+  return [
+    `สถานที่ ${location || 'เดิม'}${timeOfDay ? ` เวลา ${timeOfDay}` : ''}`,
+    'พื้น ผนัง บันได ม่าน ประตู หน้าต่าง และเฟอร์นิเจอร์ ตำแหน่งและสีตามภาพมาสเตอร์ทุกจุด ห้ามย้าย เพิ่ม หรือลบ',
+    `${lighting || 'แสงธรรมชาติ'} แสงหลักเข้าจากด้าน${side}ของภาพ`,
+    'กล้องระดับสายตา เลนส์ 35 มม. ฉากและแสงคงเดิมทั้งคลิป ห้ามเปลี่ยนสถานที่'
+  ].join(' — ');
+}
+
+/** Still image of the empty set, made once per place and attached to every prompt there. */
+export function formatLocationMasterPrompt(location: string, timeOfDay: string, lighting: string, aspectRatio = ''): string {
+  return [
+    `ภาพมาสเตอร์สถานที่ "${masterName(location)}": ภาพนิ่ง${aspectRatio ? ` ${aspectRatio}` : ''} ภาพถ่ายสมจริงแบบฉากในภาพยนตร์ สถานที่ว่าง ไม่มีคน`,
+    locationBible(location, timeOfDay, lighting),
+    'เห็นพื้นที่ทั้งหมดของสถานที่ชัดเจน ไม่มีตัวหนังสือหรือลายน้ำ'
+  ].join('. ') + '.';
+}
+
+/** What to attach before typing this clip's prompt: the place master, at most two faces, the last frame. */
+export function attachmentsFor(clip: ClipForMeta, opts: MetaAiFormatOptions, facts?: ClipFacts): { master: string; faces: { n: number; name: string }[]; lastFrameOf?: number } {
+  const f = facts || clipFacts(clip, opts);
+  const cam = f.cam;
+  const order = [...f.speakers, cam?.subject || '', cam?.partner || '', ...f.names];
+  const faces: { n: number; name: string }[] = [];
+  for (const n of order) {
+    if (!n || !f.photoNames.includes(n) || faces.some(x => x.name === n)) continue;
+    faces.push({ n: f.photoNo.get(n) || 0, name: n });
+    if (faces.length === 2) break;
+  }
+  faces.sort((a, b) => a.n - b.n);
+  const prev = opts.previous;
+  const lastFrameOf = f.continuous && prev ? (Number(prev.clip.clipNumber) || undefined) : undefined;
+  return { master: f.place.location ? masterName(f.place.location) : '', faces, lastFrameOf };
+}
+
+/** "แนบก่อนพิมพ์: …" for the clip card. */
+export function attachmentLine(clip: ClipForMeta, opts: MetaAiFormatOptions): string {
+  const a = attachmentsFor(clip, opts);
+  return [a.master ? `ภาพมาสเตอร์ ${a.master}` : '', ...a.faces.map(x => `รูปที่ ${x.n} ${x.name}`), a.lastFrameOf ? `เฟรมสุดท้ายของคลิป ${a.lastFrameOf}` : ''].filter(Boolean).join(' · ');
+}
+
+/** Character lock: profile reference photos (at most two attached) + one fixed look line per person. */
+function characterLock(f: ClipFacts, faces: { n: number; name: string }[]): string {
+  const refs = faces.map(x => `รูปที่ ${x.n} คือรูปโปรไฟล์อ้างอิงของ${x.name}`);
+  const looks = f.names.map(n => `${n}${f.notes[n] ? ` (${f.notes[n]})` : ''}${f.photoNames.includes(n) && !faces.some(x => x.name === n) ? ' ไม่ต้องแนบรูปในคลิปนี้' : ''}${!f.photoNames.includes(n) ? ' ยังไม่มีภาพอ้างอิง' : ''}`);
+  return `ล็อกตัวละคร: ${[refs.join(', '), `ลุคคงที่: ${looks.join(', ')}`].filter(Boolean).join('; ')} — ใบหน้า ทรงผม เมคอัพ เครื่องประดับ ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป ${f.animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}`;
 }
 
 export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions = {}): string {
@@ -711,6 +790,7 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
 
 /** The pieces of one clip's image prompt, by role (the location batch shares some of them). */
 interface ImageParts {
+  context?: string;
   refs?: string; looks?: string; place?: string; camera?: string; staging?: string;
   continuity?: string; format?: string; rules: string[]; names?: string[]; facts?: ClipFacts;
 }
@@ -741,15 +821,15 @@ function imagePromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): ImagePa
   const backTurned = (n: string) => (n === main && fromBehind) || (cam.angle === 'ots' && n === cam.partner);
   const parts: ImageParts = { rules: [] };
 
-  // 1-2. characters + reference photos, costume and looks
+  parts.context = 'บริบท: ภาพนิ่งจากละครดราม่าไทยแต่ง (นิยาย) นักแสดงผู้ใหญ่ที่ยินยอม';
+  // 1-2. characters: at most two profile reference photos + one fixed look line per person (Meta)
   if (f.names.length) {
-    const cast = castBlocks(f);
-    parts.refs = cast.refs;
-    parts.looks = cast.looks;
+    const faces = attachmentsFor(clip, opts, f).faces;
+    parts.refs = characterLock(f, faces) + ' ห้ามสลับหน้าระหว่างตัวละคร ห้ามเพิ่มตัวละครที่ไม่มีในบท';
+    parts.looks = `เสื้อผ้าและรูปลักษณ์: ${f.photoNames.length ? 'ทรงผม สีผม ชุด สี ลวดลาย รองเท้า และเครื่องประดับตามภาพอ้างอิง ' : ''}ห้ามเปลี่ยนชุดหรือสลับเสื้อผ้าระหว่างตัวละคร`;
   }
   // 3. place + light
-  const where = placeText(f, false);
-  if (where) parts.place = (`สถานที่และแสง: ${where} — ผังห้อง ประตู หน้าต่าง เครื่องเรือน ทิศแสง และโทนสีคงเดิมในสถานที่นี้ เปลี่ยนได้เฉพาะมุมกล้อง`);
+  if (f.place.location || f.place.timeOfDay) parts.place = `สถานที่และแสง (แนบภาพมาสเตอร์ "${masterName(f.place.location)}"): ${locationBible(f.place.location, f.place.timeOfDay, f.lighting)} เปลี่ยนได้เฉพาะมุมกล้อง`;
   // 4. camera direction + shot size
   const sizeText = cam.kind === 'insert' && cam.prop
     ? `Close-up: ${cam.prop}${main ? `ในมือ${main}` : ''} เห็นมือและ${cam.prop}ชัด`
@@ -794,7 +874,10 @@ function imagePromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): ImagePa
     ? `${f.names.some(backTurned) ? 'ตัวละครที่หันหลังแสดงอารมณ์ผ่านท่าทาง ' : ''}สีหน้าและอารมณ์ตรงกับเหตุการณ์ ทุกคนปิดปาก ยังไม่พูด`
     : '';
   parts.staging = (`ตำแหน่งและการกระทำ: ${[staging.join(' | '), moment, face].filter(Boolean).join('. ')}`);
-  if (f.continuous && f.hasPrevious) parts.continuity = 'ความต่อเนื่อง: ต่อจากภาพของคลิปก่อน ตำแหน่ง ชุด และฉากเดิม';
+  if (f.continuous && f.hasPrevious) {
+    const prevNo = Number(opts.previous?.clip.clipNumber) || 0;
+    parts.continuity = `ความต่อเนื่อง: ${prevNo ? `แนบภาพนิ่งของคลิป ${prevNo} เป็นภาพอ้างอิง ` : ''}ต่อจากภาพของคลิปก่อน ตำแหน่ง ชุด แสง และฉากเดิม`;
+  }
   // 6. format + the rules that matter for this shot
   parts.format = (`รูปแบบและสัดส่วนภาพ: ภาพนิ่ง${opts.aspectRatio ? ` ${opts.aspectRatio}` : ''} ภาพถ่ายสมจริงแบบฉากในภาพยนตร์ ไม่ใช่ภาพวาดหรือการ์ตูน${opts.aspectRatio === '9:16' && !fromBehind ? ' ใบหน้าอยู่ช่วงบนของจอ' : ''} ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำ`);
   parts.rules = [
@@ -817,7 +900,8 @@ const cleanUnspecified = (t: string) => t.replace(/(?:เวลา|สถาน�
  */
 export function formatClipImagePrompt(clip: ClipForMeta, opts: MetaAiFormatOptions = {}): string {
   const p = imagePromptParts(clip, opts);
-  return cleanUnspecified(withoutRepeats([p.refs, p.looks, p.place, p.camera, p.staging, p.continuity, p.format,
+  // Meta's order: story context, location + master, characters, continuity, action / camera, format
+  return cleanUnspecified(withoutRepeats([p.context, p.place, p.refs, p.looks, p.continuity, p.camera, p.staging, p.format,
     p.rules.length ? `ข้อบังคับ: ${p.rules.join(' ')}` : ''].filter(Boolean) as string[]));
 }
 
@@ -863,12 +947,15 @@ export function formatPlaceImageBatch(clips: ClipForMeta[], indexes: number[], o
   all.photoNames.sort((a, b) => (all.photoNo.get(a) || 0) - (all.photoNo.get(b) || 0));
   all.noPhoto = all.noPhoto.filter(n => !all.photoNames.includes(n));
   const shared: string[] = [];
-  if (all.photoNames.length || all.noPhoto.length) {
-    const cast = castBlocks(all);
-    shared.push(cast.refs, cast.looks);
-  }
   const first = items[0].p;
+  if (first.context) shared.push(first.context);
   if (first.place) shared.push(first.place);
+  if (all.photoNames.length || all.noPhoto.length) {
+    const names = [...all.photoNames, ...all.noPhoto];
+    const looks = names.map(n => `${n}${all.notes[n] ? ` (${all.notes[n]})` : ''}${all.photoNames.includes(n) ? ` = รูปที่ ${all.photoNo.get(n)}` : ' ยังไม่มีภาพอ้างอิง'}`);
+    shared.push(`ล็อกตัวละคร: ลุคคงที่: ${looks.join(', ')} — แต่ละภาพแนบรูปโปรไฟล์อ้างอิงไม่เกิน 2 รูปตามที่ระบุในภาพนั้น ห้ามสลับหน้าระหว่างตัวละคร ห้ามเพิ่มตัวละครที่ไม่มีในบท${all.animal ? ' ตัวละครที่เป็นสัตว์ต้องเป็นสัตว์ตามภาพ ห้ามกลายเป็นมนุษย์' : ''}`);
+    if (first.looks) shared.push(first.looks);
+  }
   // "ใบหน้าอยู่ช่วงบนของจอ" once for the batch when every shot has it, else per shot
   const faceEverywhere = items.every(({ p }) => /ใบหน้าอยู่ช่วงบนของจอ/.test(p.format || ''));
   if (first.format) shared.push(faceEverywhere ? first.format.replace(/\s*ใบหน้าอยู่ช่วงบนของจอ/, '') + ' ใบหน้าอยู่ช่วงบนของจอ' : first.format.replace(/\s*ใบหน้าอยู่ช่วงบนของจอ/, ''));
@@ -877,9 +964,11 @@ export function formatPlaceImageBatch(clips: ClipForMeta[], indexes: number[], o
   const shots = items.map(({ i, p }, k) => {
     const own = p.rules.filter(r => !COMMON.has(r));
     const face = !faceEverywhere && /ใบหน้าอยู่ช่วงบนของจอ/.test(p.format || '') ? 'ใบหน้าอยู่ช่วงบนของจอ' : '';
+    const att = attachmentLine(clips[i], { ...opts, ...metaContextFor(clips, i) }).replace(/ · เฟรมสุดท้ายของคลิป \d+/, '');
     const lines = [
+      att ? `แนบก่อนพิมพ์: ${att}` : '',
       p.names?.length ? `ตัวละครในภาพ: ${p.names.join(', ')}` : '',
-      p.camera, p.staging, p.continuity,
+      p.continuity, p.camera, p.staging,
       [face, ...own].filter(Boolean).length ? `เฉพาะภาพนี้: ${[face, ...own].filter(Boolean).join(' ')}` : ''
     ].filter(Boolean) as string[];
     return `ภาพที่ ${k + 1} (คลิป ${(clips[i].clipNumber as number) || i + 1}):\n${cleanUnspecified(withoutRepeats(lines))}`;
@@ -887,7 +976,7 @@ export function formatPlaceImageBatch(clips: ClipForMeta[], indexes: number[], o
   const uploads = all.photoNames.map(n => `รูปที่ ${all.photoNo.get(n)} ${n}`).join('  ');
   return [
     `สร้างภาพนิ่ง ${items.length} ภาพแยกกัน ภาพละ 1 ช็อตตามรายการด้านล่าง ทุกภาพอยู่ในสถานที่และเวลาเดียวกัน ใช้ข้อมูลล็อกร่วมเหมือนกันทุกภาพ`,
-    uploads ? `(อัปโหลดรูป: ${uploads})` : '',
+    `(เตรียมไฟล์: ${[first0Master(clips, indexes), uploads.replace(/  /g, ' · ')].filter(Boolean).join(' · ')} — แต่ละช็อตแนบเฉพาะไฟล์ที่ระบุใน "แนบก่อนพิมพ์")`,
     `ล็อกร่วมทุกภาพ:\n${cleanUnspecified(withoutRepeats(shared))}`,
     ...shots
   ].filter(Boolean).join('\n\n');
@@ -926,21 +1015,25 @@ export function formatPlaceVideoBatch(clips: ClipForMeta[], indexes: number[], o
     : [`วิดีโอ`, opts.aspectRatio ? `สัดส่วนภาพ ${opts.aspectRatio}` : '', 'ภาพสมจริงแบบภาพยนตร์ เคลื่อนไหวเป็นธรรมชาติ ความยาวตามที่ระบุในแต่ละคลิป'].filter(Boolean).join(', '));
   shared.push(...part(0, 'place'));
   if (all.photoNames.length || all.noPhoto.length) {
-    shared.push(`ตัวละคร${all.photoNames.length ? ' (ใช้รูปที่อัปโหลดเป็นต้นแบบ)' : ''}: ${castText(all, 'all')} — ใบหน้า ทรงผม ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป ${all.animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}`);
+    const names = [...all.photoNames, ...all.noPhoto];
+    const looks = names.map((n: string) => `${n}${all.notes[n] ? ` (${all.notes[n]})` : ''}${all.photoNames.includes(n) ? ` = รูปที่ ${all.photoNo.get(n)}` : ' ยังไม่มีภาพอ้างอิง'}`);
+    shared.push(`ล็อกตัวละคร: ลุคคงที่: ${looks.join(', ')} — แต่ละคลิปแนบรูปโปรไฟล์อ้างอิงไม่เกิน 2 รูปตามที่ระบุในคลิปนั้น ใบหน้า ทรงผม เมคอัพ เครื่องประดับ ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป ${all.animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}`);
   }
+  shared.push(SAFETY_LINE);
   shared.push(`เสียงทุกคลิป: มีเฉพาะเสียงพูดของตัวละครตามบทของคลิปนั้น ไม่มีเสียงบรรยากาศ เสียงธรรมชาติ ดนตรี หรือเสียงเอฟเฟกต์ใด ๆ คลิปที่ไม่มีบทพูดให้เงียบทั้งคลิป`);
-  shared.push('ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำบนจอทุกคลิป');
+  shared.push('no subtitles ไม่มีตัวหนังสือหรือลายน้ำบนจอทุกคลิป');
   const OWN: VideoPart['key'][] = ['start', 'camera', 'action', 'dialogue', 'emotion', 'ending', 'speech'];
   const shots = items.map(({ i, parts, f }, k) => {
     const own = parts.filter(p => OWN.includes(p.key)).map(p => p.text);
-    const lines = [f.names.length ? `ตัวละครในคลิป: ${f.names.join(', ')}` : '', ...own].filter(Boolean);
+    const att = attachmentLine(clips[i], { ...opts, ...metaContextFor(clips, i) });
+    const lines = [att ? `แนบก่อนพิมพ์: ${att}` : '', f.names.length ? `ตัวละครในคลิป: ${f.names.join(', ')}` : '', ...own].filter(Boolean);
     const len = clips[i].durationSeconds ? `, ${clips[i].durationSeconds} วินาที` : '';
     return `คลิปที่ ${k + 1} (คลิป ${(clips[i].clipNumber as number) || i + 1}${len}):\n${withoutRepeats(lines)}`;
   });
   const uploads = all.photoNames.map((n: string) => `รูปที่ ${all.photoNo.get(n)} ${n}`).join('  ');
   return [
     `สร้างวิดีโอ ${items.length} คลิปแยกกัน คลิปละ 1 ช็อต ต่อเนื่องกันตามลำดับด้านล่าง ทุกคลิปอยู่ในสถานที่และเวลาเดียวกัน ใช้ข้อมูลล็อกร่วมเหมือนกันทุกคลิป`,
-    uploads ? `(อัปโหลดรูป: ${uploads})` : '',
+    `(เตรียมไฟล์: ${[first0Master(clips, indexes), uploads.replace(/  /g, ' · ')].filter(Boolean).join(' · ')} — แต่ละช็อตแนบเฉพาะไฟล์ที่ระบุใน "แนบก่อนพิมพ์")`,
     `ล็อกร่วมทุกคลิป:\n${withoutRepeats(shared)}`,
     ...shots
   ].filter(Boolean).join('\n\n');
@@ -948,7 +1041,10 @@ export function formatPlaceVideoBatch(clips: ClipForMeta[], indexes: number[], o
 
 /** Camera / shot-size terms allowed in English (no Thai word says it as precisely). */
 const TECH_WORDS = new Set(['close-up', 'medium', 'close', 'shot', 'long', 'full', 'wide', 'extreme', 'front', 'view', 'three-quarter',
-  'side', 'profile', 'rear', 'high', 'low', 'angle', 'over-the-shoulder', 'eye', 'level']);
+  'side', 'profile', 'rear', 'high', 'low', 'angle', 'over-the-shoulder', 'eye', 'level',
+  // Meta AI's own wording (dialogue formula, continuity, no subtitles, the master image's name)
+  'speaks', 'in', 'thai', 'exact', 'line', 'lip-sync', 'no', 'paraphrase', 'only', 'other', 'silent',
+  'continue', 'from', 'this', 'frame', 'jump', 'cut', 'subtitles', 'master']);
 
 /**
  * Problems in a finished prompt (empty = ready to send): repeated sentences, contradictions,
@@ -984,6 +1080,8 @@ export function checkPromptProblems(text: string, kind: 'image' | 'video', cam?:
     if (speaks && /ไม่มีบทพูดในคลิปนี้/.test(t)) out.push('มีบทพูดแต่สั่งว่าไม่มีบทพูด');
     if (!speaks && /ปากขยับตรงกับเสียง/.test(t)) out.push('ไม่มีบทพูดแต่สั่งให้ขยับปาก');
     if (/ทุกคนปิดปาก/.test(t) && speaks) out.push('มีบทพูดแต่สั่งให้ทุกคนปิดปาก');
+    if (speaks && !t.includes(DIALOGUE_FORMULA)) out.push('บทพูดไม่ได้ใช้สูตรของ Meta');
+    if (speaks && !/Only \S+ speaks, other silent|ห้ามสลับคนพูด/.test(t)) out.push('ไม่ได้บอกว่าใครพูดคนเดียว');
     for (const label of ['วิดีโอ', 'มุมกล้อง', 'อารมณ์และการแสดง', 'เสียง:']) if (!t.includes(label)) out.push(`ไม่มี ${label}`);
     if (speaks && t.includes(VIDEO_SOUND_SILENT)) out.push('มีบทพูดแต่สั่งให้เงียบ');
     const moves = t.match(/การเคลื่อนไหวของตัวละคร: ([^.]*)/)?.[1] || '';

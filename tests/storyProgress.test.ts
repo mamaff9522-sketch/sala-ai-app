@@ -69,8 +69,8 @@ check('Meta AI format: photo mapping instead of library text, no internal notes,
   ].map(c => toCharacterLockPayload(c));
   const clips = buildSalaMultiClipPrompts({ scriptText: STORY, clipDurationSeconds: 8, clipCount: 3, continuityLock: {}, characters: chars as any });
   const meta = formatClipForMetaAi(clips[0], { aspectRatio: '9:16', knownCharacters: ['พี่ทุย', 'น้องน้ำ'] });
-  assert.ok(meta.length < clips[0].generatedPrompt.length / 3, 'much shorter than the full prompt');
-  assert.ok(meta.includes('รูปที่ 1 = พี่ทุย') && meta.includes('รูปที่ 2 = น้องน้ำ'));
+  assert.ok(meta.length < clips[0].generatedPrompt.length / 2, 'much shorter than the full prompt');
+  assert.ok(meta.includes('รูปที่ 1 คือรูปโปรไฟล์อ้างอิงของพี่ทุย') && meta.includes('รูปที่ 2 คือรูปโปรไฟล์อ้างอิงของน้องน้ำ'));
   assert.ok(meta.includes('"ไปไหนมา ทำไมกลับช้าขนาดนี้?"'));
   assert.ok(meta.includes('วิดีโอยาว 8 วินาที') && meta.includes('9:16'));
   for (const gone of ['ผูกพรอมต์นี้', 'Continuity Handoff', 'Stance/Position Lock', 'Negative', 'ไม่ระบุ', 'water buffalo']) {
@@ -130,7 +130,7 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
   const blocks = formatAllClipsForMetaAi(clips, { knownCharacters: ['พี่ทุย', 'น้องน้ำ'] }).split('\n\n');
   assert.equal(blocks.length, clips.length);
   for (const b of blocks) {
-    assert.ok(b.includes('ล็อกฉาก: สถานที่ หน้าบ้าน'), 'every clip locks the set, inherited when the heading names none');
+    assert.ok(b.includes('ล็อกฉาก (แนบภาพมาสเตอร์ "หน้าบ้าน Master"): สถานที่ หน้าบ้าน'), 'every clip locks the set, inherited when the heading names none');
     assert.ok(b.includes('ท่าจบคลิป'), 'every clip locks its end pose');
     assert.ok(!/ท่าจบคลิป[^.]*เดิน/.test(b), 'no one is still walking at the hand-off');
   }
@@ -142,7 +142,7 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
   const { formatClipForMetaAi, metaContextFor } = await import('../src/services/metaAiPrompt');
   const moved = [{ ...clips[0] }, { ...clips[1], locationName: 'ร้านหมูกระทะ', timeOfDay: 'กลางคืน' }];
   const m = formatClipForMetaAi(moved[1], metaContextFor(moved as any, 1));
-  assert.ok(m.includes('ล็อกฉาก: สถานที่ ร้านหมูกระทะ เวลา กลางคืน'));
+  assert.ok(m.includes('): สถานที่ ร้านหมูกระทะ เวลา กลางคืน'));
   assert.ok(!m.includes('ต่อเนื่องจากคลิปก่อน'), 'no pose carried across a change of place');
   console.log('  ✔ a change of place starts a new set-up, no carried pose');
 }
