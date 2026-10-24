@@ -6,7 +6,7 @@ import { runWholeStory } from '../src/services/wholeStoryRunner';
 import { offlineContinuation, metaOptionsForStory } from '../src/services/storyProgress';
 import { parseStoryStructure } from '../src/services/storyEpisodeEngine';
 import { packMultiDialogueClips, lineSeconds, MULTI_DIALOGUE_SECONDS, SPEECH_SHARE } from '../src/services/multiDialogueClips';
-import { formatClipForMetaAi, formatClipImagePrompt, metaContextFor, characterNote, checkPromptProblems, sceneOfClip, samePlace } from '../src/services/metaAiPrompt';
+import { formatClipForMetaAi, formatClipImagePrompt, metaContextFor, characterNote, checkPromptProblems, sceneOfClip, samePlace, groupClipsByPlace, formatPlaceVideoBatch, VIDEO_BATCH_SIZE, planCameras } from '../src/services/metaAiPrompt';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rd = (f: string) => fs.readFileSync(path.join(here, 'fixtures', f), 'utf8');
@@ -87,5 +87,40 @@ await check('switch off: nothing changes (packing only runs when the user turns 
   assert.ok(/useState<boolean>\(\(\) => loadJson<boolean>\('sala_quick_multi_dialogue', false\)\)/.test(src), 'off by default');
   assert.ok(/if \(multi && r\.clips\.length > 0\)/.test(src), 'packed only when on');
 });
+
+for (const [file, packedMode] of [['faiklaen-225-clips.txt', false], ['multi-dialogue-story.txt', true]] as const) {
+  await check(`video prompts by scene (${file}${packedMode ? ', multi-dialogue' : ''}): shared locks once, every clip's own parts, every line word for word`, async () => {
+    const story = rd(file);
+    const raw = await engine(story);
+    const clips = packedMode ? packMultiDialogueClips(raw) : raw;
+    const lib = [{ name: 'คุณหญิงมณี', appearance: 'หญิงไทยวัย 60', referenceImageUrl: '/u/a.png' }, { name: 'น้ำฟ้า', appearance: 'หญิงสาว', referenceImageUrl: '/u/b.png' }];
+    const opts = { ...metaOptionsForStory(story, lib, characterNote), aspectRatio: '9:16' };
+    const plan = planCameras(clips as any);
+    let seen = 0;
+    for (const g of groupClipsByPlace(clips as any)) {
+      for (let k = 0; k < g.clips.length; k += VIDEO_BATCH_SIZE) {
+        const ch = g.clips.slice(k, k + VIDEO_BATCH_SIZE);
+        const b = formatPlaceVideoBatch(clips as any, ch, opts);
+        assert.ok(b.startsWith(`สร้างวิดีโอ ${ch.length} คลิปแยกกัน`));
+        for (const label of ['ล็อกฉาก:', 'เสียงทุกคลิป:', 'ไม่มีตัวหนังสือ']) assert.equal(b.split(label).length - 1, 1, `${label} once`);
+        const shots = b.split(/\n\nคลิปที่ \d+ \(คลิป \d+(?:, \d+ วินาที)?\):\n/).slice(1);
+        assert.equal(shots.length, ch.length);
+        shots.forEach((shot, j) => {
+          const i = ch[j];
+          const single = formatClipForMetaAi(clips[i] as any, { ...opts, ...metaContextFor(clips as any, i) });
+          for (const d of clips[i].dialogues) assert.ok(shot.includes(`พูดว่า "${d.line}"`) && single.includes(`พูดว่า "${d.line}"`), `clip ${i + 1}: ${d.line}`);
+          assert.ok(shot.includes('มุมกล้อง:') && shot.includes('อารมณ์และการแสดง:'), `clip ${i + 1}`);
+          if (plan[i].subject) assert.ok(shot.includes(plan[i].subject));
+          for (const own of ['ท่าเริ่มคลิป', 'ท่าจบคลิป', 'ลำดับในคลิป', 'ห้ามสลับคนพูด', 'ไม่มีบทพูดในคลิปนี้']) assert.equal(shot.includes(own), single.includes(own), `clip ${i + 1}: ${own}`);
+          assert.ok(!shot.includes('ล็อกฉาก:') && !shot.includes('เสียง:'), 'shared parts not repeated per clip');
+          seen++;
+        });
+        // lines never move to another clip of the batch
+        ch.forEach((i, j) => clips[i].dialogues.forEach(d => ch.forEach((x, y) => { if (y !== j) assert.ok(!shots[y].includes(`"${d.line}"`) || clips[x].dialogues.some(e => e.line === d.line)); })));
+      }
+    }
+    assert.equal(seen, clips.length, 'every clip in one batch');
+  });
+}
 
 console.log(`\nmulti-dialogue: ${passed} passed`);

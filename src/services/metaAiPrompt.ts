@@ -639,31 +639,35 @@ export function withoutBackgroundSound(action: string): string {
   return out.join(' ').trim();
 }
 
-export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions = {}): string {
+/** The pieces of one clip's video prompt, by role (the scene batch writes the shared ones once). */
+interface VideoPart { key: 'head' | 'place' | 'cast' | 'start' | 'camera' | 'action' | 'dialogue' | 'emotion' | 'ending' | 'speech' | 'sound' | 'notext'; text: string }
+
+function videoPromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): VideoPart[] {
   const f = clipFacts(clip, opts);
   const cam = f.cam;
-  const parts: string[] = [];
+  const parts: VideoPart[] = [];
+  const add = (key: VideoPart['key'], text: string) => { if (text) parts.push({ key, text }); };
   // 1. length + format
-  parts.push([clip.durationSeconds ? `วิดีโอยาว ${clip.durationSeconds} วินาที` : 'วิดีโอ', opts.aspectRatio ? `สัดส่วนภาพ ${opts.aspectRatio}` : '', 'ภาพสมจริงแบบภาพยนตร์ เคลื่อนไหวเป็นธรรมชาติ'].filter(Boolean).join(', '));
+  add('head', [clip.durationSeconds ? `วิดีโอยาว ${clip.durationSeconds} วินาที` : 'วิดีโอ', opts.aspectRatio ? `สัดส่วนภาพ ${opts.aspectRatio}` : '', 'ภาพสมจริงแบบภาพยนตร์ เคลื่อนไหวเป็นธรรมชาติ'].filter(Boolean).join(', '));
   // 2. place + light
   const where = placeText(f);
-  if (where) parts.push(`ล็อกฉาก: ${where} — ฉากและแสงคงเดิมทั้งคลิป ห้ามเปลี่ยนสถานที่`);
+  if (where) add('place', `ล็อกฉาก: ${where} — ฉากและแสงคงเดิมทั้งคลิป ห้ามเปลี่ยนสถานที่`);
   // 3. characters + continuity of looks and voices
   if (f.names.length) {
-    parts.push(`ตัวละคร${f.photoNames.length ? ' (ใช้รูปที่อัปโหลดเป็นต้นแบบ)' : ''}: ${castText(f, 'all')} — ใบหน้า ทรงผม ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป ${f.animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}`);
+    add('cast', `ตัวละคร${f.photoNames.length ? ' (ใช้รูปที่อัปโหลดเป็นต้นแบบ)' : ''}: ${castText(f, 'all')} — ใบหน้า ทรงผม ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป ${f.animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}`);
   }
   // 4. where everyone starts
   // in the same place the clip starts where the previous one ended (said by the pose lock below);
   // its "starting moment" is the previous clip's last action and would be played twice
-  if (f.startMoment && !f.continuous) parts.push(`จังหวะเริ่มคลิป: ${f.startMoment}`);
-  if (f.carried) parts.push(`ท่าเริ่มคลิป (ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ ห้ามเล่นเหตุการณ์ของคลิปก่อนซ้ำ): ${f.carried}`);
-  else if (f.ownStart) parts.push(f.hasPrevious && !f.continuous ? `เปลี่ยนสถานที่ ท่าเริ่มคลิป: ${f.ownStart}` : `ท่าเริ่มคลิป: ${f.ownStart}`);
-  else if (f.continuous && f.hasPrevious) parts.push('ท่าเริ่มคลิป: ต่อจากคลิปก่อนทันที ตำแหน่งเดิม ห้ามเล่นเหตุการณ์ของคลิปก่อนซ้ำ');
+  if (f.startMoment && !f.continuous) add('start', `จังหวะเริ่มคลิป: ${f.startMoment}`);
+  if (f.carried) add('start', `ท่าเริ่มคลิป (ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ ห้ามเล่นเหตุการณ์ของคลิปก่อนซ้ำ): ${f.carried}`);
+  else if (f.ownStart) add('start', f.hasPrevious && !f.continuous ? `เปลี่ยนสถานที่ ท่าเริ่มคลิป: ${f.ownStart}` : `ท่าเริ่มคลิป: ${f.ownStart}`);
+  else if (f.continuous && f.hasPrevious) add('start', 'ท่าเริ่มคลิป: ต่อจากคลิปก่อนทันที ตำแหน่งเดิม ห้ามเล่นเหตุการณ์ของคลิปก่อนซ้ำ');
   // 5. camera + camera movement
   if (cam) {
     const fromBehind = cam.angle === 'rear' || cam.angle === 'rear34';
-    parts.push(`มุมกล้อง: ${cam.framing}${opts.aspectRatio === '9:16' && !fromBehind ? ' ใบหน้าตัวละครอยู่ช่วงบนของจอ' : ''}`);
-    if (cam.movement) parts.push(`การเคลื่อนกล้อง: ${cam.movement}`);
+    add('camera', `มุมกล้อง: ${cam.framing}${opts.aspectRatio === '9:16' && !fromBehind ? ' ใบหน้าตัวละครอยู่ช่วงบนของจอ' : ''}`);
+    if (cam.movement) add('camera', `การเคลื่อนกล้อง: ${cam.movement}`);
   }
   // 6. what the characters do (the script's own lines); a clause that only describes background
   // sound ("เสียงจิ้งหรีดดังรอบตัว") is left out: the video has no sound but the dialogue
@@ -673,32 +677,36 @@ export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions
   const sec = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
   if (multi) {
     // several beats in one clip: the order (and rough time) of every action and line
-    parts.push(`ลำดับในคลิป: ${seq.map((st, k) => `${k + 1}) ${sec(st.start)}–${sec(st.end)} วิ ${st.kind === 'line' ? `${st.speaker} พูดประโยคที่ ${st.n}` : withoutBackgroundSound(st.text)}`).join(' ')}`);
-  } else if (moves) parts.push(`การเคลื่อนไหวของตัวละคร: ${moves}`);
+    add('action', `ลำดับในคลิป: ${seq.map((st, k) => `${k + 1}) ${sec(st.start)}–${sec(st.end)} วิ ${st.kind === 'line' ? `${st.speaker} พูดประโยคที่ ${st.n}` : withoutBackgroundSound(st.text)}`).join(' ')}`);
+  } else if (moves) add('action', `การเคลื่อนไหวของตัวละคร: ${moves}`);
   const extra = withoutBackgroundSound(f.extra);
-  if (extra) parts.push(`รายละเอียดฉาก: ${extra}`);
+  if (extra) add('action', `รายละเอียดฉาก: ${extra}`);
   // 7. dialogue, word for word, with who says it
-  if (f.lines.length) parts.push(`บทพูด: ${f.lines.map((d, k) => `${multi ? `ประโยคที่ ${k + 1} ` : ''}${d.speaker || 'ตัวละคร'} พูดว่า "${d.line}"`).join('; ')}`);
+  if (f.lines.length) add('dialogue', `บทพูด: ${f.lines.map((d, k) => `${multi ? `ประโยคที่ ${k + 1} ` : ''}${d.speaker || 'ตัวละคร'} พูดว่า "${d.line}"`).join('; ')}`);
   // 8. emotion / acting
   const felt = f.lines.filter(d => d.emotion).map(d => `${d.speaker} ${d.emotion}`);
-  parts.push(`อารมณ์และการแสดง: ${felt.length ? felt.join('; ') + ' ' : ''}สีหน้า ท่าทาง${f.lines.length ? ' และน้ำเสียง' : ''}ตรงกับเหตุการณ์${f.lines.length ? 'และบทพูด' : ''}`);
+  add('emotion', `อารมณ์และการแสดง: ${felt.length ? felt.join('; ') + ' ' : ''}สีหน้า ท่าทาง${f.lines.length ? ' และน้ำเสียง' : ''}ตรงกับเหตุการณ์${f.lines.length ? 'และบทพูด' : ''}`);
   // 9. where the clip ends (handed to the next clip)
   const ending = [f.end, f.endMoment && !f.end.includes(f.endMoment) ? f.endMoment : ''].filter(Boolean).join('; ');
-  if (ending) parts.push(`ท่าจบคลิป (ค้างไว้ส่งต่อคลิปถัดไป): ${ending}`);
+  if (ending) add('ending', `ท่าจบคลิป (ค้างไว้ส่งต่อคลิปถัดไป): ${ending}`);
   // 10. speech rules
   if (f.lines.length) {
-    parts.push('ตัวละครพูดภาษาไทยตามบทพูดด้านบนคำต่อคำ ปากขยับตรงกับเสียง ไม่พูดประโยคอื่นเพิ่ม');
-    if (f.speakers.length === 1 && f.names.some(n => n !== f.speakers[0])) parts.push(`เฉพาะ${f.speakers[0]}ที่ขยับปากพูด ตัวละครอื่นปิดปาก ไม่พูดตาม`);
-    if (f.speakers.length > 1) parts.push('พูดตามลำดับประโยคด้านบน แต่ละคนขยับปากเฉพาะตอนพูดประโยคของตัวเอง คนที่ไม่ได้พูดปิดปาก ห้ามพูดแทรก ห้ามสลับคนพูด');
+    add('speech', 'ตัวละครพูดภาษาไทยตามบทพูดด้านบนคำต่อคำ ปากขยับตรงกับเสียง ไม่พูดประโยคอื่นเพิ่ม');
+    if (f.speakers.length === 1 && f.names.some(n => n !== f.speakers[0])) add('speech', `เฉพาะ${f.speakers[0]}ที่ขยับปากพูด ตัวละครอื่นปิดปาก ไม่พูดตาม`);
+    if (f.speakers.length > 1) add('speech', 'พูดตามลำดับประโยคด้านบน แต่ละคนขยับปากเฉพาะตอนพูดประโยคของตัวเอง คนที่ไม่ได้พูดปิดปาก ห้ามพูดแทรก ห้ามสลับคนพูด');
   } else {
-    parts.push('ไม่มีบทพูดในคลิปนี้ ตัวละครไม่พูด');
+    add('speech', 'ไม่มีบทพูดในคลิปนี้ ตัวละครไม่พูด');
   }
   // 11. sound: only the characters' scripted voices (no ambience, nature, music or sound effects)
-  parts.push(f.lines.length
+  add('sound', f.lines.length
     ? `เสียง: ${VIDEO_SOUND_DIALOGUE}`
     : `เสียง: ${VIDEO_SOUND_SILENT}`);
-  parts.push('ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำบนจอ');
-  return withoutRepeats(parts);
+  add('notext', 'ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำบนจอ');
+  return parts;
+}
+
+export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions = {}): string {
+  return withoutRepeats(videoPromptParts(clip, opts).map(p => p.text));
 }
 
 /** The pieces of one clip's image prompt, by role (the location batch shares some of them). */
@@ -881,6 +889,59 @@ export function formatPlaceImageBatch(clips: ClipForMeta[], indexes: number[], o
     `สร้างภาพนิ่ง ${items.length} ภาพแยกกัน ภาพละ 1 ช็อตตามรายการด้านล่าง ทุกภาพอยู่ในสถานที่และเวลาเดียวกัน ใช้ข้อมูลล็อกร่วมเหมือนกันทุกภาพ`,
     uploads ? `(อัปโหลดรูป: ${uploads})` : '',
     `ล็อกร่วมทุกภาพ:\n${cleanUnspecified(withoutRepeats(shared))}`,
+    ...shots
+  ].filter(Boolean).join('\n\n');
+}
+
+/** How many video clips one scene batch carries (each clip is still made on its own). */
+export const VIDEO_BATCH_SIZE = 4;
+
+/**
+ * Several video prompts of one scene (same place and time) in one copy: the shared locks written
+ * once (length + ratio, place + light, characters with looks / costume / voice, sound, no text),
+ * then each clip in story order with only its own parts (start pose, camera, actions, dialogue
+ * word for word, emotion, end pose, speech rules).
+ */
+export function formatPlaceVideoBatch(clips: ClipForMeta[], indexes: number[], opts: MetaAiFormatOptions = {}): string {
+  const items = indexes.map(i => {
+    const ctx = { ...opts, ...metaContextFor(clips, i) };
+    return { i, parts: videoPromptParts(clips[i], ctx), f: clipFacts(clips[i], ctx) };
+  });
+  if (items.length === 0) return '';
+  // the cast of the whole scene, with the story-wide photo numbers
+  const all: any = { photoNames: [] as string[], photoNo: new Map<string, number>(), noPhoto: [] as string[], notes: {} as Record<string, string>, animal: false };
+  for (const { f } of items) {
+    f.photoNames.forEach(n => { if (!all.photoNames.includes(n)) { all.photoNames.push(n); all.photoNo.set(n, f.photoNo.get(n)); } });
+    f.noPhoto.forEach(n => { if (!all.noPhoto.includes(n)) all.noPhoto.push(n); });
+    Object.assign(all.notes, f.notes);
+    all.animal = all.animal || f.animal;
+  }
+  all.photoNames.sort((a: string, b: string) => (all.photoNo.get(a) || 0) - (all.photoNo.get(b) || 0));
+  all.noPhoto = all.noPhoto.filter((n: string) => !all.photoNames.includes(n));
+  const part = (k: number, key: VideoPart['key']) => items[k].parts.filter(p => p.key === key).map(p => p.text);
+  const lengths = Array.from(new Set(indexes.map(i => clips[i].durationSeconds || 0)));
+  const shared: string[] = [];
+  shared.push(lengths.length === 1
+    ? part(0, 'head')[0]
+    : [`วิดีโอ`, opts.aspectRatio ? `สัดส่วนภาพ ${opts.aspectRatio}` : '', 'ภาพสมจริงแบบภาพยนตร์ เคลื่อนไหวเป็นธรรมชาติ ความยาวตามที่ระบุในแต่ละคลิป'].filter(Boolean).join(', '));
+  shared.push(...part(0, 'place'));
+  if (all.photoNames.length || all.noPhoto.length) {
+    shared.push(`ตัวละคร${all.photoNames.length ? ' (ใช้รูปที่อัปโหลดเป็นต้นแบบ)' : ''}: ${castText(all, 'all')} — ใบหน้า ทรงผม ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป ${all.animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}`);
+  }
+  shared.push(`เสียงทุกคลิป: มีเฉพาะเสียงพูดของตัวละครตามบทของคลิปนั้น ไม่มีเสียงบรรยากาศ เสียงธรรมชาติ ดนตรี หรือเสียงเอฟเฟกต์ใด ๆ คลิปที่ไม่มีบทพูดให้เงียบทั้งคลิป`);
+  shared.push('ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำบนจอทุกคลิป');
+  const OWN: VideoPart['key'][] = ['start', 'camera', 'action', 'dialogue', 'emotion', 'ending', 'speech'];
+  const shots = items.map(({ i, parts, f }, k) => {
+    const own = parts.filter(p => OWN.includes(p.key)).map(p => p.text);
+    const lines = [f.names.length ? `ตัวละครในคลิป: ${f.names.join(', ')}` : '', ...own].filter(Boolean);
+    const len = clips[i].durationSeconds ? `, ${clips[i].durationSeconds} วินาที` : '';
+    return `คลิปที่ ${k + 1} (คลิป ${(clips[i].clipNumber as number) || i + 1}${len}):\n${withoutRepeats(lines)}`;
+  });
+  const uploads = all.photoNames.map((n: string) => `รูปที่ ${all.photoNo.get(n)} ${n}`).join('  ');
+  return [
+    `สร้างวิดีโอ ${items.length} คลิปแยกกัน คลิปละ 1 ช็อต ต่อเนื่องกันตามลำดับด้านล่าง ทุกคลิปอยู่ในสถานที่และเวลาเดียวกัน ใช้ข้อมูลล็อกร่วมเหมือนกันทุกคลิป`,
+    uploads ? `(อัปโหลดรูป: ${uploads})` : '',
+    `ล็อกร่วมทุกคลิป:\n${withoutRepeats(shared)}`,
     ...shots
   ].filter(Boolean).join('\n\n');
 }

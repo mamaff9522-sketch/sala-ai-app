@@ -6,7 +6,7 @@ import { runWholeStory, type StoryClip } from '../services/wholeStoryRunner';
 import { metaOptionsForStory, offlineContinuation } from '../services/storyProgress';
 import { isClipByClipScript } from '../services/storyNormalize';
 import { packMultiDialogueClips, MULTI_DIALOGUE_SECONDS } from '../services/multiDialogueClips';
-import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
+import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, formatPlaceVideoBatch, VIDEO_BATCH_SIZE, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
 import { toCharacterLockPayload } from '../services/characterAppearance';
 
 /**
@@ -292,25 +292,38 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
             {!running && placeGroups.length > 0 && (
               <details className="rounded-2xl border border-amber-500/40 bg-[#0b1224]/90 p-3">
                 <summary className="cursor-pointer text-[13px] font-semibold text-amber-300">
-                  คัดลอกพรอมต์ภาพตามสถานที่ (สร้างภาพพร้อมกัน)
+                  คัดลอกพรอมต์ตามสถานที่ (ภาพ / วิดีโอ หลายคลิปพร้อมกัน)
                 </summary>
                 <p className="mt-1.5 text-[12px] text-slate-400">
-                  คลิปที่อยู่สถานที่และเวลาเดียวกัน รวมเป็นพรอมต์เดียว ชุดละไม่เกิน {IMAGE_BATCH_SIZE} ภาพ ข้อมูลตัวละคร ชุด สถานที่ และแสง เขียนครั้งเดียวด้านบน
+                  คลิปที่อยู่สถานที่และเวลาเดียวกัน รวมเป็นพรอมต์เดียว ชุดละไม่เกิน {IMAGE_BATCH_SIZE} ภาพ หรือ {VIDEO_BATCH_SIZE} คลิปวิดีโอ ข้อมูลตัวละคร ชุด สถานที่ แสง และเสียง เขียนครั้งเดียวด้านบน
                 </p>
                 <div className="mt-2 space-y-2.5">
                   {placeGroups.map((g, gi) => {
                     const chunks: number[][] = [];
                     for (let k = 0; k < g.clips.length; k += IMAGE_BATCH_SIZE) chunks.push(g.clips.slice(k, k + IMAGE_BATCH_SIZE));
+                    const videoChunks: number[][] = [];
+                    for (let k = 0; k < g.clips.length; k += VIDEO_BATCH_SIZE) videoChunks.push(g.clips.slice(k, k + VIDEO_BATCH_SIZE));
                     return (
                       <div key={gi} className="rounded-xl border border-slate-700 p-2">
                         <div className="text-[13px] font-semibold text-slate-100">{[g.location, g.timeOfDay].filter(Boolean).join(' · ') || 'ไม่ระบุสถานที่'}</div>
                         <div className="text-[12px] text-slate-400">คลิป {ranges(g.clips.map(i => i + 1))} ({g.clips.length} ภาพ)</div>
-                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <span className="text-[11px] font-semibold text-amber-300 w-12">ภาพ</span>
                           {chunks.map((ch, ci) => (
                             <button key={ci} type="button"
                               onClick={() => copy(formatPlaceImageBatch(clips as any, ch, metaOpts), `place${gi}-${ci}`)}
                               className="inline-flex items-center gap-1 rounded-lg border border-amber-500/50 bg-slate-900 px-2.5 py-1 text-[12px]">
                               {copied === `place${gi}-${ci}` ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> คัดลอกแล้ว</> : <><Copy className="w-3.5 h-3.5" /> คลิป {ranges(ch.map(i => i + 1))}</>}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          <span className="text-[11px] font-semibold text-indigo-300 w-12">วิดีโอ</span>
+                          {videoChunks.map((ch, ci) => (
+                            <button key={ci} type="button"
+                              onClick={() => copy(formatPlaceVideoBatch(clips as any, ch, metaOpts), `vplace${gi}-${ci}`)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-indigo-500/50 bg-slate-900 px-2.5 py-1 text-[12px]">
+                              {copied === `vplace${gi}-${ci}` ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> คัดลอกแล้ว</> : <><Copy className="w-3.5 h-3.5" /> คลิป {ranges(ch.map(i => i + 1))}</>}
                             </button>
                           ))}
                         </div>
