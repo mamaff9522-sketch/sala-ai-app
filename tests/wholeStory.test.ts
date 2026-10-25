@@ -376,7 +376,7 @@ await check('Meta AI requirements: order, dialogue formula, pictures (place, cha
     const where = M.sceneOfClip(r.clips as any, i);
     const key = `${where.location}|${where.timeOfDay}`;
     const bible = v.match(/ล็อกฉาก \(รูปที่ 1 คือภาพมาสเตอร์ "[^"]+"\): (.*?ห้ามเปลี่ยนสถานที่)/)?.[1] || '';
-    assert.ok(bible.includes('พื้น ผนัง บันได ม่าน ประตู') && bible.includes('แสงหลักเข้าจากด้าน'));
+    assert.ok(bible.includes('พื้น ผนัง ประตู หน้าต่าง') && !bible.includes('บันได') && bible.includes('แสงหลักเข้าจากด้าน'));
     if (bibleOf.has(key)) assert.equal(bible, bibleOf.get(key), `clip ${i + 1}: bible rewritten`);
     else bibleOf.set(key, bible);
     // a continuing clip: attach the previous clip's last frame
@@ -389,6 +389,44 @@ await check('Meta AI requirements: order, dialogue formula, pictures (place, cha
   assert.ok(master.includes('ไม่มีคน') && master.includes(bibleOf.get(`${g.location}|${g.timeOfDay}`)!), 'master carries the same bible');
   assert.deepEqual(M.sensitiveWords({ generatedPrompt: 'Scene Action: แพรวาตบหน้าน้ำฟ้า.' } as any), ['ตบ']);
   assert.deepEqual(M.sensitiveWords({ generatedPrompt: 'Scene Action: ภาคินตีความเอกสาร.' } as any), []);
+});
+
+await check('Meta AI video review fixes: set from picture 1, clean action, prop, cast, wide camera, emotion', async () => {
+  const M = await import('../src/services/metaAiPrompt');
+  const clip: any = {
+    clipNumber: 46, durationSeconds: 10, locationName: 'ห้องรับแขกคฤหาสน์', timeOfDay: 'บ่าย',
+    charactersPresent: ['คุณหญิงมณี', 'ทนายกฤต', 'ภาคิน', 'น้ำฟ้า'],
+    generatedPrompt: 'Scene Action: ระยะเวลา: 10 วินาที | สัดส่วนภาพ: 9:16. ทนายกฤตยืนตรง สีหน้าสุภาพ. Character Lock: คุณหญิงมณี, ทนายกฤต, แพรวา, กฤต.',
+    dialogues: [{ speaker: 'คุณหญิงมณี', line: 'นี่มันเรื่องเหลวไหล สามีฉันจะยกบ้านให้ใคร!', emotion: '(น้ำเสียงโกรธจัด)' }],
+    endAction: 'คุณหญิงมณีถือแฟ้มด้วยความโมโห'
+  };
+  const note = M.locationNote({ visualProfile: { architecturalStyle: 'ศาลาเปิดโล่งแบบโคโลเนียล', floor: 'พื้นหินอ่อน', windows: 'เสาสีขาวเปิดออกสู่สวน', majorFurniture: 'โซฟาหวายขอบไม้สีเข้ม' } });
+  const opts: any = {
+    aspectRatio: '9:16', knownCharacters: ['คุณหญิงมณี', 'ทนายกฤต', 'ภาคิน', 'น้ำฟ้า', 'แพรวา', 'กฤต'],
+    withPhoto: ['คุณหญิงมณี', 'ทนายกฤต', 'ภาคิน', 'น้ำฟ้า'], locationNotes: { 'ห้องรับแขกคฤหาสน์': note }
+  };
+  const ctx = { ...opts, ...M.metaContextFor([clip], 0) };
+  const v = M.formatClipForMetaAi(clip, ctx);
+  // 1. the set: the place's own details, no generic staircase, background only from picture 1
+  assert.ok(v.includes('ลักษณะสถานที่: ศาลาเปิดโล่งแบบโคโลเนียล, พื้นหินอ่อน, เสาสีขาวเปิดออกสู่สวน, โซฟาหวายขอบไม้สีเข้ม'));
+  assert.ok(!v.includes('บันได'));
+  assert.ok(v.includes(M.BACKGROUND_FROM_MASTER));
+  assert.ok(M.formatLocationMasterPrompt('ห้องรับแขกคฤหาสน์', 'บ่าย', '', '9:16', note).includes('ลักษณะสถานที่: ศาลาเปิดโล่ง'));
+  // 2. no clip settings inside the action
+  assert.ok(!/ระยะเวลา|สัดส่วนภาพ:|\|/.test(M.clipAction(clip)), M.clipAction(clip));
+  assert.equal(M.withoutClipSettings('คลิป 046/225 | 8 วินาที | 9:16 คุณหญิงมณีรับแฟ้ม'), 'คุณหญิงมณีรับแฟ้ม');
+  // 3. the folder of the end pose comes in during the clip
+  assert.ok(v.includes('ที่มาของแฟ้ม: คุณหญิงมณีรับหรือหยิบแฟ้มมาถือ') && v.includes('ห้ามให้แฟ้มโผล่ขึ้นมาเอง'));
+  // 4. only the people in the shot, the lawyer once (not also as "กฤต"), not แพรวา
+  assert.deepEqual(M.charactersInClip(clip, opts.knownCharacters), ['คุณหญิงมณี', 'ทนายกฤต', 'ภาคิน', 'น้ำฟ้า']);
+  assert.ok(!v.includes('แพรวา') && !/[^ย]กฤต/.test(v.replace(/ทนายกฤต/g, '')));
+  // 5. a wide shot of several people: still camera, nobody leaves the frame; no two people on the same spot
+  assert.ok(v.includes(`การเคลื่อนกล้อง: ${M.WIDE_GROUP_MOVE}`));
+  assert.ok(v.includes('ภาคินอยู่กลางจอ, น้ำฟ้าอยู่กลางจอด้านหลัง'));
+  // 6. an angry clip is not told to cry
+  assert.ok(!v.includes('น้ำตาคลอ') && v.includes('แสดงความโกรธผ่านสีหน้า'));
+  assert.ok(M.emotionDelivery('เสียใจ ร้องไห้').includes('น้ำตาคลอ'));
+  assert.deepEqual(M.checkPromptProblems(v, 'video', ctx.camera), []);
 });
 
 console.log(`\nwhole story: ${passed} passed`);

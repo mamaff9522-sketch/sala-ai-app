@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy, Play, StopCircle, Wrench, UserCheck, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import type { Character } from '../types';
+import type { Character, LocationItem } from '../types';
 import { api } from '../services/api';
 import { runWholeStory, type StoryClip } from '../services/wholeStoryRunner';
 import { metaOptionsForStory, offlineContinuation } from '../services/storyProgress';
 import { isClipByClipScript } from '../services/storyNormalize';
 import { packMultiDialogueClips, MULTI_DIALOGUE_SECONDS } from '../services/multiDialogueClips';
-import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, formatPlaceVideoBatch, VIDEO_BATCH_SIZE, attachmentLine, sensitiveWords, formatLocationMasterPrompt, thaiLighting, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
+import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, formatPlaceVideoBatch, VIDEO_BATCH_SIZE, attachmentLine, sensitiveWords, formatLocationMasterPrompt, thaiLighting, locationNote, locationNoteFor, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
 import { toCharacterLockPayload } from '../services/characterAppearance';
 
 /**
@@ -16,6 +16,8 @@ import { toCharacterLockPayload } from '../services/characterAppearance';
  */
 interface QuickPromptStudioProps {
   characters: Character[];
+  /** Location library: what each place looks like goes into the location lock and the master image */
+  locations?: LocationItem[];
   onOpenTools: () => void;
   onOpenCharacters: () => void;
 }
@@ -35,7 +37,7 @@ function saveJson(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ }
 }
 
-export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters, onOpenTools, onOpenCharacters }) => {
+export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters, locations, onOpenTools, onOpenCharacters }) => {
   const saved = loadJson<{ story: string; clips: StoryClip[]; notices: string[]; aspect: string; seconds: number } | null>(RESULT_KEY, null);
   const [story, setStory] = useState<string>(() => loadJson<string>(DRAFT_KEY, saved?.story || ''));
   const [aspect, setAspect] = useState<string>(saved?.aspect || '9:16');
@@ -89,8 +91,16 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
       ...toCharacterLockPayload(c), avatarUrl: (c as any).avatarUrl, referenceImages: (c as any).referenceImages,
       referenceImageBackup: (c as any).referenceImageBackup, photoBroken: brokenPhotos.includes(c.name)
     }));
-    return { ...metaOptionsForStory(resultStory, lib, characterNote), aspectRatio: aspect };
-  }, [characters, resultStory, aspect, brokenPhotos]);
+    const locationNotes: Record<string, string> = {};
+    for (const l of locations || []) {
+      const note = locationNote(l);
+      for (const name of [l?.name, (l as any)?.storyProfile?.storyLocationName]) {
+        const key = String(name || '').trim();
+        if (key && note) locationNotes[key] = note;
+      }
+    }
+    return { ...metaOptionsForStory(resultStory, lib, characterNote), aspectRatio: aspect, locationNotes };
+  }, [characters, locations, resultStory, aspect, brokenPhotos]);
   const prompts = useMemo(
     () => clips.map((c, i) => formatClipForMetaAi(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) })),
     [clips, metaOpts]
@@ -318,7 +328,7 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                         <button type="button"
                           onClick={() => {
                             const raw = String((clips[g.clips[0]] as any)?.generatedPrompt || '').match(/Lighting Lock:\s*([^.]*)/)?.[1] || '';
-                            copy(formatLocationMasterPrompt(g.location, g.timeOfDay, thaiLighting(raw, g.timeOfDay), aspect), `master${gi}`);
+                            copy(formatLocationMasterPrompt(g.location, g.timeOfDay, thaiLighting(raw, g.timeOfDay), aspect, locationNoteFor(g.location, metaOpts.locationNotes)), `master${gi}`);
                           }}
                           className="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-emerald-500/50 bg-slate-900 px-2.5 py-1 text-[12px]">
                           {copied === `master${gi}` ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> คัดลอกแล้ว</> : <><Copy className="w-3.5 h-3.5" /> ภาพมาสเตอร์สถานที่ (ทำก่อน)</>}

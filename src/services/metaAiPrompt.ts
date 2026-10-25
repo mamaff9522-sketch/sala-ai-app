@@ -64,6 +64,8 @@ export interface MetaAiFormatOptions {
   previous?: { clip: ClipForMeta; place: { location: string; timeOfDay: string } };
   /** This clip's camera (planned over the whole list, see planCameras) */
   camera?: CameraShot;
+  /** What each place looks like (from the location library), by place name: written into the location lock */
+  locationNotes?: Record<string, string>;
 }
 
 export type ShotSize = 'CU' | 'MCU' | 'MS' | 'MLS' | 'FS' | 'WS' | 'EWS';
@@ -161,16 +163,36 @@ const SCRIPT_CAMERA_WORDS_RE = /(?:^|\s)((?:กล้อง|ภาพใกล�
 const PROP_RE = /(แฟ้ม|เอกสาร|จดหมาย|กุญแจ|โทรศัพท์|ซอง|ปากกา|กรอบรูป|รูปถ่าย|ลายเซ็น|กระเป๋า|แหวน|กระดาษ|โฉนด|พินัยกรรม)/;
 const MOVING_RE = /(?:เดิน|ก้าว|วิ่ง|เข้ามา|ออกไป|ขับ|walks?|runs?)/;
 const camCache = new WeakMap<object, CameraShot[]>();
+/** A wide shot of several people: the camera stays, so nobody leaves the frame (a push-in lost them) */
+export const WIDE_GROUP_MOVE = 'กล้องนิ่ง ทุกคนอยู่ในเฟรมตลอดคลิป ห้ามดันกล้องเข้าจนมีคนหลุดเฟรม';
 
 const LABEL_CUT_RE = /\s*(?:Continuity Flow|Starting moment|Ending momentum|Dialogue|Continuity Handoff|Stance\/Position Lock|Spatial Position Lock|Location Lock|Lighting Lock)\s*:.*$/;
+/**
+ * Clip settings the story writer put next to the action ("ระยะเวลา: 10 วินาที | สัดส่วนภาพ: 9:16",
+ * "สถานที่: ห้องรับแขก / เวลา: บ่าย", "คลิป 046/225"): not something to act, removed from the action.
+ */
+export function withoutClipSettings(text: string): string {
+  return String(text || '')
+    .replace(/คลิป(?:ที่)?\s*\d+(?:\s*\/\s*\d+)?\s*[|:：]?/g, ' ')
+    .replace(/(?:ระยะเวลา|ความยาว)\s*[:：]?\s*\d+(?:\.\d+)?\s*วิ(?:นาที)?\.?/g, ' ')
+    .replace(/(?:สัดส่วน(?:ภาพ)?|อัตราส่วน(?:ภาพ)?)\s*[:：]?\s*\d+\s*:\s*\d+\.?/g, ' ')
+    .replace(/(?:^|\s)\d+(?:\.\d+)?\s*วินาที\s*\|\s*\d+\s*:\s*\d+\.?/g, ' ')
+    .replace(/(?:^|\s)(?:สถานที่|ฉาก)\s*[:：][^/.]*\/\s*เวลา\s*[:：]\s*\S+/g, ' ')
+    .replace(/(?:^|\s)[|]+(?=\s|$)/g, ' ')
+    .replace(/^[\s.|;,]+/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function clipAction(clip: ClipForMeta): string {
   const prompt = String(clip.generatedPrompt || '');
   const secs = findSections(prompt);
   const parts = ['Core action', 'Scene Action', 'Script action']
     .map(l => secs.find(x => x.label === l))
     .filter(Boolean)
-    .map(x => sectionBody(x!.text, x!.label).replace(LABEL_CUT_RE, '').replace(/[.;\s]+$/, ''));
-  return parts.join(' ') || clean(clip.startAction);
+    .map(x => withoutClipSettings(sectionBody(x!.text, x!.label).replace(LABEL_CUT_RE, '')).replace(/[.;\s]+$/, ''))
+    .filter(Boolean);
+  return parts.join(' ') || withoutClipSettings(clean(clip.startAction));
 }
 
 export function planCameras(clips: ClipForMeta[]): CameraShot[] {
@@ -210,9 +232,9 @@ export function planCameras(clips: ClipForMeta[]): CameraShot[] {
       return ` (${list.map(n => {
         let sd = screen.get(n);
         if (!sd) {
-          sd = !used.has('ซ้ายจอ') ? 'ซ้ายจอ' : !used.has('ขวาจอ') ? 'ขวาจอ' : 'กลางจอ';
+          sd = !used.has('ซ้ายจอ') ? 'ซ้ายจอ' : !used.has('ขวาจอ') ? 'ขวาจอ' : !used.has('กลางจอ') ? 'กลางจอ' : 'กลางจอด้านหลัง';
           used.add(sd);
-          if (sd !== 'กลางจอ') screen.set(n, sd);
+          if (!sd.startsWith('กลางจอ')) screen.set(n, sd);
         }
         return `${n}อยู่${sd}`;
       }).join(', ')})`;
@@ -236,7 +258,7 @@ export function planCameras(clips: ClipForMeta[]): CameraShot[] {
       cam = shot('script', `ตามบท: ${scriptCam}`, /ดัน|ถอย|เลื่อน|แพน|ตาม|ซูม|push|pull|pan|dolly/i.test(scriptCam) ? '' : 'กล้องนิ่ง');
     } else if (newPlace) {
       cam = names.length >= 2
-        ? shot('wide', `ภาพกว้าง เห็นทั้ง${place || 'สถานที่'}และทุกคนในฉาก${sidesText(names)}`, 'กล้องค่อยๆ เลื่อนเข้าช้าๆ')
+        ? shot('wide', `ภาพกว้าง เห็นทั้ง${place || 'สถานที่'}และทุกคนในฉาก${sidesText(names)}`, WIDE_GROUP_MOVE)
         : names.length === 0
           // nobody in the shot: an establishing view of the place itself
           ? shot('wide', `ภาพกว้าง เห็นทั้ง${place || 'สถานที่'}`, 'กล้องค่อยๆ เลื่อนเข้าช้าๆ')
@@ -311,9 +333,9 @@ export function planCameras(clips: ClipForMeta[]): CameraShot[] {
     for (const n of names) {
       let sd = screen.get(n);
       if (!sd) {
-        sd = !taken.has('ซ้ายจอ') ? 'ซ้ายจอ' : !taken.has('ขวาจอ') ? 'ขวาจอ' : 'กลางจอ';
+        sd = !taken.has('ซ้ายจอ') ? 'ซ้ายจอ' : !taken.has('ขวาจอ') ? 'ขวาจอ' : !taken.has('กลางจอ') ? 'กลางจอ' : 'กลางจอด้านหลัง';
         taken.add(sd);
-        if (sd !== 'กลางจอ') screen.set(n, sd);
+        if (!sd.startsWith('กลางจอ')) screen.set(n, sd);
       }
       cam.staging[n] = sd;
     }
@@ -400,8 +422,20 @@ export function charactersInClip(clip: ClipForMeta, knownCharacters: string[] = 
   (clip.dialogues || []).forEach(d => add(d?.speaker));
   const prompt = String(clip.generatedPrompt || '');
   const lock = findSections(prompt).find(s => s.label === 'Character Lock');
-  knownCharacters.forEach(n => { if (n && (lock ? lock.text.includes(n) : prompt.includes(n))) add(n); });
-  return out;
+  // When the clip lists who is present, a name only counts if the action itself names them
+  // (the app's Character Lock text may list the whole cast, e.g. แพรวา who is not in this scene)
+  const where = (clip.charactersPresent || []).length ? clipAction(clip) : (lock ? lock.text : prompt);
+  knownCharacters.forEach(n => {
+    if (!n) return;
+    // "กฤต" inside "ทนายกฤต" is the same person, not a second character
+    const longer = [...knownCharacters, ...out].filter(m => m && m !== n && m.includes(n));
+    const text = longer.reduce((t, m) => t.split(m).join(' '), where);
+    if (text.includes(n)) add(n);
+  });
+  // Same person under a short and a long name ("กฤต" / "ทนายกฤต"): keep the long name once
+  const all = [...knownCharacters, ...out].filter(Boolean);
+  const full = (n: string) => all.find(m => m !== n && m.length > n.length && m.endsWith(n)) || n;
+  return Array.from(new Set(out.map(full)));
 }
 
 /** The clip's characters that have a photo to upload (all of them when withPhoto is not given). */
@@ -631,6 +665,20 @@ function withoutRepeats(parts: string[]): string {
   return tidy(out.join('. ') + '.');
 }
 
+/**
+ * "คุณหญิงมณีถือแฟ้ม" at the end while nothing before shows the folder: one line saying how it comes
+ * into the hand, so it does not pop up out of nowhere.
+ */
+function propBridge(f: ClipFacts, sequenceText = ''): string {
+  const endText = [f.end, f.endMoment].join(' ');
+  const prop = endText.match(PROP_RE)?.[1];
+  if (!prop) return '';
+  const before = [f.action, sequenceText, f.extra, f.carried, f.ownStart, f.startMoment].join(' ');
+  if (before.includes(prop)) return '';
+  const holder = f.names.find(n => endText.includes(n)) || '';
+  return `ที่มาของ${prop}: ${holder || 'ตัวละคร'}รับหรือหยิบ${prop}มาถือให้เห็นชัดตั้งแต่ต้นคลิป ห้ามให้${prop}โผล่ขึ้นมาเอง`;
+}
+
 /** The video's sound: the characters' scripted voices only (user rule). */
 export const VIDEO_SOUND_DIALOGUE = 'มีเฉพาะเสียงพูดของตัวละครตามบทพูดด้านบน ไม่มีเสียงบรรยากาศ เสียงธรรมชาติ ดนตรี หรือเสียงเอฟเฟกต์ใด ๆ';
 export const VIDEO_SOUND_SILENT = 'เงียบทั้งคลิป ไม่มีเสียงพูด เสียงบรรยากาศ เสียงธรรมชาติ ดนตรี หรือเสียงเอฟเฟกต์ใด ๆ';
@@ -662,7 +710,7 @@ function videoPromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): VideoPa
   // 1. story context + length + format
   add('head', `บริบท: ละครดราม่าไทยแต่ง (นิยาย) นักแสดงผู้ใหญ่ที่ยินยอม, ${[clip.durationSeconds ? `วิดีโอยาว ${clip.durationSeconds} วินาที` : 'วิดีโอ', opts.aspectRatio ? `สัดส่วนภาพ ${opts.aspectRatio}` : '', 'ภาพสมจริงแบบภาพยนตร์ เคลื่อนไหวเป็นธรรมชาติ'].filter(Boolean).join(', ')}`);
   // 2. location lock: attach the master image + the same bible block word for word every time
-  if (f.place.location || f.place.timeOfDay) add('place', `ล็อกฉาก${att.master ? ` (รูปที่ 1 คือภาพมาสเตอร์ "${att.master}")` : ''}: ${locationBible(f.place.location, f.place.timeOfDay, f.lighting)}`);
+  if (f.place.location || f.place.timeOfDay) add('place', `ล็อกฉาก${att.master ? ` (รูปที่ 1 คือภาพมาสเตอร์ "${att.master}")` : ''}: ${locationBible(f.place.location, f.place.timeOfDay, f.lighting, locationNoteFor(f.place.location, opts.locationNotes))}${att.master && att.faces.length ? ` — ${BACKGROUND_FROM_MASTER}` : ''}`);
   // 3. character lock: at most two faces attached, a fixed look line for everyone
   if (f.names.length) add('cast', characterLock(f, att.faces));
   // 4. continuity: the previous clip's last frame is frame 1
@@ -689,6 +737,9 @@ function videoPromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): VideoPa
   } else if (moves) add('action', `การเคลื่อนไหวของตัวละคร: ${moves}`);
   const extra = withoutBackgroundSound(f.extra);
   if (extra) add('action', `รายละเอียดฉาก: ${extra}`);
+  // The end pose holds something the clip never brings in (a folder appeared from nowhere): say how it comes
+  const bridge = propBridge(f, seq.map(st => st.text).join(' '));
+  if (bridge) add('action', bridge);
   // 6. dialogue lock (Meta's formula) + who may move their lips
   if (f.lines.length) {
     add('dialogue', `บทพูด: ${f.lines.map((d, k) => `${multi ? `ประโยคที่ ${k + 1} ` : ''}${d.speaker || 'ตัวละคร'} ${DIALOGUE_FORMULA}: "${d.line}"`).join('; ')}`);
@@ -700,7 +751,8 @@ function videoPromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): VideoPa
   add('safety', SAFETY_LINE);
   // emotion, end pose, sound, no text
   const felt = f.lines.filter(d => d.emotion).map(d => `${d.speaker} ${d.emotion}`);
-  add('emotion', `อารมณ์และการแสดง: ${felt.length ? felt.join('; ') + ' ' : ''}สีหน้า ท่าทาง${f.lines.length ? ' และน้ำเสียง' : ''}ตรงกับเหตุการณ์${f.lines.length ? 'และบทพูด' : ''}`);
+  const delivery = emotionDelivery([...felt, f.action].join(' '));
+  add('emotion', `อารมณ์และการแสดง: ${felt.length ? felt.join('; ') + ' ' : ''}${delivery ? delivery + ' ' : ''}สีหน้า ท่าทาง${f.lines.length ? ' และน้ำเสียง' : ''}ตรงกับเหตุการณ์${f.lines.length ? 'และบทพูด' : ''}`);
   const ending = [f.end, f.endMoment && !f.end.includes(f.endMoment) ? f.endMoment : ''].filter(Boolean).join('; ');
   if (ending) add('ending', `ท่าจบคลิป (ค้างไว้ส่งต่อคลิปถัดไป): ${ending}`);
   add('sound', f.lines.length ? `เสียง: ${VIDEO_SOUND_DIALOGUE}` : `เสียง: ${VIDEO_SOUND_SILENT}`);
@@ -712,7 +764,15 @@ function videoPromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): VideoPa
 /** Meta's dialogue formula: name + this + the Thai line in quotes */
 export const DIALOGUE_FORMULA = 'speaks in Thai, exact line, lip-sync, no paraphrase';
 /** Real faces + physical violence / heavy distress are refused: drama in words, emotion without harm */
-export const SAFETY_LINE = 'ความปลอดภัย: ดราม่าด้วยคำพูดเท่านั้น ไม่มีการทำร้ายร่างกาย ไม่ตี ไม่ผลัก แสดงอารมณ์ผ่านน้ำตาคลอและเสียงสั่น ไม่ร้องไห้หนักในภาพใกล้มาก';
+export const SAFETY_LINE = 'ความปลอดภัย: ดราม่าด้วยคำพูดเท่านั้น ไม่มีการทำร้ายร่างกาย ไม่ตี ไม่ผลัก ไม่ร้องไห้หนักในภาพใกล้มาก';
+/** How to show the clip's feeling safely, matched to it (an angry clip is not told to be teary) */
+export function emotionDelivery(text: string): string {
+  const t = String(text || '');
+  if (/(ร้องไห้|น้ำตา|เศร้า|เสียใจ|สะอื้น|ผิดหวัง|เจ็บปวด)/.test(t)) return 'แสดงความเศร้าผ่านน้ำตาคลอและเสียงสั่น';
+  if (/(โกรธ|โมโห|เดือด|ฉุน|ตะคอก|ตวาด|ขึ้นเสียง|เกรี้ยวกราด|แค้น)/.test(t)) return 'แสดงความโกรธผ่านสีหน้า แววตา และน้ำเสียงหนักแน่น ไม่มีน้ำตา';
+  if (/(ตกใจ|ช็อก|อึ้ง|งง)/.test(t)) return 'แสดงความตกใจผ่านสีหน้าและแววตา';
+  return '';
+}
 /** Actions Meta may refuse with real faces (shown as a warning on the clip card, the script is not changed) */
 const SENSITIVE_RE = /(ตบ|ตี(?!ความ|ห|ตัว|สอง|หนึ่ง|นิ้ว)|ผลัก|ต่อย|เตะ|ทำร้าย|บีบคอ|แทง|ยิง|เลือด|ฆ่า|ทุบ|กระชาก|จูบ|ถอดเสื้อ|เปลือย)/g;
 export function sensitiveWords(clip: ClipForMeta): string[] {
@@ -733,23 +793,49 @@ export function masterName(location: string): string {
  * Location Bible: the same block, word for word, in every prompt at a place (Meta: never rewrite it).
  * Floor, walls, stairs, curtains, doors, light direction, time, camera height.
  */
-export function locationBible(location: string, timeOfDay: string, lighting: string): string {
+export function locationBible(location: string, timeOfDay: string, lighting: string, details = ''): string {
   let h = 0;
   for (const ch of String(location || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   const side = h % 2 ? 'ซ้าย' : 'ขวา';
   return [
     `สถานที่ ${location || 'เดิม'}${timeOfDay ? ` เวลา ${timeOfDay}` : ''}`,
-    'พื้น ผนัง บันได ม่าน ประตู หน้าต่าง และเฟอร์นิเจอร์ ตำแหน่งและสีตามภาพมาสเตอร์ทุกจุด ห้ามย้าย เพิ่ม หรือลบ',
+    // the place's own details only (a generic "stairs, curtains" list made Meta add a staircase)
+    details ? `ลักษณะสถานที่: ${details}` : '',
+    'พื้น ผนัง ประตู หน้าต่าง และเฟอร์นิเจอร์ ตำแหน่งและสีตามภาพมาสเตอร์ทุกจุด ห้ามย้าย เพิ่ม หรือลบ',
     `${lighting || 'แสงธรรมชาติ'} แสงหลักเข้าจากด้าน${side}ของภาพ`,
     'กล้องระดับสายตา เลนส์ 35 มม. ฉากและแสงคงเดิมทั้งคลิป ห้ามเปลี่ยนสถานที่'
-  ].join(' — ');
+  ].filter(Boolean).join(' — ');
+}
+
+/** Background rule when character photos are attached: their photo backgrounds are not the set */
+export const BACKGROUND_FROM_MASTER = 'ฉากหลังใช้จากรูปที่ 1 เท่านั้น ห้ามใช้ฉากหลังจากรูปโปรไฟล์ตัวละคร (รูปตัวละครใช้เฉพาะใบหน้า ทรงผม และชุด)';
+
+/** "ห้องรับแขกคฤหาสน์" -> its description from the location library (same place name, any spelling) */
+export function locationNoteFor(location: string, notes?: Record<string, string>): string {
+  if (!location || !notes) return '';
+  const key = Object.keys(notes).find(k => k === location) || Object.keys(notes).find(k => samePlace(k, location));
+  return key ? notes[key] : '';
+}
+
+/** Short look of a library location: style, floor, walls, windows, furniture, signature details. */
+export function locationNote(loc: any): string {
+  const v = loc?.visualProfile || {};
+  const bits = [v.architecturalStyle, v.floor, v.wallColor, v.windows, v.majorFurniture, v.distinctiveFeatures]
+    .map(x => String(x || '').replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, ''))
+    .filter(x => x && !/ไม่เห็น|ไม่ระบุ|ไม่ทราบ|not visible|unknown/i.test(x));
+  const kept: string[] = [];
+  for (const b of bits) {
+    if (kept.length && kept.join(', ').length + b.length > 260) break;
+    kept.push(b);
+  }
+  return kept.join(', ') || String(loc?.description || loc?.storyProfile?.description || '').replace(/\s+/g, ' ').trim().slice(0, 200);
 }
 
 /** Still image of the empty set, made once per place and attached to every prompt there. */
-export function formatLocationMasterPrompt(location: string, timeOfDay: string, lighting: string, aspectRatio = ''): string {
+export function formatLocationMasterPrompt(location: string, timeOfDay: string, lighting: string, aspectRatio = '', details = ''): string {
   return [
     `ภาพมาสเตอร์สถานที่ "${masterName(location)}": ภาพนิ่ง${aspectRatio ? ` ${aspectRatio}` : ''} ภาพถ่ายสมจริงแบบฉากในภาพยนตร์ สถานที่ว่าง ไม่มีคน`,
-    locationBible(location, timeOfDay, lighting),
+    locationBible(location, timeOfDay, lighting, details),
     'เห็นพื้นที่ทั้งหมดของสถานที่ชัดเจน ไม่มีตัวหนังสือหรือลายน้ำ'
   ].join('. ') + '.';
 }
@@ -841,7 +927,7 @@ function imagePromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): ImagePa
     parts.looks = `เสื้อผ้าและรูปลักษณ์: ${f.photoNames.length ? 'ทรงผม สีผม ชุด สี ลวดลาย รองเท้า และเครื่องประดับตามภาพอ้างอิง ' : ''}ห้ามเปลี่ยนชุดหรือสลับเสื้อผ้าระหว่างตัวละคร`;
   }
   // 3. place + light
-  if (f.place.location || f.place.timeOfDay) parts.place = `สถานที่และแสง${f.place.location ? ` (รูปที่ 1 คือภาพมาสเตอร์ "${masterName(f.place.location)}")` : ''}: ${locationBible(f.place.location, f.place.timeOfDay, f.lighting)} เปลี่ยนได้เฉพาะมุมกล้อง`;
+  if (f.place.location || f.place.timeOfDay) parts.place = `สถานที่และแสง${f.place.location ? ` (รูปที่ 1 คือภาพมาสเตอร์ "${masterName(f.place.location)}")` : ''}: ${locationBible(f.place.location, f.place.timeOfDay, f.lighting, locationNoteFor(f.place.location, opts.locationNotes))} เปลี่ยนได้เฉพาะมุมกล้อง${f.place.location && f.photoNames.length ? ` — ${BACKGROUND_FROM_MASTER}` : ''}`;
   // 4. camera direction + shot size
   const sizeText = cam.kind === 'insert' && cam.prop
     ? `Close-up: ${cam.prop}${main ? `ในมือ${main}` : ''} เห็นมือและ${cam.prop}ชัด`

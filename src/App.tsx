@@ -652,6 +652,7 @@ export default function App() {
         {activeTab === 'home' && (
           <QuickPromptStudio
             characters={characters}
+            locations={locations}
             onOpenTools={() => handleTabChange('tools')}
             onOpenCharacters={() => handleTabChange('characters')}
           />
