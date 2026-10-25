@@ -54,7 +54,7 @@ await check('prompts of packed clips: numbered lines in order, who speaks when, 
     assert.deepEqual(checkPromptProblems(v, 'video', ctx.camera), [], `clip ${i + 1} video`);
     assert.deepEqual(checkPromptProblems(img, 'image', ctx.camera), [], `clip ${i + 1} image`);
     assert.ok(v.includes(`วิดีโอยาว ${MULTI_DIALOGUE_SECONDS} วินาที`));
-    assert.ok(v.includes('ล็อกฉาก (แนบภาพมาสเตอร์') && v.includes('ใบหน้า ทรงผม เมคอัพ เครื่องประดับ ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป') && /มุมกล้อง: \S/.test(v));
+    assert.ok(v.includes('ล็อกฉาก (รูปที่ 1 คือภาพมาสเตอร์') && v.includes('ใบหน้า ทรงผม เมคอัพ เครื่องประดับ ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป') && /มุมกล้อง: \S/.test(v));
     let at = -1;
     c.dialogues.forEach((d, k) => {
       const tag = c.dialogues.length > 1 ? `ประโยคที่ ${k + 1} ${d.speaker} speaks in Thai, exact line, lip-sync, no paraphrase: "${d.line}"` : `${d.speaker} speaks in Thai, exact line, lip-sync, no paraphrase: "${d.line}"`;
@@ -102,7 +102,7 @@ for (const [file, packedMode] of [['faiklaen-225-clips.txt', false], ['multi-dia
         const ch = g.clips.slice(k, k + VIDEO_BATCH_SIZE);
         const b = formatPlaceVideoBatch(clips as any, ch, opts);
         assert.ok(b.startsWith(`สร้างวิดีโอ ${ch.length} คลิปแยกกัน`));
-        for (const label of ['ล็อกฉาก (แนบภาพมาสเตอร์', 'เสียงทุกคลิป:', 'ไม่มีตัวหนังสือ', 'ความปลอดภัย:']) assert.equal(b.split(label).length - 1, 1, `${label} once`);
+        for (const label of ['ล็อกฉาก (รูปที่ 1 คือภาพมาสเตอร์', 'เสียงทุกคลิป:', 'ไม่มีตัวหนังสือ', 'ความปลอดภัย:']) assert.equal(b.split(label).length - 1, 1, `${label} once`);
         const shots = b.split(/\n\nคลิปที่ \d+ \(คลิป \d+(?:, \d+ วินาที)?\):\n/).slice(1);
         assert.equal(shots.length, ch.length);
         shots.forEach((shot, j) => {

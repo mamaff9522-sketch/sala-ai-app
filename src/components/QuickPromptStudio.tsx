@@ -135,9 +135,10 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
 
   const copyAll = () => {
     const all = clips.map((c, i) => {
-      const photos = photoLine(c);
-      const att = attachmentLine(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) });
-      return `=== คลิป ${i + 1}/${clips.length} ===${att ? `\n(แนบก่อนพิมพ์: ${att})` : ''}\n[พรอมต์สร้างภาพ]\n${imagePrompts[i]}\n[พรอมต์วิดีโอ]\n${prompts[i]}`;
+      const ctx = { ...metaOpts, ...metaContextFor(clips as any, i) };
+      const attImg = attachmentLine(c as any, ctx, 'image');
+      const attVid = attachmentLine(c as any, ctx, 'video');
+      return `=== คลิป ${i + 1}/${clips.length} ===\n[พรอมต์สร้างภาพ]${attImg ? `\n(แนบก่อนพิมพ์: ${attImg})` : ''}\n${imagePrompts[i]}\n[พรอมต์วิดีโอ]${attVid ? `\n(แนบก่อนพิมพ์: ${attVid})` : ''}\n${prompts[i]}`;
     }).join('\n\n');
     // The story's shared locks once at the top; every clip prompt below still carries what Meta AI needs
     const tips = 'วิธีใช้กับ Meta AI: แนบไฟล์ตาม "แนบก่อนพิมพ์" ทุกช็อตก่อนพิมพ์ · สร้างภาพนิ่งก่อนแล้วค่อยทำเป็นวิดีโอ · คลิปต่อเนื่องให้แนบเฟรมสุดท้ายของคลิปก่อน · ใช้โหมด Quality · เริ่มแชทใหม่เป็นระยะแล้วแนบมาสเตอร์ใหม่';
@@ -349,7 +350,6 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
               </details>
             )}
             {clips.map((c, i) => {
-              const photos = photoLine(c);
               return (
                 <div key={`${c.clipNumber}-${i}`} className="rounded-2xl border border-slate-700 bg-[#0b1224]/90 p-3">
                   <div className="flex items-start justify-between gap-2">
@@ -366,7 +366,7 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                     const att = attachmentLine(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) });
                     const risky = sensitiveWords(c as any);
                     return <>
-                      {att && <div className="mt-1.5 text-[12px] text-cyan-300">แนบใน Meta AI ก่อนพิมพ์: {att}</div>}
+                      {att && <div className="mt-1.5 text-[12px] text-cyan-300">แนบใน Meta AI ก่อนพิมพ์ (วิดีโอ): {att}</div>}
                       {risky.length > 0 && <div className="mt-1 flex items-start gap-1 text-[12px] text-rose-300"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />มีการกระทำที่ Meta อาจปฏิเสธ ({risky.join(', ')}) พรอมต์สั่งให้เป็นดราม่าด้วยคำพูดแทนแล้ว</div>}
                     </>;
                   })()}
@@ -389,6 +389,10 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                             {none.length > 0 && <div className="flex items-start gap-1"><AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />ยังไม่มีรูปอ้างอิง: {none.join(', ')} — เพิ่มรูปในคลังตัวละครเพื่อล็อกหน้าตาและชุด</div>}
                           </div>
                         : null;
+                    })()}
+                    {(() => {
+                      const attImg = attachmentLine(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) }, 'image');
+                      return attImg ? <div className="mt-1 text-[12px] text-cyan-300">แนบก่อนพิมพ์ (ภาพ): {attImg}</div> : null;
                     })()}
                     <p className="mt-1 text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words line-clamp-3">{imagePrompts[i]}</p>
                   </div>

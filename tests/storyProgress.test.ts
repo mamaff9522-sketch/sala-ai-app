@@ -70,7 +70,7 @@ check('Meta AI format: photo mapping instead of library text, no internal notes,
   const clips = buildSalaMultiClipPrompts({ scriptText: STORY, clipDurationSeconds: 8, clipCount: 3, continuityLock: {}, characters: chars as any });
   const meta = formatClipForMetaAi(clips[0], { aspectRatio: '9:16', knownCharacters: ['พี่ทุย', 'น้องน้ำ'] });
   assert.ok(meta.length < clips[0].generatedPrompt.length / 2, 'much shorter than the full prompt');
-  assert.ok(meta.includes('รูปที่ 1 คือรูปโปรไฟล์อ้างอิงของพี่ทุย') && meta.includes('รูปที่ 2 คือรูปโปรไฟล์อ้างอิงของน้องน้ำ'));
+  assert.ok(/รูปที่ \d คือรูปโปรไฟล์อ้างอิงของพี่ทุย/.test(meta) && /รูปที่ \d คือรูปโปรไฟล์อ้างอิงของน้องน้ำ/.test(meta));
   assert.ok(meta.includes('"ไปไหนมา ทำไมกลับช้าขนาดนี้?"'));
   assert.ok(meta.includes('วิดีโอยาว 8 วินาที') && meta.includes('9:16'));
   for (const gone of ['ผูกพรอมต์นี้', 'Continuity Handoff', 'Stance/Position Lock', 'Negative', 'ไม่ระบุ', 'water buffalo']) {
@@ -130,7 +130,7 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
   const blocks = formatAllClipsForMetaAi(clips, { knownCharacters: ['พี่ทุย', 'น้องน้ำ'] }).split('\n\n');
   assert.equal(blocks.length, clips.length);
   for (const b of blocks) {
-    assert.ok(b.includes('ล็อกฉาก (แนบภาพมาสเตอร์ "หน้าบ้าน Master"): สถานที่ หน้าบ้าน'), 'every clip locks the set, inherited when the heading names none');
+    assert.ok(b.includes('ล็อกฉาก (รูปที่ 1 คือภาพมาสเตอร์ "หน้าบ้าน Master"): สถานที่ หน้าบ้าน'), 'every clip locks the set, inherited when the heading names none');
     assert.ok(b.includes('ท่าจบคลิป'), 'every clip locks its end pose');
     assert.ok(!/ท่าจบคลิป[^.]*เดิน/.test(b), 'no one is still walking at the hand-off');
   }

@@ -662,13 +662,13 @@ function videoPromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): VideoPa
   // 1. story context + length + format
   add('head', `บริบท: ละครดราม่าไทยแต่ง (นิยาย) นักแสดงผู้ใหญ่ที่ยินยอม, ${[clip.durationSeconds ? `วิดีโอยาว ${clip.durationSeconds} วินาที` : 'วิดีโอ', opts.aspectRatio ? `สัดส่วนภาพ ${opts.aspectRatio}` : '', 'ภาพสมจริงแบบภาพยนตร์ เคลื่อนไหวเป็นธรรมชาติ'].filter(Boolean).join(', ')}`);
   // 2. location lock: attach the master image + the same bible block word for word every time
-  if (f.place.location || f.place.timeOfDay) add('place', `ล็อกฉาก (แนบภาพมาสเตอร์ "${masterName(f.place.location)}"): ${locationBible(f.place.location, f.place.timeOfDay, f.lighting)}`);
+  if (f.place.location || f.place.timeOfDay) add('place', `ล็อกฉาก${att.master ? ` (รูปที่ 1 คือภาพมาสเตอร์ "${att.master}")` : ''}: ${locationBible(f.place.location, f.place.timeOfDay, f.lighting)}`);
   // 3. character lock: at most two faces attached, a fixed look line for everyone
   if (f.names.length) add('cast', characterLock(f, att.faces));
   // 4. continuity: the previous clip's last frame is frame 1
   if (f.startMoment && !f.continuous) add('start', `จังหวะเริ่มคลิป: ${f.startMoment}`);
   if (f.continuous && f.hasPrevious && att.lastFrameOf) {
-    add('start', `ความต่อเนื่อง: แนบเฟรมสุดท้ายของคลิป ${att.lastFrameOf} เป็นเฟรมแรก continue from this exact frame ท่า ตำแหน่ง ชุด แสง และกล้องเดิม no jump cut`);
+    add('start', `ความต่อเนื่อง: รูปที่ ${att.frameNo} (รูปสุดท้าย) คือเฟรมสุดท้ายของวิดีโอคลิป ${att.lastFrameOf} ใช้เป็นเฟรมแรก continue from this exact frame ท่า ตำแหน่ง ชุด แสง และกล้องเดิม no jump cut`);
   }
   if (f.carried) add('start', `ท่าเริ่มคลิป (ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ ห้ามเล่นเหตุการณ์ของคลิปก่อนซ้ำ): ${f.carried}`);
   else if (f.ownStart) add('start', f.hasPrevious && !f.continuous ? `เปลี่ยนสถานที่ ท่าเริ่มคลิป: ${f.ownStart}` : `ท่าเริ่มคลิป: ${f.ownStart}`);
@@ -754,33 +754,45 @@ export function formatLocationMasterPrompt(location: string, timeOfDay: string, 
   ].join('. ') + '.';
 }
 
-/** What to attach before typing this clip's prompt: the place master, at most two faces, the last frame. */
-export function attachmentsFor(clip: ClipForMeta, opts: MetaAiFormatOptions, facts?: ClipFacts): { master: string; faces: { n: number; name: string }[]; lastFrameOf?: number } {
+export interface Attachment { n: number; kind: 'master' | 'face' | 'frame'; name: string; label: string }
+
+/**
+ * What to attach before typing this clip's prompt, numbered for THIS clip (user's order):
+ * รูปที่ 1 = the place's master image, then every character in the shot who has a reference photo,
+ * and last the previous clip (its last video frame; for a still image, its still) when the clip
+ * continues from it.
+ */
+export function attachmentsFor(clip: ClipForMeta, opts: MetaAiFormatOptions, facts?: ClipFacts, kind: 'video' | 'image' = 'video'): {
+  list: Attachment[]; master: string; faces: { n: number; name: string }[]; lastFrameOf?: number; frameNo?: number;
+} {
   const f = facts || clipFacts(clip, opts);
-  const cam = f.cam;
-  const order = [...f.speakers, cam?.subject || '', cam?.partner || '', ...f.names];
-  const faces: { n: number; name: string }[] = [];
-  for (const n of order) {
-    if (!n || !f.photoNames.includes(n) || faces.some(x => x.name === n)) continue;
-    faces.push({ n: f.photoNo.get(n) || 0, name: n });
-    if (faces.length === 2) break;
+  const list: Attachment[] = [];
+  const master = f.place.location ? masterName(f.place.location) : '';
+  if (master) list.push({ n: list.length + 1, kind: 'master', name: master, label: `ภาพมาสเตอร์ ${master}` });
+  for (const name of f.names) {
+    if (f.photoNames.includes(name)) list.push({ n: list.length + 1, kind: 'face', name, label: name });
   }
-  faces.sort((a, b) => a.n - b.n);
   const prev = opts.previous;
   const lastFrameOf = f.continuous && prev ? (Number(prev.clip.clipNumber) || undefined) : undefined;
-  return { master: f.place.location ? masterName(f.place.location) : '', faces, lastFrameOf };
+  if (lastFrameOf) list.push({ n: list.length + 1, kind: 'frame', name: String(lastFrameOf), label: kind === 'video' ? `เฟรมสุดท้ายของวิดีโอคลิป ${lastFrameOf}` : `ภาพนิ่งของคลิป ${lastFrameOf}` });
+  return {
+    list,
+    master,
+    faces: list.filter(x => x.kind === 'face').map(x => ({ n: x.n, name: x.name })),
+    lastFrameOf,
+    frameNo: list.find(x => x.kind === 'frame')?.n
+  };
 }
 
-/** "แนบก่อนพิมพ์: …" for the clip card. */
-export function attachmentLine(clip: ClipForMeta, opts: MetaAiFormatOptions): string {
-  const a = attachmentsFor(clip, opts);
-  return [a.master ? `ภาพมาสเตอร์ ${a.master}` : '', ...a.faces.map(x => `รูปที่ ${x.n} ${x.name}`), a.lastFrameOf ? `เฟรมสุดท้ายของคลิป ${a.lastFrameOf}` : ''].filter(Boolean).join(' · ');
+/** "รูปที่ 1 ภาพมาสเตอร์ … · รูปที่ 2 คุณหญิงมณี · … · รูปที่ 4 เฟรมสุดท้ายของวิดีโอคลิป 4" for the card. */
+export function attachmentLine(clip: ClipForMeta, opts: MetaAiFormatOptions, kind: 'video' | 'image' = 'video'): string {
+  return attachmentsFor(clip, opts, undefined, kind).list.map(x => `รูปที่ ${x.n} ${x.label}`).join(' · ');
 }
 
 /** Character lock: profile reference photos (at most two attached) + one fixed look line per person. */
 function characterLock(f: ClipFacts, faces: { n: number; name: string }[]): string {
   const refs = faces.map(x => `รูปที่ ${x.n} คือรูปโปรไฟล์อ้างอิงของ${x.name}`);
-  const looks = f.names.map(n => `${n}${f.notes[n] ? ` (${f.notes[n]})` : ''}${f.photoNames.includes(n) && !faces.some(x => x.name === n) ? ' ไม่ต้องแนบรูปในคลิปนี้' : ''}${!f.photoNames.includes(n) ? ' ยังไม่มีภาพอ้างอิง' : ''}`);
+  const looks = f.names.map(n => `${n}${f.notes[n] ? ` (${f.notes[n]})` : ''}${!f.photoNames.includes(n) ? ' ยังไม่มีภาพอ้างอิง' : ''}`);
   return `ล็อกตัวละคร: ${[refs.join(', '), `ลุคคงที่: ${looks.join(', ')}`].filter(Boolean).join('; ')} — ใบหน้า ทรงผม เมคอัพ เครื่องประดับ ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป ${f.animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}`;
 }
 
@@ -824,12 +836,12 @@ function imagePromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): ImagePa
   parts.context = 'บริบท: ภาพนิ่งจากละครดราม่าไทยแต่ง (นิยาย) นักแสดงผู้ใหญ่ที่ยินยอม';
   // 1-2. characters: at most two profile reference photos + one fixed look line per person (Meta)
   if (f.names.length) {
-    const faces = attachmentsFor(clip, opts, f).faces;
+    const faces = attachmentsFor(clip, opts, f, 'image').faces;
     parts.refs = characterLock(f, faces) + ' ห้ามสลับหน้าระหว่างตัวละคร ห้ามเพิ่มตัวละครที่ไม่มีในบท';
     parts.looks = `เสื้อผ้าและรูปลักษณ์: ${f.photoNames.length ? 'ทรงผม สีผม ชุด สี ลวดลาย รองเท้า และเครื่องประดับตามภาพอ้างอิง ' : ''}ห้ามเปลี่ยนชุดหรือสลับเสื้อผ้าระหว่างตัวละคร`;
   }
   // 3. place + light
-  if (f.place.location || f.place.timeOfDay) parts.place = `สถานที่และแสง (แนบภาพมาสเตอร์ "${masterName(f.place.location)}"): ${locationBible(f.place.location, f.place.timeOfDay, f.lighting)} เปลี่ยนได้เฉพาะมุมกล้อง`;
+  if (f.place.location || f.place.timeOfDay) parts.place = `สถานที่และแสง${f.place.location ? ` (รูปที่ 1 คือภาพมาสเตอร์ "${masterName(f.place.location)}")` : ''}: ${locationBible(f.place.location, f.place.timeOfDay, f.lighting)} เปลี่ยนได้เฉพาะมุมกล้อง`;
   // 4. camera direction + shot size
   const sizeText = cam.kind === 'insert' && cam.prop
     ? `Close-up: ${cam.prop}${main ? `ในมือ${main}` : ''} เห็นมือและ${cam.prop}ชัด`
@@ -875,8 +887,8 @@ function imagePromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): ImagePa
     : '';
   parts.staging = (`ตำแหน่งและการกระทำ: ${[staging.join(' | '), moment, face].filter(Boolean).join('. ')}`);
   if (f.continuous && f.hasPrevious) {
-    const prevNo = Number(opts.previous?.clip.clipNumber) || 0;
-    parts.continuity = `ความต่อเนื่อง: ${prevNo ? `แนบภาพนิ่งของคลิป ${prevNo} เป็นภาพอ้างอิง ` : ''}ต่อจากภาพของคลิปก่อน ตำแหน่ง ชุด แสง และฉากเดิม`;
+    const att = attachmentsFor(clip, opts, f, 'image');
+    parts.continuity = `ความต่อเนื่อง: ${att.lastFrameOf ? `รูปที่ ${att.frameNo} (รูปสุดท้าย) คือภาพนิ่งของคลิป ${att.lastFrameOf} ` : ''}ต่อจากภาพของคลิปก่อน ตำแหน่ง ชุด แสง และฉากเดิม`;
   }
   // 6. format + the rules that matter for this shot
   parts.format = (`รูปแบบและสัดส่วนภาพ: ภาพนิ่ง${opts.aspectRatio ? ` ${opts.aspectRatio}` : ''} ภาพถ่ายสมจริงแบบฉากในภาพยนตร์ ไม่ใช่ภาพวาดหรือการ์ตูน${opts.aspectRatio === '9:16' && !fromBehind ? ' ใบหน้าอยู่ช่วงบนของจอ' : ''} ไม่มีตัวหนังสือ ซับไตเติล หรือลายน้ำ`);
@@ -952,8 +964,8 @@ export function formatPlaceImageBatch(clips: ClipForMeta[], indexes: number[], o
   if (first.place) shared.push(first.place);
   if (all.photoNames.length || all.noPhoto.length) {
     const names = [...all.photoNames, ...all.noPhoto];
-    const looks = names.map(n => `${n}${all.notes[n] ? ` (${all.notes[n]})` : ''}${all.photoNames.includes(n) ? ` = รูปที่ ${all.photoNo.get(n)}` : ' ยังไม่มีภาพอ้างอิง'}`);
-    shared.push(`ล็อกตัวละคร: ลุคคงที่: ${looks.join(', ')} — แต่ละภาพแนบรูปโปรไฟล์อ้างอิงไม่เกิน 2 รูปตามที่ระบุในภาพนั้น ห้ามสลับหน้าระหว่างตัวละคร ห้ามเพิ่มตัวละครที่ไม่มีในบท${all.animal ? ' ตัวละครที่เป็นสัตว์ต้องเป็นสัตว์ตามภาพ ห้ามกลายเป็นมนุษย์' : ''}`);
+    const looks = names.map(n => `${n}${all.notes[n] ? ` (${all.notes[n]})` : ''}${all.photoNames.includes(n) ? '' : ' ยังไม่มีภาพอ้างอิง'}`);
+    shared.push(`ล็อกตัวละคร: ลุคคงที่: ${looks.join(', ')} — แต่ละภาพแนบรูปตามลำดับใน "แนบก่อนพิมพ์" ของภาพนั้น (รูปที่ 1 สถานที่ ต่อด้วยตัวละครในภาพ รูปสุดท้ายภาพของคลิปก่อน) ห้ามสลับหน้าระหว่างตัวละคร ห้ามเพิ่มตัวละครที่ไม่มีในบท${all.animal ? ' ตัวละครที่เป็นสัตว์ต้องเป็นสัตว์ตามภาพ ห้ามกลายเป็นมนุษย์' : ''}`);
     if (first.looks) shared.push(first.looks);
   }
   // "ใบหน้าอยู่ช่วงบนของจอ" once for the batch when every shot has it, else per shot
@@ -964,7 +976,7 @@ export function formatPlaceImageBatch(clips: ClipForMeta[], indexes: number[], o
   const shots = items.map(({ i, p }, k) => {
     const own = p.rules.filter(r => !COMMON.has(r));
     const face = !faceEverywhere && /ใบหน้าอยู่ช่วงบนของจอ/.test(p.format || '') ? 'ใบหน้าอยู่ช่วงบนของจอ' : '';
-    const att = attachmentLine(clips[i], { ...opts, ...metaContextFor(clips, i) }).replace(/ · เฟรมสุดท้ายของคลิป \d+/, '');
+    const att = attachmentLine(clips[i], { ...opts, ...metaContextFor(clips, i) }, 'image');
     const lines = [
       att ? `แนบก่อนพิมพ์: ${att}` : '',
       p.names?.length ? `ตัวละครในภาพ: ${p.names.join(', ')}` : '',
@@ -973,10 +985,10 @@ export function formatPlaceImageBatch(clips: ClipForMeta[], indexes: number[], o
     ].filter(Boolean) as string[];
     return `ภาพที่ ${k + 1} (คลิป ${(clips[i].clipNumber as number) || i + 1}):\n${cleanUnspecified(withoutRepeats(lines))}`;
   });
-  const uploads = all.photoNames.map(n => `รูปที่ ${all.photoNo.get(n)} ${n}`).join('  ');
+  const uploads = all.photoNames.length ? `รูปโปรไฟล์ของ ${all.photoNames.join(', ')}` : '';
   return [
     `สร้างภาพนิ่ง ${items.length} ภาพแยกกัน ภาพละ 1 ช็อตตามรายการด้านล่าง ทุกภาพอยู่ในสถานที่และเวลาเดียวกัน ใช้ข้อมูลล็อกร่วมเหมือนกันทุกภาพ`,
-    `(เตรียมไฟล์: ${[first0Master(clips, indexes), uploads.replace(/  /g, ' · ')].filter(Boolean).join(' · ')} — แต่ละช็อตแนบเฉพาะไฟล์ที่ระบุใน "แนบก่อนพิมพ์")`,
+    `(เตรียมไฟล์: ${[first0Master(clips, indexes), uploads].filter(Boolean).join(' · ')} — แต่ละช็อตแนบเฉพาะไฟล์ที่ระบุใน "แนบก่อนพิมพ์")`,
     `ล็อกร่วมทุกภาพ:\n${cleanUnspecified(withoutRepeats(shared))}`,
     ...shots
   ].filter(Boolean).join('\n\n');
@@ -1016,8 +1028,8 @@ export function formatPlaceVideoBatch(clips: ClipForMeta[], indexes: number[], o
   shared.push(...part(0, 'place'));
   if (all.photoNames.length || all.noPhoto.length) {
     const names = [...all.photoNames, ...all.noPhoto];
-    const looks = names.map((n: string) => `${n}${all.notes[n] ? ` (${all.notes[n]})` : ''}${all.photoNames.includes(n) ? ` = รูปที่ ${all.photoNo.get(n)}` : ' ยังไม่มีภาพอ้างอิง'}`);
-    shared.push(`ล็อกตัวละคร: ลุคคงที่: ${looks.join(', ')} — แต่ละคลิปแนบรูปโปรไฟล์อ้างอิงไม่เกิน 2 รูปตามที่ระบุในคลิปนั้น ใบหน้า ทรงผม เมคอัพ เครื่องประดับ ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป ${all.animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}`);
+    const looks = names.map((n: string) => `${n}${all.notes[n] ? ` (${all.notes[n]})` : ''}${all.photoNames.includes(n) ? '' : ' ยังไม่มีภาพอ้างอิง'}`);
+    shared.push(`ล็อกตัวละคร: ลุคคงที่: ${looks.join(', ')} — แต่ละคลิปแนบรูปตามลำดับใน "แนบก่อนพิมพ์" ของคลิปนั้น (รูปที่ 1 สถานที่ ต่อด้วยตัวละครในช็อต รูปสุดท้ายเฟรมจากวิดีโอคลิปก่อน) ใบหน้า ทรงผม เมคอัพ เครื่องประดับ ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป ${all.animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}`);
   }
   shared.push(SAFETY_LINE);
   shared.push(`เสียงทุกคลิป: มีเฉพาะเสียงพูดของตัวละครตามบทของคลิปนั้น ไม่มีเสียงบรรยากาศ เสียงธรรมชาติ ดนตรี หรือเสียงเอฟเฟกต์ใด ๆ คลิปที่ไม่มีบทพูดให้เงียบทั้งคลิป`);
@@ -1030,10 +1042,10 @@ export function formatPlaceVideoBatch(clips: ClipForMeta[], indexes: number[], o
     const len = clips[i].durationSeconds ? `, ${clips[i].durationSeconds} วินาที` : '';
     return `คลิปที่ ${k + 1} (คลิป ${(clips[i].clipNumber as number) || i + 1}${len}):\n${withoutRepeats(lines)}`;
   });
-  const uploads = all.photoNames.map((n: string) => `รูปที่ ${all.photoNo.get(n)} ${n}`).join('  ');
+  const uploads = all.photoNames.length ? `รูปโปรไฟล์ของ ${all.photoNames.join(', ')}` : '';
   return [
     `สร้างวิดีโอ ${items.length} คลิปแยกกัน คลิปละ 1 ช็อต ต่อเนื่องกันตามลำดับด้านล่าง ทุกคลิปอยู่ในสถานที่และเวลาเดียวกัน ใช้ข้อมูลล็อกร่วมเหมือนกันทุกคลิป`,
-    `(เตรียมไฟล์: ${[first0Master(clips, indexes), uploads.replace(/  /g, ' · ')].filter(Boolean).join(' · ')} — แต่ละช็อตแนบเฉพาะไฟล์ที่ระบุใน "แนบก่อนพิมพ์")`,
+    `(เตรียมไฟล์: ${[first0Master(clips, indexes), uploads].filter(Boolean).join(' · ')} — แต่ละช็อตแนบเฉพาะไฟล์ที่ระบุใน "แนบก่อนพิมพ์")`,
     `ล็อกร่วมทุกคลิป:\n${withoutRepeats(shared)}`,
     ...shots
   ].filter(Boolean).join('\n\n');
@@ -1120,7 +1132,7 @@ export function buildSharedLocks(clips: ClipForMeta[], opts: MetaAiFormatOptions
 }
 
 export function formatSharedLocks(l: SharedLocks): string {
-  const who = l.characters.map(c => `- ${c.photo ? `รูปที่ ${c.photo} = ` : ''}${c.name}${c.note ? ` (${c.note})` : ''}${c.photo ? '' : ' — ยังไม่มีภาพอ้างอิง'}`);
+  const who = l.characters.map(c => `- ${c.name}${c.note ? ` (${c.note})` : ''}${c.photo ? ' — มีรูปโปรไฟล์อ้างอิง' : ' — ยังไม่มีภาพอ้างอิง'}`);
   const where = l.places.map(p => `- ${[p.location, p.timeOfDay ? `เวลา ${p.timeOfDay}` : '', p.lighting].filter(Boolean).join(' ')}`);
   return [
     'ข้อมูลล็อกกลางของเรื่อง (ใช้ร่วมกันทุกคลิป)',
@@ -1132,11 +1144,9 @@ export function formatSharedLocks(l: SharedLocks): string {
 
 export function formatAllClipsForMetaAi(clips: ClipForMeta[], opts: MetaAiFormatOptions = {}): string {
   return clips.map((c, i) => {
-    const names = withPhotoIn(charactersInClip(c, opts.knownCharacters || []), opts);
-    const nums = photoNumbers(names, opts);
-    const photos = names.length > 0
-      ? `\n(อัปโหลดรูป: ${[...names].sort((a, b) => (nums.get(a) || 0) - (nums.get(b) || 0)).map(n => `รูปที่ ${nums.get(n)} ${n}`).join('  ')})`
-      : '';
+    // per clip: รูปที่ 1 the place, then the characters in the shot, last the previous clip's frame
+    const att = attachmentLine(c, { ...opts, ...metaContextFor(clips, i) });
+    const photos = att ? `\n(แนบก่อนพิมพ์: ${att})` : '';
     return `=== คลิป ${c.clipNumber || i + 1}/${clips.length} — ${String(c.title || '').replace(/\s*[-–—/]?\s*ไม่ระบุ(?:จากต้นฉบับ)?/g, '').trim()} ===${photos}\n${formatClipForMetaAi(c, { ...opts, ...metaContextFor(clips, i) })}`;
   }).join('\n\n');
 }
