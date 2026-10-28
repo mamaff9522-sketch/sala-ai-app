@@ -151,7 +151,7 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
       return `=== คลิป ${i + 1}/${clips.length} ===\n[พรอมต์สร้างภาพ]${attImg ? `\n(แนบก่อนพิมพ์: ${attImg})` : ''}\n${imagePrompts[i]}\n[พรอมต์วิดีโอ]${attVid ? `\n(แนบก่อนพิมพ์: ${attVid})` : ''}\n${prompts[i]}`;
     }).join('\n\n');
     // The story's shared locks once at the top; every clip prompt below still carries what Meta AI needs
-    const tips = 'วิธีใช้กับ Meta AI: แนบไฟล์ตาม "แนบก่อนพิมพ์" ทุกช็อตก่อนพิมพ์ · สร้างภาพนิ่งก่อนแล้วค่อยทำเป็นวิดีโอ · คลิปต่อเนื่องให้แนบเฟรมสุดท้ายของคลิปก่อน · ใช้โหมด Quality · เริ่มแชทใหม่เป็นระยะแล้วแนบมาสเตอร์ใหม่';
+    const tips = 'วิธีใช้กับ Meta AI: แนบไฟล์ตาม "แนบก่อนพิมพ์" ทุกช็อตก่อนพิมพ์ · สร้างภาพนิ่งก่อนแล้วค่อยทำเป็นวิดีโอ · คลิปต่อเนื่องให้แนบเฟรมสุดท้ายของคลิปก่อนเป็นรูปที่ 1 · ใช้โหมด Quality · เริ่มแชทใหม่เป็นระยะแล้วแนบมาสเตอร์ใหม่';
     copy(`${tips}\n\n${formatSharedLocks(buildSharedLocks(clips as any, metaOpts))}\n\n${all}`, 'all');
   };
 
@@ -304,7 +304,7 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
             </div>
             {!running && (
               <div className="rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-[12px] text-slate-300 leading-relaxed">
-                วิธีใช้กับ Meta AI: แนบไฟล์ตาม "แนบก่อนพิมพ์" ทุกช็อตก่อนพิมพ์ · สร้างภาพนิ่งก่อนแล้วค่อยทำเป็นวิดีโอ · คลิปต่อเนื่องให้แนบเฟรมสุดท้ายของคลิปก่อน · ใช้โหมด Quality ไม่ใช่ Instant · เริ่มแชทใหม่เป็นระยะหรือเมื่อภาพเริ่มเพี้ยน แล้วแนบมาสเตอร์ใหม่
+                วิธีใช้กับ Meta AI: แนบไฟล์ตาม "แนบก่อนพิมพ์" ทุกช็อตก่อนพิมพ์ · สร้างภาพนิ่งก่อนแล้วค่อยทำเป็นวิดีโอ · คลิปต่อเนื่องให้แนบเฟรมสุดท้ายของคลิปก่อนเป็นรูปที่ 1 · ใช้โหมด Quality ไม่ใช่ Instant · เริ่มแชทใหม่เป็นระยะหรือเมื่อภาพเริ่มเพี้ยน แล้วแนบมาสเตอร์ใหม่
               </div>
             )}
             {!running && placeGroups.length > 0 && (

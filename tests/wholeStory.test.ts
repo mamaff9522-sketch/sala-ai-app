@@ -12,6 +12,8 @@ import { isClipByClipScript } from '../src/services/storyNormalize';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rd = (f: string) => fs.readFileSync(path.join(here, 'fixtures', f), 'utf8');
 let passed = 0;
+/** `น้ำฟ้า (look) พูดว่า "…"` / `ถามว่า` / `ตอบว่า` / `พูดต่อว่า`: the line word for word after its speaker */
+const said = (who: string, line: string) => new RegExp(`${who.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?: \\([^"]*?\\))? ?(?:พูด|ถาม|ตอบ|พูดต่อ)ว่า "${line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`);
 const check = async (name: string, fn: () => Promise<void> | void) => { await fn(); passed++; console.log(`  ✔ ${name}`); };
 
 // Stand-in for the server: the offline engine; the first call fails like "no credits"
@@ -40,8 +42,8 @@ for (const file of ['faiklaen-story.txt', 'avatar-story.txt', 't67-story.txt', '
       assert.equal(n, 1, `"${t.slice(0, 40)}" is in ${n} clips`);
     }
     for (const m of meta) {
-      assert.ok(m.includes('ล็อกฉาก'), 'scene lock in every clip');
-      assert.ok(m.includes('วิดีโอยาว 8 วินาที') && m.includes('9:16'));
+      assert.ok(/ฉากตามรูปที่ \d/.test(m), 'scene lock in every clip');
+      assert.ok(m.includes('8 วินาที') && m.includes('9:16') && m.includes('cinematic photorealistic'));
       assert.ok(!/[:：]\s*[.;](\s|$)/.test(m), `no empty cue: ${m.slice(0, 80)}`);
       assert.ok(!/ไม่ระบุ/.test(m), 'no "unspecified" placeholders');
     }
@@ -52,12 +54,12 @@ await check('ไฟแค้นซ่อนรัก: night rain at the mansion,
   const story = rd('faiklaen-story.txt');
   const r = await runWholeStory(story, { offline: true }, fakeServer(false));
   const meta = formatAllClipsForMetaAi(r.clips as any, metaOptionsForStory(story, [{ name: 'น้องน้ำ', appearance: 'gecko', referenceImageUrl: '/uploads/x.png' }], characterNote));
-  assert.ok(meta.includes('สถานที่ คฤหาสน์หรู เวลา กลางคืน ฝนตกหนัก'));
+  assert.ok(meta.includes('คฤหาสน์หรู ตอนกลางคืน ฝนตกหนัก'), meta.slice(0, 200));
   assert.ok(!meta.includes('น้องน้ำ'), 'a library character not in this story never appears');
   assert.ok(!meta.includes('ละครเรื่อง'), 'the title is not a character');
   assert.deepEqual(r.clips.flatMap(c => c.dialogues.map(d => d.speaker)), ['คุณหญิงมณี', 'น้ำฟ้า']);
   assert.ok(meta.includes('น้ำฟ้า (ลูกสะใภ้สาวฐานะยากจน'), 'character without a photo described from the script');
-  assert.ok(!/รูปที่ \d+ = น้ำฟ้า/.test(meta), 'no photo asked for a character without one');
+  assert.ok(!/น้ำฟ้า \(รูปที่/.test(meta), 'no photo asked for a character without one');
 });
 
 await check('stops when asked', async () => {
@@ -72,7 +74,7 @@ await check('Gemini scene text without the lines: dialogue is still in the Meta 
     generatedPrompt: 'Cinematic 8K, medium shot, แพรวา shouting with anger.',
     dialogues: [{ speaker: 'แพรวา', line: 'ออกไปจากบ้านฉัน!' }, { speaker: 'น้องน้ำ', line: 'ไม่มีวัน' }] };
   const m = formatClipForMetaAi(clip, { knownCharacters: ['แพรวา', 'น้องน้ำ'] });
-  assert.ok(m.includes('แพรวา speaks in Thai, exact line, lip-sync, no paraphrase: "ออกไปจากบ้านฉัน!"') && m.includes('น้องน้ำ speaks in Thai, exact line, lip-sync, no paraphrase: "ไม่มีวัน"'), m);
+  assert.ok(said('แพรวา', 'ออกไปจากบ้านฉัน!').test(m) && said('น้องน้ำ', 'ไม่มีวัน').test(m) && m.includes('พูดทีละคนตามลำดับ'), m);
   assert.ok(m.indexOf('ออกไปจากบ้านฉัน') < m.indexOf('ไม่มีวัน'), 'lines stay in order');
 });
 
@@ -93,8 +95,8 @@ await check('"คลิป 4 — title" is not an action; "ฉาก: ต่อ�
   const meta = formatAllClipsForMetaAi(r.clips as any, metaOptionsForStory(story, [], characterNote));
   assert.ok(!meta.includes('น้องน้ำสวนกลับ') && !meta.includes('แพรวาเข้าข้างแม่สามี'), 'clip titles never reach the video');
   assert.ok(!meta.includes('ต่อเนื่องจากคลิปที่'), 'not used as a place name');
-  assert.ok(!meta.includes('เปลี่ยนสถานที่ ท่าเริ่มคลิป'), 'same place, so no "new place"');
-  assert.equal((meta.match(/สถานที่ ห้องโถงบ้าน เวลา กลางวัน/g) || []).length, r.clips.length);
+  assert.ok(!meta.includes('เปลี่ยนฉากมาที่'), 'same place, so no "new place"');
+  assert.equal((meta.match(/ห้องโถงบ้าน ตอนกลางวัน/g) || []).length, r.clips.length);
   assert.ok(!/กำลัง\S{0,6}กำลัง/.test(meta), 'no doubled "กำลัง"');
 });
 
@@ -104,20 +106,19 @@ await check('review points: real cast per clip, no "ไม่มี" lines, no "
   assert.ok(!r.error, r.error);
   const clips = formatAllClipsForMetaAi(r.clips as any, metaOptionsForStory(story, [], characterNote)).split('\n\n');
   const all = clips.join('\n');
-  assert.ok(!/paraphrase:\s*"ไม่มี"/.test(all) && !/บทพูด:\s*ไม่มี/.test(all) && !/การเคลื่อนไหวของตัวละคร:[^.]*บทพูด/.test(all) && !all.includes('ตัวละครในฉาก'), 'notes are not played');
-  assert.ok(!/(^|[\s.;:])บท speaks/.test(all), '"บท" is never a speaker');
-  assert.ok(all.includes('มะลิ speaks in Thai, exact line, lip-sync, no paraphrase: "หนูจะดูแลที่ดินของแม่ให้ดีที่สุดค่ะ"'), 'unnamed "บท:" line goes to the scene speaker');
-  // names on the "ตัวละคร:" line, without photo numbers and notes
-  const cast = (c: string) => (c.match(/ลุคคงที่: ([^—]+)/)?.[1] || '')
-    .replace(/\([^()]*(?:\([^()]*\)[^()]*)*\)/g, '').replace(/ (?:ยังไม่มีภาพอ้างอิง|ไม่ต้องแนบรูปในคลิปนี้)/g, '').split(',').map(x => x.trim()).filter(Boolean).join(', ');
+  assert.ok(!/ว่า "ไม่มี"/.test(all) && !/บทพูด:\s*ไม่มี/.test(all) && !all.includes('ตัวละครในฉาก'), 'notes are not played');
+  assert.ok(!/(^|[\s.;:])บท(?:พูด|ถาม|ตอบ)ว่า/.test(all), '"บท" is never a speaker');
+  assert.ok(said('มะลิ', 'หนูจะดูแลที่ดินของแม่ให้ดีที่สุดค่ะ').test(all), 'unnamed "บท:" line goes to the scene speaker');
+  // who is in the clip: the story's characters named in it (outside the dialogue)
+  const known = metaOptionsForStory(story, [], characterNote).knownCharacters as string[];
+  const cast = (c: string) => known.filter(n => c.split('\n').slice(2).join(' ').replace(/"[^"]*"/g, '').includes(n)).join(', ');
   assert.equal(cast(clips[0]), 'ธนา', 'only who is in the shot');
   assert.ok(!cast(clips[2]).includes('ธนา') && !cast(clips[2]).includes('มะลิ'), `living room: not the people of the study (${cast(clips[2])})`);
   assert.ok(!clips[2].includes('ห้องทำงาน') && !clips[2].includes('ธนาสะดุ้ง'), 'new place starts fresh');
   assert.ok(clips[0].includes('ไม่มีบทพูดในคลิปนี้'), 'clip without lines says so');
   for (const c of clips) {
-    assert.ok(c.includes('เสียงพูด'), 'voice locked');
-    const act = c.match(/Scene Action: ([^.]+)/)?.[1] || '';
-    if (act) assert.equal(c.split(act.slice(0, 15)).length - 1, 1, `action written once: ${act}`);
+    assert.ok(/เสียงพูด|เงียบ/.test(c), 'voice locked');
+    assert.ok(!c.includes('Scene Action'), 'no internal label');
   }
 });
 
@@ -132,19 +133,19 @@ await check('ไฟแค้นซ่อนรัก 225 clips: the writer\'s cl
   for (const { who, line } of lines) {
     const where = clips.filter(c => c.includes(`"${line}"`));
     assert.equal(where.length, 1, `"${line}" in ${where.length} clips`);
-    assert.ok(where[0].includes(`${who === 'ตำรวจ' ? 'ตำรวจหญิง' : who} speaks in Thai, exact line, lip-sync, no paraphrase: "${line}"`), `${who}: ${line}`);
+    assert.ok(said(who === 'ตำรวจ' ? 'ตำรวจหญิง' : who, line).test(where[0]), `${who}: ${line}`);
   }
   for (const [i, c] of clips.entries()) {
     assert.ok(!/คลิป \d+\/225|ภาพ\/การกระทำ|บทพูด \[|ข้อกำหนด|ความยาวเป้าหมาย|รูปที่ 1 ซึ่ง/.test(c), `clip ${i + 1} leaks a note: ${c.slice(0, 120)}`);
-    assert.ok(/ล็อกฉาก \(รูปที่ 1 คือภาพมาสเตอร์ "[^"]+"\): สถานที่ \S+.* เวลา \S+/.test(c), `clip ${i + 1} locks place and time`);
-    assert.ok(!/paraphrase:\s*"ไม่มี"/.test(c));
+    assert.ok(/ฉากตามรูปที่ \d/.test(c) && / ตอน\S+/.test(c), `clip ${i + 1} locks place and time`);
+    assert.ok(!/ว่า "ไม่มี"/.test(c));
   }
   // a clip without dialogue keeps its own action; the clip before it does not get it too
   assert.ok(clips[23].includes('ภาคินวางกระเป๋าที่ท้ายรถ') && !clips[22].includes('ภาคินวางกระเป๋าที่ท้ายรถ'));
   assert.ok(clips[44].includes('แฟ้มสีน้ำเงินปิดลงช้า') && !clips[45].includes('แฟ้มสีน้ำเงินปิดลงช้า'));
-  assert.ok(clips[0].includes('เวลา กลางวัน'), 'day time read from "วันที่ 1 ช่วงกลางวัน"');
-  assert.ok(clips[0].includes('Only คุณหญิงมณี speaks, other silent'), 'only the speaker moves their lips');
-  assert.ok(/ลุคคงที่: [^—]*ทนายกฤต/.test(clips[32]), '"กฤต" in an action is ทนายกฤต');
+  assert.ok(clips[0].includes('ตอนกลางวัน'), 'day time read from "วันที่ 1 ช่วงกลางวัน"');
+  assert.ok(clips[0].includes('คนอื่นไม่พูด'), 'only the speaker moves their lips');
+  assert.ok(clips[32].includes('ทนายกฤต') && !/(^|[^ย])กฤต/.test(clips[32].replace(/ทนายกฤต/g, '')), '"กฤต" in an action is ทนายกฤต');
 });
 
 await check('image prompt per clip: same place, time, light and photos as the video; no dialogue; mouths closed', async () => {
@@ -159,12 +160,13 @@ await check('image prompt per clip: same place, time, light and photos as the vi
     const vid = formatClipForMetaAi(c as any, ctx);
     assert.ok(img.includes('ภาพนิ่ง 9:16'), img.slice(0, 60));
     const placeOf = (t: string) => t.match(/Master"\): สถานที่ (\S+)/)?.[1];
-    assert.equal(placeOf(img), placeOf(vid), `clip ${i + 1} same place`);
+    assert.ok(vid.replace(/^เปลี่ยนฉากมาที่/, '').startsWith(placeOf(img)!), `clip ${i + 1} same place`);
     assert.deepEqual(imagePromptProblems(img, ctx.camera), [], `clip ${i + 1} consistent`);
     assert.ok(/— แสง[^—]+ แสงหลักเข้าจากด้าน(?:ซ้าย|ขวา)ของภาพ/.test(img), `clip ${i + 1} light`);
     assert.ok(!/speaks|พูดว่า|Dialogue|Continuity Flow|Starting moment|Ending momentum|:\s*\./.test(img), `clip ${i + 1}: ${img}`);
     for (const l of lines) assert.ok(!img.includes(l.slice(0, 20)), `clip ${i + 1} has no dialogue`);
-    for (const m of vid.matchAll(/รูปที่ (\d) = (\S+)/g)) assert.ok(img.includes(`รูปที่ ${m[1]} = ${m[2]}`), `clip ${i + 1} photo ${m[1]}`);
+    // the video numbers its own pictures (last frame first when it continues): same photos, own numbers
+    for (const m of img.matchAll(/รูปที่ \d+ คือรูปโปรไฟล์อ้างอิงของ(\S+?)[,;]/g)) assert.ok(new RegExp(`${m[1]} \\(รูปที่ \\d\\)`).test(vid), `clip ${i + 1} photo of ${m[1]}`);
     if (/ตัวละคร(?:ในภาพ| \()/.test(img)) assert.ok(img.includes('ทุกคนปิดปาก'));
   });
 });
@@ -194,12 +196,14 @@ await check('camera: varies every clip, sides never jump within a place, the scr
   const ctx = (i: number) => ({ ...opts, ...metaContextFor(r.clips as any, i) });
   const vid = formatClipForMetaAi(r.clips[1] as any, ctx(1));
   const img = formatClipImagePrompt(r.clips[1] as any, ctx(1));
-  assert.ok(vid.includes('มุมกล้อง: ตามบท: ภาพใกล้หน้าน้ำฟ้า') && img.includes('มุมกล้องและระยะภาพ: ตามบท "ภาพใกล้หน้าน้ำฟ้า มุมต่ำเล็กน้อย"'));
+  assert.ok(vid.includes('มุมกล้อง: ภาพใกล้หน้าน้ำฟ้า มุมต่ำเล็กน้อย') && img.includes('มุมกล้องและระยะภาพ: ตามบท "ภาพใกล้หน้าน้ำฟ้า มุมต่ำเล็กน้อย"'));
   assert.ok(!vid.includes('[มุมกล้อง') && !img.includes('[มุมกล้อง'), 'the note is never played as an action');
   for (let i = 0; i < 225; i++) {
     const v = formatClipForMetaAi(r.clips[i] as any, ctx(i));
     const im = formatClipImagePrompt(r.clips[i] as any, ctx(i));
-    assert.ok(/มุมกล้อง: \S/.test(v) && /มุมกล้องและระยะภาพ: \S/.test(im), `clip ${i + 1} has a camera`);
+    // video: only the camera the script gives; image: always a camera
+    assert.equal(/มุมกล้อง: \S/.test(v), plan[i].kind === 'script', `clip ${i + 1} video camera only from the script`);
+    assert.ok(/มุมกล้องและระยะภาพ: \S/.test(im), `clip ${i + 1} has a camera`);
     assert.ok(!v.includes('film still'), 'video, not a still');
     assert.ok(!/ขณะพูด/.test(im), 'the still is before anyone speaks');
   }
@@ -257,6 +261,7 @@ await check('image prompt spec: strict camera direction and shot size from the s
 
 await check('prompt standard: Thai first, each fact once, no conflicts, shared locks, nothing important lost', async () => {
   const { checkPromptProblems, buildSharedLocks, formatSharedLocks } = await import('../src/services/metaAiPrompt');
+  const M0 = await import('../src/services/metaAiPrompt');
   for (const file of ['faiklaen-225-clips.txt', 'faiklaen-camera-cases.txt', 'moradok-notes-story.txt', 'avatar-story.txt']) {
     const story = rd(file);
     const r = await runWholeStory(story, { offline: true, clipSeconds: 8, maxSteps: 400 }, fakeServer(false));
@@ -269,9 +274,11 @@ await check('prompt standard: Thai first, each fact once, no conflicts, shared l
       assert.deepEqual(checkPromptProblems(v, 'video', ctx.camera), [], `${file} clip ${i + 1} video`);
       assert.deepEqual(checkPromptProblems(im, 'image', ctx.camera), [], `${file} clip ${i + 1} image`);
       // video carries: length + ratio, place, characters, camera + its movement, every line word for word with its speaker
-      assert.ok(v.includes('วิดีโอยาว 8 วินาที, สัดส่วนภาพ 9:16'));
-      assert.ok(/มุมกล้อง: \S/.test(v) && /อารมณ์และการแสดง: \S/.test(v));
-      for (const d of c.dialogues) assert.ok(v.includes(`${d.speaker} speaks in Thai, exact line, lip-sync, no paraphrase: "${d.line}"`), `${file} clip ${i + 1}: ${d.line}`);
+      assert.ok(v.endsWith('cinematic photorealistic, 9:16, 8 วินาที, ละครไทยแต่ง นักแสดงผู้ใหญ่, ' + (c.dialogues.length ? 'มีแค่เสียงพูดตามบท ไม่มีดนตรีหรือเสียงประกอบ' : 'เงียบทั้งคลิป ไม่มีเสียงพูด ดนตรี หรือเสียงประกอบ') + ', ไม่มีตัวหนังสือบนจอ'), v.slice(-160));
+      if (c.charactersPresent?.length) assert.ok(v.includes('สีหน้าชัดเจน'), `${file} clip ${i + 1} emotion`);
+      for (const d of c.dialogues) assert.ok(said(d.speaker, d.line).test(v), `${file} clip ${i + 1}: ${d.line}`);
+      // the photo characters are named with their picture, the others with their look
+      if (v.includes('น้องน้ำ') && /\(รูปที่ \d+ น้องน้ำ/.test(M0.attachmentLine(c as any, ctx).replace(/รูปที่ (\d+) /g, '(รูปที่ $1 '))) assert.ok(/น้องน้ำ \(รูปที่ \d\)/.test(v));
       // no app boilerplate repeating place / cast, no English lighting
       assert.ok(!/Cinematic 8K|Location Lock|Lighting Lock|daylight|lighting/.test(v + im), `${file} clip ${i + 1}`);
     });
@@ -332,8 +339,8 @@ await check('video sound: only the scripted voices; silent clips silent; no back
   r.clips.forEach((c, i) => {
     const ctx = { ...opts, ...metaContextFor(r.clips as any, i) };
     const v = formatClipForMetaAi(c as any, ctx);
-    if (c.dialogues.length) assert.ok(v.includes(`เสียง: ${VIDEO_SOUND_DIALOGUE}`), `clip ${i + 1}`);
-    else { silent++; assert.ok(v.includes(`เสียง: ${VIDEO_SOUND_SILENT}`), `clip ${i + 1}`); }
+    if (c.dialogues.length) assert.ok(v.includes(VIDEO_SOUND_DIALOGUE), `clip ${i + 1}`);
+    else { silent++; assert.ok(v.includes(VIDEO_SOUND_SILENT), `clip ${i + 1}`); }
     assert.deepEqual(checkPromptProblems(v, 'video', ctx.camera), [], `clip ${i + 1}`);
   });
   assert.equal(silent, 35);
@@ -343,7 +350,7 @@ await check('video sound: only the scripted voices; silent clips silent; no back
   assert.equal(withoutBackgroundSound('เพลงคลอเบา ๆ ภาคินยิ้ม'), 'ภาคินยิ้ม');
 });
 
-await check('Meta AI requirements: order, dialogue formula, pictures (place, characters, previous clip), location bible word for word, master, last frame, safety', async () => {
+await check('short video prompt: order, dialogue word for word, pictures (last frame first, characters, place), same set sentence, safety only when needed', async () => {
   const M = await import('../src/services/metaAiPrompt');
   const story = rd('faiklaen-225-clips.txt');
   const r = await runWholeStory(story, { offline: true, clipSeconds: 8, maxSteps: 400 }, fakeServer(false));
@@ -354,39 +361,49 @@ await check('Meta AI requirements: order, dialogue formula, pictures (place, cha
   r.clips.forEach((c, i) => {
     const ctx = { ...opts, ...metaContextFor(r.clips as any, i) };
     const v = formatClipForMetaAi(c as any, ctx);
-    // Meta's order: story context, location + master, character lock, continuity, action, dialogue + safety
-    const order = ['บริบท:', 'ล็อกฉาก (รูปที่ 1 คือภาพมาสเตอร์', 'ล็อกตัวละคร:', 'การเคลื่อนไหวของตัวละคร:', 'บทพูด:', 'ความปลอดภัย:'];
-    const pos = order.map(l => v.indexOf(l)).filter(x => x >= 0);
+    // the user's order: place + time, characters + action, dialogue, emotion, set + light, quality
+    const firstLine = c.dialogues.length ? v.indexOf(`"${c.dialogues[0].line}"`) : -1;
+    const order = [firstLine, v.indexOf('พูดภาษาไทยตรงตามบท'), v.indexOf('สีหน้าชัดเจน'), v.indexOf('ฉากตามรูปที่'), v.indexOf('cinematic photorealistic')];
+    const pos = order.filter(x => x >= 0);
     assert.deepEqual(pos, [...pos].sort((a, b) => a - b), `clip ${i + 1} order`);
-    assert.ok(v.startsWith('บริบท: ละครดราม่าไทยแต่ง (นิยาย) นักแสดงผู้ใหญ่ที่ยินยอม') && v.includes('ความปลอดภัย: ดราม่าด้วยคำพูดเท่านั้น'));
-    // dialogue: Meta's formula, one speaker named, mouth visible
-    for (const d of c.dialogues) assert.ok(v.includes(`${d.speaker} speaks in Thai, exact line, lip-sync, no paraphrase: "${d.line}"`));
-    if (c.dialogues.length) assert.ok(v.includes(`Only ${c.dialogues[0].speaker} speaks, other silent`) && v.includes('เห็นปากคนพูดชัด'));
-    // attachments, numbered for this clip: 1 = the place master, then every character in the shot
-    // with a photo, last = the previous clip's last video frame (when it continues)
+    const where = M.sceneOfClip(r.clips as any, i);
+    assert.ok(v.replace(/^เปลี่ยนฉากมาที่/, '').startsWith(where.location), `clip ${i + 1} starts with the place`);
+    assert.ok(v.includes('ละครไทยแต่ง นักแสดงผู้ใหญ่'));
+    assert.ok(v.length < 1200, `clip ${i + 1} short (${v.length})`);
+    // safety words only where the clip needs them
+    assert.equal(v.includes(M.SAFETY_SHORT), M.sensitiveWords(c as any).length > 0 || /ร้องไห้|น้ำตา|สะอื้น/.test(M.clipAction(c as any)), `clip ${i + 1} safety`);
+    // dialogue word for word, one speaker named
+    for (const d of c.dialogues) assert.ok(said(d.speaker, d.line).test(v), `clip ${i + 1}: ${d.line}`);
+    if (c.dialogues.length) assert.ok(v.includes('พูดภาษาไทยตรงตามบททุกคำ'));
+    // attachments, numbered for this clip: a continuing clip starts from the previous clip's last
+    // frame (picture 1), then the characters in the shot with a photo, the place master last;
+    // a new place: the master first
     const att = M.attachmentsFor(c as any, ctx);
     const inShot = M.charactersInClip(c as any, opts.knownCharacters).filter(n => opts.withPhoto.includes(n));
-    assert.equal(att.list[0].kind, 'master', `clip ${i + 1}: picture 1 is the place`);
+    if (att.lastFrameOf) {
+      assert.equal(att.list[0].kind, 'frame', `clip ${i + 1}: picture 1 is the previous clip's last frame`);
+      assert.equal(att.list[att.list.length - 1].kind, 'master', `clip ${i + 1}: the master last`);
+      assert.ok(v.includes(`ต่อจากเฟรมสุดท้ายของคลิป ${att.lastFrameOf} (รูปที่ 1) ทันที`), `clip ${i + 1} continues`);
+    } else assert.equal(att.list[0].kind, 'master', `clip ${i + 1}: picture 1 is the place`);
     assert.deepEqual(att.list.filter(x => x.kind === 'face').map(x => x.name), inShot, `clip ${i + 1}: every character in the shot`);
     att.list.forEach((x, k) => assert.equal(x.n, k + 1));
-    if (att.lastFrameOf) assert.equal(att.list[att.list.length - 1].kind, 'frame', `clip ${i + 1}: the previous clip last`);
-    for (const x of att.list.filter(y => y.kind === 'face')) assert.ok(v.includes(`รูปที่ ${x.n} คือรูปโปรไฟล์อ้างอิงของ${x.name}`), `clip ${i + 1}: ${x.name}`);
-    assert.ok(v.includes(`ล็อกฉาก (รูปที่ 1 คือภาพมาสเตอร์ "${att.master}")`));
-    // location bible: the same words in every prompt at that place, and in its master image prompt
-    const where = M.sceneOfClip(r.clips as any, i);
+    for (const x of att.list.filter(y => y.kind === 'face')) assert.ok(v.includes(`${x.name} (รูปที่ ${x.n})`), `clip ${i + 1}: ${x.name}`);
+    const masterNo = att.list.find(x => x.kind === 'master')!.n;
+    // the set sentence: the same words in every prompt at that place
     const key = `${where.location}|${where.timeOfDay}`;
-    const bible = v.match(/ล็อกฉาก \(รูปที่ 1 คือภาพมาสเตอร์ "[^"]+"\): (.*?ห้ามเปลี่ยนสถานที่)/)?.[1] || '';
-    assert.ok(bible.includes('พื้น ผนัง ประตู หน้าต่าง') && !bible.includes('บันได') && bible.includes('แสงหลักเข้าจากด้าน'));
-    if (bibleOf.has(key)) assert.equal(bible, bibleOf.get(key), `clip ${i + 1}: bible rewritten`);
-    else bibleOf.set(key, bible);
-    // a continuing clip: attach the previous clip's last frame
-    if (att.lastFrameOf) assert.ok(v.includes(`รูปที่ ${att.frameNo} (รูปสุดท้าย) คือเฟรมสุดท้ายของวิดีโอคลิป ${att.lastFrameOf} ใช้เป็นเฟรมแรก continue from this exact frame`) && v.includes('no jump cut'));
+    const scene = (v.match(new RegExp(`ฉากตามรูปที่ ${masterNo} (.*?ฉากและแสงคงเดิม)`))?.[1] || '');
+    // background only from the master when a character photo is attached
+    assert.equal(scene.includes('ไม่ใช้ฉากหลังของรูปตัวละคร'), att.faces.length > 0, `clip ${i + 1}: ${scene}`);
+    assert.ok(!scene.includes('บันได'), `clip ${i + 1}: ${scene}`);
+    const sceneWords = scene.replace(/\s*ไม่ใช้ฉากหลังของรูปตัวละคร\s*/, ' ').trim();
+    if (bibleOf.has(key)) assert.equal(sceneWords, bibleOf.get(key), `clip ${i + 1}: set sentence rewritten`);
+    else bibleOf.set(key, sceneWords);
     // crying is never a face close-up (unless the script asks for it)
     if (/ร้องไห้|น้ำตา|สะอื้น/.test(M.clipAction(c as any)) && plan[i].kind !== 'script') assert.notEqual(plan[i].kind, 'close', `clip ${i + 1}`);
   });
   const g = M.groupClipsByPlace(r.clips as any)[0];
   const master = M.formatLocationMasterPrompt(g.location, g.timeOfDay, M.thaiLighting('bright natural daylight', g.timeOfDay), '9:16');
-  assert.ok(master.includes('ไม่มีคน') && master.includes(bibleOf.get(`${g.location}|${g.timeOfDay}`)!), 'master carries the same bible');
+  assert.ok(master.includes('ไม่มีคน') && master.includes(M.locationBible(g.location, g.timeOfDay, M.thaiLighting('bright natural daylight', g.timeOfDay))), 'master carries the location bible');
   assert.deepEqual(M.sensitiveWords({ generatedPrompt: 'Scene Action: แพรวาตบหน้าน้ำฟ้า.' } as any), ['ตบ']);
   assert.deepEqual(M.sensitiveWords({ generatedPrompt: 'Scene Action: ภาคินตีความเอกสาร.' } as any), []);
 });
@@ -408,21 +425,20 @@ await check('Meta AI video review fixes: set from picture 1, clean action, prop,
   const ctx = { ...opts, ...M.metaContextFor([clip], 0) };
   const v = M.formatClipForMetaAi(clip, ctx);
   // 1. the set: the place's own details, no generic staircase, background only from picture 1
-  assert.ok(v.includes('ลักษณะสถานที่: ศาลาเปิดโล่งแบบโคโลเนียล, พื้นหินอ่อน, เสาสีขาวเปิดออกสู่สวน, โซฟาหวายขอบไม้สีเข้ม'));
+  assert.ok(v.includes('(ศาลาเปิดโล่งแบบโคโลเนียล, พื้นหินอ่อน, เสาสีขาวเปิดออกสู่สวน, โซฟาหวายขอบไม้สีเข้ม)'), v);
   assert.ok(!v.includes('บันได'));
-  assert.ok(v.includes(M.BACKGROUND_FROM_MASTER));
+  assert.ok(v.includes('ฉากตามรูปที่ 1 (') && v.includes('ไม่ใช้ฉากหลังของรูปตัวละคร'));
   assert.ok(M.formatLocationMasterPrompt('ห้องรับแขกคฤหาสน์', 'บ่าย', '', '9:16', note).includes('ลักษณะสถานที่: ศาลาเปิดโล่ง'));
   // 2. no clip settings inside the action
   assert.ok(!/ระยะเวลา|สัดส่วนภาพ:|\|/.test(M.clipAction(clip)), M.clipAction(clip));
   assert.equal(M.withoutClipSettings('คลิป 046/225 | 8 วินาที | 9:16 คุณหญิงมณีรับแฟ้ม'), 'คุณหญิงมณีรับแฟ้ม');
   // 3. the folder of the end pose comes in during the clip
-  assert.ok(v.includes('ที่มาของแฟ้ม: คุณหญิงมณีรับหรือหยิบแฟ้มมาถือ') && v.includes('ห้ามให้แฟ้มโผล่ขึ้นมาเอง'));
+  assert.ok(v.includes('คุณหญิงมณีหยิบแฟ้มมาถือให้เห็นตั้งแต่ต้นคลิป ไม่ใช่โผล่ขึ้นมาเอง'), v);
   // 4. only the people in the shot, the lawyer once (not also as "กฤต"), not แพรวา
   assert.deepEqual(M.charactersInClip(clip, opts.knownCharacters), ['คุณหญิงมณี', 'ทนายกฤต', 'ภาคิน', 'น้ำฟ้า']);
   assert.ok(!v.includes('แพรวา') && !/[^ย]กฤต/.test(v.replace(/ทนายกฤต/g, '')));
-  // 5. a wide shot of several people: still camera, nobody leaves the frame; no two people on the same spot
-  assert.ok(v.includes(`การเคลื่อนกล้อง: ${M.WIDE_GROUP_MOVE}`));
-  assert.ok(v.includes('ภาคินอยู่กลางจอ, น้ำฟ้าอยู่กลางจอด้านหลัง'));
+  // 5. the script gives no camera: the video prompt does not invent one
+  assert.ok(!v.includes('มุมกล้อง') && !v.includes('การเคลื่อนกล้อง'));
   // 6. an angry clip is not told to cry
   assert.ok(!v.includes('น้ำตาคลอ') && v.includes('แสดงความโกรธผ่านสีหน้า'));
   assert.ok(M.emotionDelivery('เสียใจ ร้องไห้').includes('น้ำตาคลอ'));

@@ -10,6 +10,13 @@
  * - drops "Starting moment" / "Ending momentum" when the Core action already contains them
  * - keeps Location, Atmosphere, Core action, Cinematography and the Thai Dialogue verbatim
  * - adds clip length, aspect ratio, "speak Thai exactly as written" and "no on-screen text"
+ *
+ * VIDEO prompts are short natural Thai (user's format): place + time → characters + action →
+ * dialogue → face + emotion → set + light → quality, e.g.
+ *   หน้าศาลาวัด ตอนกลางวัน พี่ทุย (รูปที่ 2) กับน้องน้ำยืนคุยกัน พี่ทุยถามว่า "…" น้องน้ำตอบว่า "…"
+ *   … สีหน้าชัดเจน ฉากตามรูปที่ 1 … ฉากและแสงคงเดิม cinematic photorealistic, 9:16 …
+ * The face / costume / place / dialogue / continuity locks stay, each said once in a few words.
+ * No camera is added unless the script gives one. Image prompts keep their detailed format.
  */
 import { findSections, removeSections, insertBlock, tidy, dropEmptyCues, ensureDialoguesInPrompt, isEmptyLine } from './promptSections';
 
@@ -675,13 +682,15 @@ function propBridge(f: ClipFacts, sequenceText = ''): string {
   if (!prop) return '';
   const before = [f.action, sequenceText, f.extra, f.carried, f.ownStart, f.startMoment].join(' ');
   if (before.includes(prop)) return '';
-  const holder = f.names.find(n => endText.includes(n)) || '';
-  return `ที่มาของ${prop}: ${holder || 'ตัวละคร'}รับหรือหยิบ${prop}มาถือให้เห็นชัดตั้งแต่ต้นคลิป ห้ามให้${prop}โผล่ขึ้นมาเอง`;
+  // who holds it: the end-pose part that names the prop ("พี่ทุย นั่ง … ถือโทรศัพท์"), not the first name
+  const part = endText.split(/,\s*|;\s*/).find(x => x.includes(prop)) || endText;
+  const holder = [...f.names].sort((a, b) => part.indexOf(a) - part.indexOf(b)).find(n => part.includes(n) && part.indexOf(n) === part.search(new RegExp(f.names.join('|')))) || '';
+  return `${holder || 'ตัวละคร'}หยิบ${prop}มาถือให้เห็นตั้งแต่ต้นคลิป ไม่ใช่โผล่ขึ้นมาเอง`;
 }
 
 /** The video's sound: the characters' scripted voices only (user rule). */
-export const VIDEO_SOUND_DIALOGUE = 'มีเฉพาะเสียงพูดของตัวละครตามบทพูดด้านบน ไม่มีเสียงบรรยากาศ เสียงธรรมชาติ ดนตรี หรือเสียงเอฟเฟกต์ใด ๆ';
-export const VIDEO_SOUND_SILENT = 'เงียบทั้งคลิป ไม่มีเสียงพูด เสียงบรรยากาศ เสียงธรรมชาติ ดนตรี หรือเสียงเอฟเฟกต์ใด ๆ';
+export const VIDEO_SOUND_DIALOGUE = 'มีแค่เสียงพูดตามบท ไม่มีดนตรีหรือเสียงประกอบ';
+export const VIDEO_SOUND_SILENT = 'เงียบทั้งคลิป ไม่มีเสียงพูด ดนตรี หรือเสียงประกอบ';
 /** "เสียงจิ้งหรีดดังรอบตัว", "เสียงฟ้าร้อง", "เพลงคลอเบา ๆ": a clause that asks for background sound */
 const BACKGROUND_SOUND_RE = /^(?:เสียง(?!พูด|ตัวละคร)\S*|เพลง\S*|ดนตรี\S*|ซาวด์\S*)$/;
 export function withoutBackgroundSound(action: string): string {
@@ -696,68 +705,176 @@ export function withoutBackgroundSound(action: string): string {
   return out.join(' ').trim();
 }
 
-/** The pieces of one clip's video prompt, by role (the scene batch writes the shared ones once). */
-interface VideoPart { key: 'head' | 'place' | 'cast' | 'start' | 'camera' | 'action' | 'dialogue' | 'emotion' | 'ending' | 'speech' | 'safety' | 'sound' | 'notext'; text: string }
+/**
+ * The pieces of one clip's video prompt, by role, in the order the user asked for:
+ * place + time → characters + action → dialogue → face + emotion → set + light → picture quality.
+ * Short natural Thai sentences, each fact once. The locks stay, in short form:
+ * face / costume = the character's reference photo number (or their look note when there is no photo),
+ * place = the master image, dialogue = word for word, continuity = the previous clip's last frame
+ * attached first and played on from. No camera is invented: only the camera the script itself gives.
+ */
+interface VideoPart { key: 'place' | 'start' | 'action' | 'lock' | 'emotion' | 'ending' | 'scene' | 'camera' | 'safety' | 'quality'; text: string }
+
+const QUESTION_RE = /(?:[?？]|ไหม|มั้ย|หรอ|เหรอ|หรือเปล่า|หรือยัง|อะไร|ทำไม|ยังไง|อย่างไร|ที่ไหน|เมื่อไร|เมื่อไหร่|ใคร|กี่\S*)\s*(?:คะ|ครับ|จ๊ะ|จ้ะ|นะ|ล่ะ)?[!！.…]*$/;
+
+/** `พี่ทุยถามว่า "…"` / `น้องน้ำตอบว่า "…"`: the lines exactly as written, in order. */
+function spokenText(lines: ClipLine[], names: string[] = []): string {
+  // "เธอขอพรว่าอะไรหรอน้องน้ำ": the name at the end is who is asked, not part of the question
+  const isQuestion = (line: string) => {
+    let t = String(line || '').trim();
+    for (const n of [...names].sort((a, b) => b.length - a.length)) if (n && t.endsWith(n)) t = t.slice(0, -n.length).trim();
+    return QUESTION_RE.test(t);
+  };
+  return lines.map((d, k) => {
+    const who = d.speaker || 'ตัวละคร';
+    const prev = lines[k - 1];
+    const verb = isQuestion(d.line) ? 'ถามว่า'
+      : prev && prev.speaker !== d.speaker && isQuestion(prev.line) ? 'ตอบว่า'
+      : prev && prev.speaker === d.speaker ? 'พูดต่อว่า' : 'พูดว่า';
+    return `${who}${verb} "${d.line}"`;
+  }).join(' ');
+}
+
+/**
+ * Who is who, before the action: "พี่ทุย (รูปที่ 2) และน้องน้ำ (look) อยู่ในฉาก". The script's own
+ * action and dialogue follow word for word (a tag inside the writer's sentence broke it apart).
+ */
+function withCastTags(text: string, f: ClipFacts, faces: { n: number; name: string }[]): string {
+  const tag = (n: string) => {
+    const photo = faces.find(x => x.name === n);
+    return photo ? `รูปที่ ${photo.n}` : shortLook(f.notes[n]);
+  };
+  const body = String(text || '').replace(/[ \t]{2,}/g, ' ').trim();
+  const outside = body.replace(/"[^"]*"/g, ' ');
+  const listed = f.names.filter(n => tag(n) || !outside.includes(n)).map(n => (tag(n) ? `${n} (${tag(n)})` : n));
+  const who = listed.length > 1 ? `${listed.slice(0, -1).join(', ')} และ${listed[listed.length - 1]}` : listed[0] || '';
+  return [who ? `${who} อยู่ในฉาก` : '', body].filter(Boolean).join(' ');
+}
+
+/** "ประเภท: reptile (กิ้งก่า), ผิว/เกล็ด: เกล็ดเขียว, ชุด: …" -> "reptile (กิ้งก่า), เกล็ดเขียว, …" */
+export function shortLook(note?: string): string {
+  return String(note || '').replace(/(^|,\s*)[^,:：()]{1,20}[:：]\s*/g, '$1').replace(/\s+/g, ' ').trim();
+}
+
+/** End poses in a few words: "พี่ทุยและน้องน้ำยืนที่หน้าศาล" (same pose said once for everyone). */
+function endingText(poses: PoseForMeta[] | undefined, fallback: string): string {
+  const groups: { names: string[]; how: string }[] = [];
+  for (const p of poses || []) {
+    const name = String(p?.name || '').trim();
+    if (!name) continue;
+    const raw = p.posture === 'walking' ? 'standing' : String(p.posture || '');
+    const how = [POSTURE_TH[raw] || '', clean(p.place) ? `ที่${clean(p.place).replace(/^ที่/, '')}` : '',
+      clean(p.holding) ? `ถือ${clean(p.holding).replace(/^ถือ/, '')}` : '', clean(p.gesture), clean(p.facing)]
+      .filter(Boolean).filter(x => !/เพิ่งพูดจบ|หยุดพูด/.test(x)).join('');
+    if (!how) continue;
+    const g = groups.find(x => x.how === how);
+    if (g) { if (!g.names.includes(name)) g.names.push(name); } else groups.push({ names: [name], how });
+  }
+  const text = groups.map(g => `${g.names.length > 1 ? `${g.names.slice(0, -1).join(', ')}และ${g.names[g.names.length - 1]}` : g.names[0]}${g.how}`).join(', ');
+  // "คุณหญิงมณี เพิ่งพูดจบ หยุดพูดแล้ว" says nothing the dialogue does not
+  return text || (/เพิ่งพูดจบ|หยุดพูด/.test(fallback) ? '' : fallback);
+}
+
+const sentence = (t: string) => String(t || '').replace(/\s+/g, ' ').replace(/[.;\s]+$/, '').trim();
 
 function videoPromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): VideoPart[] {
   const f = clipFacts(clip, opts);
   const cam = f.cam;
   const parts: VideoPart[] = [];
-  const add = (key: VideoPart['key'], text: string) => { if (text) parts.push({ key, text }); };
+  const add = (key: VideoPart['key'], text: string) => { const t = sentence(text); if (t) parts.push({ key, text: t }); };
   const att = attachmentsFor(clip, opts, f);
-  // Order Meta AI asked for: story context, location lock + master, character lock + faces + looks,
-  // continuity (last frame), action, dialogue lock + safety.
-  // 1. story context + length + format
-  add('head', `บริบท: ละครดราม่าไทยแต่ง (นิยาย) นักแสดงผู้ใหญ่ที่ยินยอม, ${[clip.durationSeconds ? `วิดีโอยาว ${clip.durationSeconds} วินาที` : 'วิดีโอ', opts.aspectRatio ? `สัดส่วนภาพ ${opts.aspectRatio}` : '', 'ภาพสมจริงแบบภาพยนตร์ เคลื่อนไหวเป็นธรรมชาติ'].filter(Boolean).join(', ')}`);
-  // 2. location lock: attach the master image + the same bible block word for word every time
-  if (f.place.location || f.place.timeOfDay) add('place', `ล็อกฉาก${att.master ? ` (รูปที่ 1 คือภาพมาสเตอร์ "${att.master}")` : ''}: ${locationBible(f.place.location, f.place.timeOfDay, f.lighting, locationNoteFor(f.place.location, opts.locationNotes))}${att.master && att.faces.length ? ` — ${BACKGROUND_FROM_MASTER}` : ''}`);
-  // 3. character lock: at most two faces attached, a fixed look line for everyone
-  if (f.names.length) add('cast', characterLock(f, att.faces));
-  // 4. continuity: the previous clip's last frame is frame 1
-  if (f.startMoment && !f.continuous) add('start', `จังหวะเริ่มคลิป: ${f.startMoment}`);
+  const masterNo = att.list.find(x => x.kind === 'master')?.n;
+  // 1. place and time
+  const when = f.place.timeOfDay ? (/^ตอน/.test(f.place.timeOfDay) ? f.place.timeOfDay : `ตอน${f.place.timeOfDay}`) : '';
+  const where = [f.place.location, when].filter(Boolean).join(' ');
+  add('place', where && f.hasPrevious && !f.continuous ? `เปลี่ยนฉากมาที่${where}` : where);
+  // continuity: the previous clip's last frame (attached first) is where this clip starts
   if (f.continuous && f.hasPrevious && att.lastFrameOf) {
-    add('start', `ความต่อเนื่อง: รูปที่ ${att.frameNo} (รูปสุดท้าย) คือเฟรมสุดท้ายของวิดีโอคลิป ${att.lastFrameOf} ใช้เป็นเฟรมแรก continue from this exact frame ท่า ตำแหน่ง ชุด แสง และกล้องเดิม no jump cut`);
+    add('start', `ต่อจากเฟรมสุดท้ายของคลิป ${att.lastFrameOf} (รูปที่ ${att.frameNo}) ทันที ท่าและตำแหน่งเดิม ไม่ตัดภาพ ไม่เล่นซ้ำ`);
+  } else if (f.carried) {
+    add('start', `เริ่มจากท่าเดิมของคลิปก่อน: ${f.carried}`);
+  } else if (f.startMoment) {
+    add('start', `เริ่มคลิป: ${f.startMoment}`);
   }
-  if (f.carried) add('start', `ท่าเริ่มคลิป (ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ ห้ามเล่นเหตุการณ์ของคลิปก่อนซ้ำ): ${f.carried}`);
-  else if (f.ownStart) add('start', f.hasPrevious && !f.continuous ? `เปลี่ยนสถานที่ ท่าเริ่มคลิป: ${f.ownStart}` : `ท่าเริ่มคลิป: ${f.ownStart}`);
-  // 5. camera (the speaker's mouth clearly visible) + one beat of action
-  if (cam) {
-    const fromBehind = cam.angle === 'rear' || cam.angle === 'rear34';
-    add('camera', `มุมกล้อง: ${cam.framing}${opts.aspectRatio === '9:16' && !fromBehind ? ' ใบหน้าตัวละครอยู่ช่วงบนของจอ' : ''}${f.lines.length ? ' เห็นปากคนพูดชัด หันหน้าเข้ากล้อง แสงดี' : ''}`);
-    if (cam.movement) add('camera', `การเคลื่อนกล้อง: ${cam.movement}`);
-  }
-  // a clause that only describes background sound ("เสียงจิ้งหรีดดังรอบตัว") is left out:
-  // the video has no sound but the dialogue
+  // 2 + 3. characters, what they do and what they say (dialogue word for word, in order)
   const moves = withoutBackgroundSound(f.action);
   const seq = (clip.sequence || []).filter(st => st.kind === 'line' || withoutBackgroundSound(st.text));
   const multi = seq.length > 1 && f.lines.length > 0;
-  const sec = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+  let body: string;
   if (multi) {
-    add('action', `ลำดับในคลิป: ${seq.map((st, k) => `${k + 1}) ${sec(st.start)}–${sec(st.end)} วิ ${st.kind === 'line' ? `${st.speaker} พูดประโยคที่ ${st.n}` : withoutBackgroundSound(st.text)}`).join(' ')}`);
-  } else if (moves) add('action', `การเคลื่อนไหวของตัวละคร: ${moves}`);
+    // who speaks when: a short time mark before each line (Multi-Dialogue Clip)
+    const sec = (x: number) => (Number.isInteger(x) ? String(x) : x.toFixed(1));
+    body = seq.map(st => (st.kind === 'line'
+      ? (() => { const d = f.lines[(st.n || 1) - 1]; return d ? `(${sec(st.start)}–${sec(st.end)} วิ) ${spokenText([d], f.names)}` : ''; })()
+      : sentence(withoutBackgroundSound(st.text)))).filter(Boolean).join(' ');
+    // a line the sequence did not place is still said, after the rest
+    const said = f.lines.filter(d => !body.includes(`"${d.line}"`));
+    if (said.length) body = `${body} ${spokenText(said, f.names)}`;
+  } else {
+    const start = !moves && !f.carried && !att.lastFrameOf ? f.ownStart : '';
+    body = [sentence(start), sentence(moves), f.lines.length ? spokenText(f.lines, f.names) : ''].filter(Boolean).join(' ');
+  }
   const extra = withoutBackgroundSound(f.extra);
-  if (extra) add('action', `รายละเอียดฉาก: ${extra}`);
-  // The end pose holds something the clip never brings in (a folder appeared from nowhere): say how it comes
+  if (extra) body = `${body} ${sentence(extra)}`;
+  if (f.names.length) body = withCastTags(body, f, att.faces);
+  add('action', body);
   const bridge = propBridge(f, seq.map(st => st.text).join(' '));
   if (bridge) add('action', bridge);
-  // 6. dialogue lock (Meta's formula) + who may move their lips
-  if (f.lines.length) {
-    add('dialogue', `บทพูด: ${f.lines.map((d, k) => `${multi ? `ประโยคที่ ${k + 1} ` : ''}${d.speaker || 'ตัวละคร'} ${DIALOGUE_FORMULA}: "${d.line}"`).join('; ')}`);
-    if (f.speakers.length === 1) add('speech', `Only ${f.speakers[0]} speaks, other silent`);
-    if (f.speakers.length > 1) add('speech', 'พูดตามลำดับประโยคด้านบน แต่ละคนขยับปากเฉพาะตอนพูดประโยคของตัวเอง คนที่ไม่ได้พูดปิดปาก ห้ามพูดแทรก ห้ามสลับคนพูด');
-  } else {
-    add('speech', 'ไม่มีบทพูดในคลิปนี้ ตัวละครไม่พูด');
-  }
-  add('safety', SAFETY_LINE);
-  // emotion, end pose, sound, no text
-  const felt = f.lines.filter(d => d.emotion).map(d => `${d.speaker} ${d.emotion}`);
+  // the locks, once: dialogue exactly as written, faces / costumes from the photos, nobody doubled
+  const speech = f.lines.length
+    ? `พูดภาษาไทยตรงตามบททุกคำ${f.speakers.length > 1 ? ' พูดทีละคนตามลำดับ' : f.names.length > 1 ? ' คนอื่นไม่พูด' : ''}`
+    : 'ไม่มีบทพูดในคลิปนี้';
+  const looks = f.names.length
+    ? `หน้าตาและชุดคงเดิม${att.faces.length ? 'ตามรูป' : ''}${f.animal ? ' ไม่กลายเป็นมนุษย์' : ''} ไม่มีตัวละครซ้ำ`
+    : '';
+  add('lock', [speech, looks].filter(Boolean).join(' '));
+  // 4. face and feeling (the script's own emotion; a safe way to show it)
+  const felt = f.lines.filter(d => d.emotion).map(d => `${d.speaker} ${d.emotion.replace(/^[(（]\s*|\s*[)）]$/g, '')}`);
   const delivery = emotionDelivery([...felt, f.action].join(' '));
-  add('emotion', `อารมณ์และการแสดง: ${felt.length ? felt.join('; ') + ' ' : ''}${delivery ? delivery + ' ' : ''}สีหน้า ท่าทาง${f.lines.length ? ' และน้ำเสียง' : ''}ตรงกับเหตุการณ์${f.lines.length ? 'และบทพูด' : ''}`);
-  const ending = [f.end, f.endMoment && !f.end.includes(f.endMoment) ? f.endMoment : ''].filter(Boolean).join('; ');
-  if (ending) add('ending', `ท่าจบคลิป (ค้างไว้ส่งต่อคลิปถัดไป): ${ending}`);
-  add('sound', f.lines.length ? `เสียง: ${VIDEO_SOUND_DIALOGUE}` : `เสียง: ${VIDEO_SOUND_SILENT}`);
-  add('notext', 'no subtitles ไม่มีตัวหนังสือหรือลายน้ำบนจอ');
+  if (f.names.length) add('emotion', [felt.join(' '), delivery, 'สีหน้าชัดเจน'].filter(Boolean).join(' '));
+  const squash = (t: string) => String(t || '').replace(/กำลัง|\s|[,.!?"“”]/g, '');
+  const endPose = endingText(clip.endPoses, clean(clip.endAction));
+  const endMoment = /เพิ่งพูดจบ|หยุดพูด/.test(f.endMoment) ? '' : f.endMoment;
+  const ending = [endPose, endMoment && !squash(endPose).includes(squash(endMoment)) ? endMoment : '']
+    .filter(x => x && !squash(body).includes(squash(x).replace(new RegExp(f.names.join('|') || '$^', 'g'), '')))
+    .join(', ');
+  if (ending) add('ending', `จบคลิปด้วย${ending}`);
+  if (sensitiveWords(clip).length || /ร้องไห้|น้ำตา|สะอื้น/.test(f.action)) add('safety', SAFETY_SHORT);
+  // 5. set and light (the master image), and the camera only when the script gives one
+  // the place's own details from the location library (a generic list made Meta add a staircase)
+  const placeNote = locationNoteFor(f.place.location, opts.locationNotes);
+  add('scene', [
+    masterNo ? `ฉากตามรูปที่ ${masterNo}${placeNote ? ` (${placeNote})` : ''}${att.faces.length ? ' ไม่ใช้ฉากหลังของรูปตัวละคร' : ''}` : '',
+    f.lighting,
+    'ฉากและแสงคงเดิม'
+  ].filter(Boolean).join(' '));
+  if (cam?.kind === 'script' && cam.scriptText) add('camera', `มุมกล้อง: ${cam.scriptText}${cam.movement ? ` ${cam.movement}` : ''}`);
+  // 6. picture quality, format and sound
+  add('quality', qualityLine(opts.aspectRatio, clip.durationSeconds, f.lines.length > 0));
   return parts;
+}
+
+/** "cinematic photorealistic, 9:16, 10 วินาที, …": the last sentence of every video prompt. */
+function qualityLine(aspectRatio?: string, seconds?: number, speaks = true): string {
+  return [
+    'cinematic photorealistic',
+    aspectRatio || '',
+    seconds ? `${seconds} วินาที` : '',
+    'ละครไทยแต่ง นักแสดงผู้ใหญ่',
+    speaks ? VIDEO_SOUND_DIALOGUE : VIDEO_SOUND_SILENT,
+    'ไม่มีตัวหนังสือบนจอ'
+  ].filter(Boolean).join(', ');
+}
+
+/** One clip's video prompt: the parts in order, as plain sentences. */
+function joinVideoParts(parts: VideoPart[]): string {
+  const seen = new Set<string>();
+  return parts.map(p => p.text).filter(t => {
+    const k = t.replace(/[\s.,;:()"“”—–-]/g, '');
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  }).join(' ').replace(/\s+/g, ' ').trim();
 }
 
 // ---- What Meta AI asked for (its own answer, kept in the prompts) --------------------------------
@@ -765,6 +882,8 @@ function videoPromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): VideoPa
 export const DIALOGUE_FORMULA = 'speaks in Thai, exact line, lip-sync, no paraphrase';
 /** Real faces + physical violence / heavy distress are refused: drama in words, emotion without harm */
 export const SAFETY_LINE = 'ความปลอดภัย: ดราม่าด้วยคำพูดเท่านั้น ไม่มีการทำร้ายร่างกาย ไม่ตี ไม่ผลัก ไม่ร้องไห้หนักในภาพใกล้มาก';
+/** The video prompt's version, only for a clip with a hit / push / tears (see sensitiveWords) */
+export const SAFETY_SHORT = 'ดราม่าด้วยคำพูด ไม่มีการทำร้ายร่างกาย ไม่ร้องไห้หนักในภาพใกล้';
 /** How to show the clip's feeling safely, matched to it (an angry clip is not told to be teary) */
 export function emotionDelivery(text: string): string {
   const t = String(text || '');
@@ -860,7 +979,17 @@ export function attachmentsFor(clip: ClipForMeta, opts: MetaAiFormatOptions, fac
   }
   const prev = opts.previous;
   const lastFrameOf = f.continuous && prev ? (Number(prev.clip.clipNumber) || undefined) : undefined;
-  if (lastFrameOf) list.push({ n: list.length + 1, kind: 'frame', name: String(lastFrameOf), label: kind === 'video' ? `เฟรมสุดท้ายของวิดีโอคลิป ${lastFrameOf}` : `ภาพนิ่งของคลิป ${lastFrameOf}` });
+  if (lastFrameOf) {
+    const frame: Attachment = { n: 0, kind: 'frame', name: String(lastFrameOf), label: kind === 'video' ? `เฟรมสุดท้ายของวิดีโอคลิป ${lastFrameOf}` : `ภาพนิ่งของคลิป ${lastFrameOf}` };
+    // a video starts from its FIRST picture: with the empty set first, the cast faded in over it
+    // (double exposure, a second floating head). So the previous clip's last frame goes first,
+    // then the faces, the master last.
+    if (kind === 'video') {
+      const master0 = list.filter(x => x.kind === 'master');
+      list.splice(0, list.length, frame, ...list.filter(x => x.kind !== 'master'), ...master0);
+    } else list.push(frame);
+    list.forEach((x, k) => { x.n = k + 1; });
+  }
   return {
     list,
     master,
@@ -883,7 +1012,7 @@ function characterLock(f: ClipFacts, faces: { n: number; name: string }[]): stri
 }
 
 export function formatClipForMetaAi(clip: ClipForMeta, opts: MetaAiFormatOptions = {}): string {
-  return withoutRepeats(videoPromptParts(clip, opts).map(p => p.text));
+  return joinVideoParts(videoPromptParts(clip, opts));
 }
 
 /** The pieces of one clip's image prompt, by role (the location batch shares some of them). */
@@ -1108,25 +1237,28 @@ export function formatPlaceVideoBatch(clips: ClipForMeta[], indexes: number[], o
   const part = (k: number, key: VideoPart['key']) => items[k].parts.filter(p => p.key === key).map(p => p.text);
   const lengths = Array.from(new Set(indexes.map(i => clips[i].durationSeconds || 0)));
   const shared: string[] = [];
-  shared.push(lengths.length === 1
-    ? part(0, 'head')[0]
-    : [`วิดีโอ`, opts.aspectRatio ? `สัดส่วนภาพ ${opts.aspectRatio}` : '', 'ภาพสมจริงแบบภาพยนตร์ เคลื่อนไหวเป็นธรรมชาติ ความยาวตามที่ระบุในแต่ละคลิป'].filter(Boolean).join(', '));
-  shared.push(...part(0, 'place'));
+  // same place and time for the whole batch: said once
+  shared.push(...part(0, 'place').map(t => t.replace(/^เปลี่ยนฉากมาที่/, '')));
   if (all.photoNames.length || all.noPhoto.length) {
     const names = [...all.photoNames, ...all.noPhoto];
-    const looks = names.map((n: string) => `${n}${all.notes[n] ? ` (${all.notes[n]})` : ''}${all.photoNames.includes(n) ? '' : ' ยังไม่มีภาพอ้างอิง'}`);
-    shared.push(`ล็อกตัวละคร: ลุคคงที่: ${looks.join(', ')} — แต่ละคลิปแนบรูปตามลำดับใน "แนบก่อนพิมพ์" ของคลิปนั้น (รูปที่ 1 สถานที่ ต่อด้วยตัวละครในช็อต รูปสุดท้ายเฟรมจากวิดีโอคลิปก่อน) ใบหน้า ทรงผม เมคอัพ เครื่องประดับ ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป ${all.animal ? 'ห้ามกลายเป็นมนุษย์หรือสิ่งอื่น' : 'ห้ามกลายเป็นคนอื่น'}`);
+    const who = names.map((n: string) => `${n}${!all.photoNames.includes(n) && all.notes[n] ? ` (${shortLook(all.notes[n])})` : ''}`);
+    shared.push(`ตัวละคร: ${who.join(', ')} หน้าตาและชุดคงเดิมทุกคลิป${all.photoNames.length ? 'ตามรูป' : ''}${all.animal ? ' ไม่กลายเป็นมนุษย์' : ''} ไม่มีตัวละครซ้ำ`);
   }
-  shared.push(SAFETY_LINE);
-  shared.push(`เสียงทุกคลิป: มีเฉพาะเสียงพูดของตัวละครตามบทของคลิปนั้น ไม่มีเสียงบรรยากาศ เสียงธรรมชาติ ดนตรี หรือเสียงเอฟเฟกต์ใด ๆ คลิปที่ไม่มีบทพูดให้เงียบทั้งคลิป`);
-  shared.push('no subtitles ไม่มีตัวหนังสือหรือลายน้ำบนจอทุกคลิป');
-  const OWN: VideoPart['key'][] = ['start', 'camera', 'action', 'dialogue', 'emotion', 'ending', 'speech'];
-  const shots = items.map(({ i, parts, f }, k) => {
-    const own = parts.filter(p => OWN.includes(p.key)).map(p => p.text);
+  const master = first0Master(clips, indexes);
+  const light = items[0].f.lighting;
+  shared.push([master ? `ฉากตาม${master}` : '', light, 'ฉากและแสงคงเดิมทุกคลิป'].filter(Boolean).join(' '));
+  shared.push(qualityLine(opts.aspectRatio, lengths.length === 1 ? lengths[0] || undefined : undefined, true)
+    .replace(VIDEO_SOUND_DIALOGUE, 'มีแค่เสียงพูดตามบทของแต่ละคลิป คลิปที่ไม่มีบทพูดให้เงียบ ไม่มีดนตรีหรือเสียงประกอบ'));
+  const OWN: VideoPart['key'][] = ['start', 'action', 'lock', 'emotion', 'ending', 'safety', 'camera'];
+  const shots = items.map(({ i, parts }, k) => {
+    const own = parts.filter(p => OWN.includes(p.key)).map(p => p.text)
+      // the look lock is in the shared part; keep only the dialogue lock here
+      .map(t => t.replace(/\s*หน้าตาและชุดคงเดิม\S*(?: ไม่กลายเป็นมนุษย์)? ไม่มีตัวละครซ้ำ/, '').trim())
+      .filter(Boolean);
     const att = attachmentLine(clips[i], { ...opts, ...metaContextFor(clips, i) });
-    const lines = [att ? `แนบก่อนพิมพ์: ${att}` : '', f.names.length ? `ตัวละครในคลิป: ${f.names.join(', ')}` : '', ...own].filter(Boolean);
-    const len = clips[i].durationSeconds ? `, ${clips[i].durationSeconds} วินาที` : '';
-    return `คลิปที่ ${k + 1} (คลิป ${(clips[i].clipNumber as number) || i + 1}${len}):\n${withoutRepeats(lines)}`;
+    const lines = [att ? `แนบก่อนพิมพ์: ${att}` : '', own.join(' ')].filter(Boolean);
+    const len = lengths.length > 1 && clips[i].durationSeconds ? `, ${clips[i].durationSeconds} วินาที` : '';
+    return `คลิปที่ ${k + 1} (คลิป ${(clips[i].clipNumber as number) || i + 1}${len}):\n${lines.join('\n')}`;
   });
   const uploads = all.photoNames.length ? `รูปโปรไฟล์ของ ${all.photoNames.join(', ')}` : '';
   return [
@@ -1137,12 +1269,17 @@ export function formatPlaceVideoBatch(clips: ClipForMeta[], indexes: number[], o
   ].filter(Boolean).join('\n\n');
 }
 
+/** Longest a video prompt may be, without its dialogue and look notes (old format: 1300-2300; the user example ~250). */
+export const VIDEO_PROMPT_MAX = 700;
+
 /** Camera / shot-size terms allowed in English (no Thai word says it as precisely). */
 const TECH_WORDS = new Set(['close-up', 'medium', 'close', 'shot', 'long', 'full', 'wide', 'extreme', 'front', 'view', 'three-quarter',
   'side', 'profile', 'rear', 'high', 'low', 'angle', 'over-the-shoulder', 'eye', 'level',
   // Meta AI's own wording (dialogue formula, continuity, no subtitles, the master image's name)
   'speaks', 'in', 'thai', 'exact', 'line', 'lip-sync', 'no', 'paraphrase', 'only', 'other', 'silent',
-  'continue', 'from', 'this', 'frame', 'jump', 'cut', 'subtitles', 'master']);
+  'continue', 'from', 'this', 'frame', 'jump', 'cut', 'subtitles', 'master',
+  // the short video prompt's quality words
+  'cinematic', 'photorealistic']);
 
 /**
  * Problems in a finished prompt (empty = ready to send): repeated sentences, contradictions,
@@ -1174,16 +1311,28 @@ export function checkPromptProblems(text: string, kind: 'image' | 'video', cam?:
     if (/ขณะพูด|พูดว่า "/.test(t)) out.push('ภาพนิ่งแต่สั่งให้พูด');
     for (const label of ['มุมกล้องและระยะภาพ', 'รูปแบบและสัดส่วนภาพ']) if (!t.includes(label + ':')) out.push(`ไม่มี ${label}`);
   } else {
-    const speaks = /บทพูด: \S/.test(t);
+    // the short natural video prompt (see videoPromptParts)
+    const speaks = /"[^"]+"/.test(t.replace(/^แนบก่อนพิมพ์:.*$/gm, ''));
     if (speaks && /ไม่มีบทพูดในคลิปนี้/.test(t)) out.push('มีบทพูดแต่สั่งว่าไม่มีบทพูด');
-    if (!speaks && /ปากขยับตรงกับเสียง/.test(t)) out.push('ไม่มีบทพูดแต่สั่งให้ขยับปาก');
-    if (/ทุกคนปิดปาก/.test(t) && speaks) out.push('มีบทพูดแต่สั่งให้ทุกคนปิดปาก');
-    if (speaks && !t.includes(DIALOGUE_FORMULA)) out.push('บทพูดไม่ได้ใช้สูตรของ Meta');
-    if (speaks && !/Only \S+ speaks, other silent|ห้ามสลับคนพูด/.test(t)) out.push('ไม่ได้บอกว่าใครพูดคนเดียว');
-    for (const label of ['วิดีโอ', 'มุมกล้อง', 'อารมณ์และการแสดง', 'เสียง:']) if (!t.includes(label)) out.push(`ไม่มี ${label}`);
+    if (!speaks && /พูดภาษาไทยตรงตามบท/.test(t)) out.push('ไม่มีบทพูดแต่สั่งให้พูด');
+    if (speaks && !/พูดภาษาไทยตรงตามบททุกคำ/.test(t)) out.push('บทพูดไม่ได้ล็อกให้พูดตรงตามบท');
     if (speaks && t.includes(VIDEO_SOUND_SILENT)) out.push('มีบทพูดแต่สั่งให้เงียบ');
-    const moves = t.match(/การเคลื่อนไหวของตัวละคร: ([^.]*)/)?.[1] || '';
-    if (moves && withoutBackgroundSound(moves) !== moves.trim()) out.push('สั่งเสียงบรรยากาศในวิดีโอ');
+    if (!/cinematic photorealistic/.test(t)) out.push('ไม่มี คุณภาพภาพ');
+    if (!/เสียง|เงียบ/.test(t)) out.push('ไม่มี เสียง');
+    if (/ล็อกฉาก|ล็อกตัวละคร|ใบหน้าตัวละครอยู่ช่วงบนของจอ|speaks in Thai|อารมณ์และการแสดง:/.test(t)) out.push('ยังเป็นรูปแบบพรอมต์ยาวแบบเก่า');
+    // long prompts are followed less well: dialogue and look notes do not count
+    const own = t.replace(/"[^"]*"/g, '').replace(/\([^()]*(?:\([^()]*\)[^()]*)*\)/g, '');
+    // a packed clip (several lines and beats) may be longer, by its extra lines
+    const lineCount = (t.match(/"[^"]*"/g) || []).length;
+    // …and by its extra characters (each has an end pose): "A, B, C และD อยู่ในฉาก"
+    const castLead = own.match(/([^"]{0,120}) อยู่ในฉาก/)?.[1] || '';
+    const people = castLead ? (castLead.match(/,/g) || []).length + (/และ/.test(castLead) ? 2 : 1) : 0;
+    const max = VIDEO_PROMPT_MAX + 120 * Math.max(0, lineCount - 1) + 80 * Math.max(0, people - 2);
+    if (own.length > max) out.push(`พรอมต์ยาวเกิน (${own.length} ตัวอักษร)`);
+    if (cam) {
+      if (cam.kind !== 'script' && /มุมกล้อง/.test(t)) out.push('ใส่มุมกล้องที่บทไม่ได้กำหนด');
+      if (cam.kind === 'script' && cam.scriptText && !t.includes('มุมกล้อง')) out.push('ไม่มี มุมกล้องตามบท');
+    }
   }
   return out;
 }

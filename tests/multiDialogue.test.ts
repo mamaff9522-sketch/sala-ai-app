@@ -11,6 +11,9 @@ import { formatClipForMetaAi, formatClipImagePrompt, metaContextFor, characterNo
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rd = (f: string) => fs.readFileSync(path.join(here, 'fixtures', f), 'utf8');
 let passed = 0;
+const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** `น้ำฟ้า (look) พูดว่า "…"`: the line word for word after its speaker */
+const said = (who: string, line: string) => new RegExp(`${esc(who)}(?: \\([^"]*?\\))? ?(?:พูด|ถาม|ตอบ|พูดต่อ)ว่า "${esc(line)}"`);
 const check = async (name: string, fn: () => Promise<void> | void) => { await fn(); passed++; console.log(`  ✔ ${name}`); };
 const engine = async (story: string) => (await runWholeStory(story, { offline: true, clipSeconds: MULTI_DIALOGUE_SECONDS, maxSteps: 400 },
   async (p: any) => ({ success: true, ...offlineContinuation(p) } as any))).clips;
@@ -53,22 +56,21 @@ await check('prompts of packed clips: numbered lines in order, who speaks when, 
     const img = formatClipImagePrompt(c as any, ctx);
     assert.deepEqual(checkPromptProblems(v, 'video', ctx.camera), [], `clip ${i + 1} video`);
     assert.deepEqual(checkPromptProblems(img, 'image', ctx.camera), [], `clip ${i + 1} image`);
-    assert.ok(v.includes(`วิดีโอยาว ${MULTI_DIALOGUE_SECONDS} วินาที`));
-    assert.ok(v.includes('ล็อกฉาก (รูปที่ 1 คือภาพมาสเตอร์') && v.includes('ใบหน้า ทรงผม เมคอัพ เครื่องประดับ ชุด และเสียงพูดของแต่ละคนคงเดิมทุกคลิป') && /มุมกล้อง: \S/.test(v));
+    assert.ok(v.includes(`${MULTI_DIALOGUE_SECONDS} วินาที`));
+    assert.ok(/ฉากตามรูปที่ \d/.test(v) && v.includes('หน้าตาและชุดคงเดิม'), `clip ${i + 1} locks`);
     let at = -1;
     c.dialogues.forEach((d, k) => {
-      const tag = c.dialogues.length > 1 ? `ประโยคที่ ${k + 1} ${d.speaker} speaks in Thai, exact line, lip-sync, no paraphrase: "${d.line}"` : `${d.speaker} speaks in Thai, exact line, lip-sync, no paraphrase: "${d.line}"`;
-      const pos = v.indexOf(tag);
+      const pos = v.search(said(d.speaker, d.line));
       assert.ok(pos > at, `clip ${i + 1}: line ${k + 1} in order`);
       at = pos;
     });
     if (new Set(c.dialogues.map(d => d.speaker)).size > 1) {
-      assert.ok(v.includes('ห้ามสลับคนพูด') && v.includes('ลำดับในคลิป:'), `clip ${i + 1}`);
-      c.dialogues.forEach((d, k) => assert.ok(v.includes(`${d.speaker} พูดประโยคที่ ${k + 1}`), `clip ${i + 1} timing of line ${k + 1}`));
+      assert.ok(v.includes('พูดทีละคนตามลำดับ'), `clip ${i + 1}`);
+      if ((c.sequence || []).length > 1) c.dialogues.forEach((d, k) => assert.ok(new RegExp(`\\(\\d+(?:\\.\\d)?–\\d+(?:\\.\\d)? วิ\\) ${esc(d.speaker)}`).test(v), `clip ${i + 1} timing of line ${k + 1}`));
     }
     // same place as the clip before: starts exactly where it ended
     const prevSame = i > 0 && samePlace(sceneOfClip(packed as any, i).location, sceneOfClip(packed as any, i - 1).location);
-    if (prevSame && (packed[i - 1].endPoses || []).length) assert.ok(v.includes('ท่าเริ่มคลิป (ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ'), `clip ${i + 1}`);
+    if (prevSame && (packed[i - 1].endPoses || []).length) assert.ok(v.includes('ต่อจากเฟรมสุดท้ายของคลิป') || v.includes('เริ่มจากท่าเดิมของคลิปก่อน'), `clip ${i + 1}`);
     // the still is the first moment, with no dialogue
     for (const d of c.dialogues) assert.ok(!img.includes(d.line));
   });
@@ -102,17 +104,18 @@ for (const [file, packedMode] of [['faiklaen-225-clips.txt', false], ['multi-dia
         const ch = g.clips.slice(k, k + VIDEO_BATCH_SIZE);
         const b = formatPlaceVideoBatch(clips as any, ch, opts);
         assert.ok(b.startsWith(`สร้างวิดีโอ ${ch.length} คลิปแยกกัน`));
-        for (const label of ['ล็อกฉาก (รูปที่ 1 คือภาพมาสเตอร์', 'เสียงทุกคลิป:', 'ไม่มีตัวหนังสือ', 'ความปลอดภัย:']) assert.equal(b.split(label).length - 1, 1, `${label} once`);
+        for (const label of ['ฉากตามภาพมาสเตอร์', 'ไม่มีตัวหนังสือ', 'cinematic photorealistic', 'หน้าตาและชุดคงเดิม']) assert.equal(b.split(label).length - 1, 1, `${label} once`);
         const shots = b.split(/\n\nคลิปที่ \d+ \(คลิป \d+(?:, \d+ วินาที)?\):\n/).slice(1);
         assert.equal(shots.length, ch.length);
         shots.forEach((shot, j) => {
           const i = ch[j];
           const single = formatClipForMetaAi(clips[i] as any, { ...opts, ...metaContextFor(clips as any, i) });
-          for (const d of clips[i].dialogues) assert.ok(shot.includes(`speaks in Thai, exact line, lip-sync, no paraphrase: "${d.line}"`) && single.includes(`speaks in Thai, exact line, lip-sync, no paraphrase: "${d.line}"`), `clip ${i + 1}: ${d.line}`);
-          assert.ok(shot.includes('มุมกล้อง:') && shot.includes('อารมณ์และการแสดง:'), `clip ${i + 1}`);
+          for (const d of clips[i].dialogues) assert.ok(said(d.speaker, d.line).test(shot) && said(d.speaker, d.line).test(single), `clip ${i + 1}: ${d.line}`);
+          assert.equal(shot.includes('สีหน้าชัดเจน'), single.includes('สีหน้าชัดเจน'), `clip ${i + 1} emotion`);
+          assert.equal(shot.includes('มุมกล้อง:'), plan[i].kind === 'script', `clip ${i + 1} camera only from the script`);
           if (plan[i].subject) assert.ok(shot.includes(plan[i].subject));
-          for (const own of ['ท่าเริ่มคลิป', 'ท่าจบคลิป', 'ลำดับในคลิป', 'ห้ามสลับคนพูด', 'ไม่มีบทพูดในคลิปนี้']) assert.equal(shot.includes(own), single.includes(own), `clip ${i + 1}: ${own}`);
-          assert.ok(!shot.includes('ล็อกฉาก (') && !shot.includes('เสียง:') && !shot.includes('ความปลอดภัย:'), 'shared parts not repeated per clip');
+          for (const own of ['ต่อจากเฟรมสุดท้าย', 'จบคลิปด้วย', 'พูดทีละคนตามลำดับ', 'ไม่มีบทพูดในคลิปนี้', 'คนอื่นไม่พูด']) assert.equal(shot.includes(own), single.includes(own), `clip ${i + 1}: ${own}`);
+          assert.ok(!shot.includes('cinematic photorealistic') && !shot.includes('ฉากตามรูปที่') && !shot.includes('หน้าตาและชุดคงเดิม'), 'shared parts not repeated per clip');
           seen++;
         });
         // lines never move to another clip of the batch

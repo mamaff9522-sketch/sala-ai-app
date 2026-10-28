@@ -70,9 +70,9 @@ check('Meta AI format: photo mapping instead of library text, no internal notes,
   const clips = buildSalaMultiClipPrompts({ scriptText: STORY, clipDurationSeconds: 8, clipCount: 3, continuityLock: {}, characters: chars as any });
   const meta = formatClipForMetaAi(clips[0], { aspectRatio: '9:16', knownCharacters: ['พี่ทุย', 'น้องน้ำ'] });
   assert.ok(meta.length < clips[0].generatedPrompt.length / 2, 'much shorter than the full prompt');
-  assert.ok(/รูปที่ \d คือรูปโปรไฟล์อ้างอิงของพี่ทุย/.test(meta) && /รูปที่ \d คือรูปโปรไฟล์อ้างอิงของน้องน้ำ/.test(meta));
+  assert.ok(/พี่ทุย \(รูปที่ \d\)/.test(meta) && /น้องน้ำ \(รูปที่ \d\)/.test(meta), meta);
   assert.ok(meta.includes('"ไปไหนมา ทำไมกลับช้าขนาดนี้?"'));
-  assert.ok(meta.includes('วิดีโอยาว 8 วินาที') && meta.includes('9:16'));
+  assert.ok(meta.includes('8 วินาที') && meta.includes('9:16') && meta.includes('cinematic photorealistic'));
   for (const gone of ['ผูกพรอมต์นี้', 'Continuity Handoff', 'Stance/Position Lock', 'Negative', 'ไม่ระบุ', 'water buffalo']) {
     assert.ok(!meta.includes(gone), `no "${gone}"`);
   }
@@ -84,8 +84,8 @@ check('Meta AI format: photo mapping instead of library text, no internal notes,
 
 check('Meta AI format: a silent clip says nobody speaks', () => {
   const meta = formatClipForMetaAi({ durationSeconds: 8, generatedPrompt: 'Location: ป่า. Core action: ฟ้าใสกำลังเดินเข้าป่า.', dialogues: [] });
-  assert.ok(meta.includes('ตัวละครไม่พูด'));
-  assert.ok(!meta.includes('พูดภาษาไทยตามบท'));
+  assert.ok(meta.includes('ไม่มีบทพูดในคลิปนี้'));
+  assert.ok(!meta.includes('พูดภาษาไทยตรงตามบท'));
 });
 
 console.log(`\nstory progress + Meta AI format: ${passed} passed`);
@@ -130,20 +130,24 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
   const blocks = formatAllClipsForMetaAi(clips, { knownCharacters: ['พี่ทุย', 'น้องน้ำ'] }).split('\n\n');
   assert.equal(blocks.length, clips.length);
   for (const b of blocks) {
-    assert.ok(b.includes('ล็อกฉาก (รูปที่ 1 คือภาพมาสเตอร์ "หน้าบ้าน Master"): สถานที่ หน้าบ้าน'), 'every clip locks the set, inherited when the heading names none');
-    assert.ok(b.includes('ท่าจบคลิป'), 'every clip locks its end pose');
-    assert.ok(!/ท่าจบคลิป[^.]*เดิน/.test(b), 'no one is still walking at the hand-off');
+    const body = b.split('\n').slice(2).join(' ');
+    assert.ok(body.startsWith('หน้าบ้าน'), `every clip starts with the place, inherited when the heading names none: ${body.slice(0, 40)}`);
+    assert.ok(/ฉากตามรูปที่ \d/.test(b) && b.includes('ภาพมาสเตอร์ หน้าบ้าน Master'), 'every clip locks the set to its master image');
+    assert.ok(!/จบคลิปด้วย[^ ]*เดิน/.test(b), 'no one is still walking at the hand-off');
   }
-  const endOf = (b: string) => (b.match(/ท่าจบคลิป \(ค้างไว้ส่งต่อคลิปถัดไป\): ([^.]*)\./) || [])[1];
-  const startOf = (b: string) => (b.match(/ท่าเริ่มคลิป \(ต่อเนื่องจากคลิปก่อน ตำแหน่งเดิมเป๊ะ[^)]*\): ([^.]*)\./) || [])[1];
-  for (let i = 1; i < blocks.length; i++) assert.equal(startOf(blocks[i]), endOf(blocks[i - 1]), `clip ${i + 1} starts where clip ${i} ends`);
+  // continuity: from clip 2 on, the previous clip's last frame is attached FIRST and played on from
+  for (let i = 1; i < blocks.length; i++) {
+    assert.ok(blocks[i].includes(`(แนบก่อนพิมพ์: รูปที่ 1 เฟรมสุดท้ายของวิดีโอคลิป ${i} `), `clip ${i + 1} attaches clip ${i}'s last frame first`);
+    assert.ok(blocks[i].includes(`ต่อจากเฟรมสุดท้ายของคลิป ${i} (รูปที่ 1) ทันที`), `clip ${i + 1} starts where clip ${i} ends`);
+  }
+  assert.ok(blocks.some(b => b.includes('จบคลิปด้วย')), 'end poses are handed on');
   console.log('  ✔ Meta AI prompts lock the set and hand the end pose to the next clip');
   // A clip at a new place starts fresh: nothing carried from the previous clip
   const { formatClipForMetaAi, metaContextFor } = await import('../src/services/metaAiPrompt');
   const moved = [{ ...clips[0] }, { ...clips[1], locationName: 'ร้านหมูกระทะ', timeOfDay: 'กลางคืน' }];
   const m = formatClipForMetaAi(moved[1], metaContextFor(moved as any, 1));
-  assert.ok(m.includes('): สถานที่ ร้านหมูกระทะ เวลา กลางคืน'));
-  assert.ok(!m.includes('ต่อเนื่องจากคลิปก่อน'), 'no pose carried across a change of place');
+  assert.ok(m.startsWith('เปลี่ยนฉากมาที่ร้านหมูกระทะ ตอนกลางคืน'), m.slice(0, 60));
+  assert.ok(!m.includes('ต่อจากเฟรมสุดท้าย') && !m.includes('ท่าเดิมของคลิปก่อน'), 'no pose carried across a change of place');
   console.log('  ✔ a change of place starts a new set-up, no carried pose');
 }
 
@@ -157,9 +161,13 @@ console.log(`\nstory progress + Meta AI format: ${passed} passed`);
   const notes = Object.fromEntries(lib.map(c => [c.name, characterNote(c)]));
   const blocks = formatAllClipsForMetaAi(clips, { knownCharacters: ['พี่ทุย', 'น้องน้ำ'], photoOrder: ['พี่ทุย', 'น้องน้ำ'], characterNotes: notes }).split('\n\n');
   for (const b of blocks) {
-    if (b.includes('= พี่ทุย')) assert.ok(b.includes('รูปที่ 1 = พี่ทุย'), 'พี่ทุย is always photo 1');
-    if (b.includes('= น้องน้ำ')) assert.ok(b.includes('รูปที่ 2 = น้องน้ำ'), 'น้องน้ำ is always photo 2, even when she speaks first');
-    assert.ok(b.includes('ห้ามกลายเป็นมนุษย์'), 'identity lock in every clip');
+    // the clip's own attachment list numbers the photos; the prompt uses the same numbers
+    const att = b.match(/\(แนบก่อนพิมพ์: ([^)]*)\)/)?.[1] || '';
+    for (const n of ['พี่ทุย', 'น้องน้ำ']) {
+      const no = att.match(new RegExp(`รูปที่ (\\d) ${n}`))?.[1];
+      if (no) assert.ok(b.includes(`${n} (รูปที่ ${no})`), `${n} is photo ${no} in the prompt too`);
+    }
+    assert.ok(b.includes('ไม่กลายเป็นมนุษย์'), 'identity lock in every clip');
   }
   assert.ok(notes['น้องน้ำ'].length > 20 && notes['น้องน้ำ'].length < 260);
   console.log('  ✔ photo numbers are fixed for the whole story and identity is locked');
