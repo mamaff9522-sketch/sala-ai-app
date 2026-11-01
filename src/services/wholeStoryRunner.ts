@@ -9,6 +9,7 @@
 import type { StoryContinuationPayload, StoryContinuationResponse } from '../types';
 import { normalizeStoryScript } from './storyNormalize';
 import { isEmptyLine } from './promptSections';
+import { parseStoryStructure } from './storyEpisodeEngine';
 
 export interface StoryClip {
   clipNumber: number;
@@ -155,6 +156,92 @@ export async function runWholeStory(
     }
     if ((res as any)?.isStoryFinished || (res as any)?.hasMoreScenes === false) { finished = true; break; }
   }
-  opts.onProgress?.({ step: 0, clips: [...clips], message: finished ? `เสร็จแล้ว ${clips.length} คลิป` : `หยุดที่ ${clips.length} คลิป` });
-  return { clips, notices: Array.from(new Set(notices)), usedOffline, finished, ...(error ? { error } : {}) };
+  // Last check against the story itself: AI chunks sometimes leave a line out or say one twice, and
+  // which line differs from run to run. The story's own lines are the authority.
+  const fixed = reconcileWithStory(clips, story, clipSeconds);
+  if (fixed.restored.length) notices.push(`ใส่บทพูดที่หายไปกลับคืน ${fixed.restored.length} ประโยค ตามลำดับในเนื้อเรื่อง`);
+  if (fixed.removed.length) notices.push(`ตัดบทพูดที่ซ้ำออก ${fixed.removed.length} ประโยค (บทนี้มีครั้งเดียวในเนื้อเรื่อง)`);
+  const out = fixed.clips;
+  opts.onProgress?.({ step: 0, clips: [...out], message: finished ? `เสร็จแล้ว ${out.length} คลิป` : `หยุดที่ ${out.length} คลิป` });
+  return { clips: out, notices: Array.from(new Set(notices)), usedOffline, finished, ...(error ? { error } : {}) };
+}
+
+const squashLine = (s: unknown) => String(s ?? '')
+  .replace(/[“”"'‘’«»「」]/g, '')
+  .replace(/[\s.,!?…~\-—–:;()]/g, '')
+  .toLowerCase();
+
+/**
+ * Every spoken line of the story exactly once, in story order:
+ * - a line said more often than the story says it is removed (a clip left with nothing is dropped);
+ * - a story line no clip says gets its own clip, right after the clip with the line before it,
+ *   at the same place and time, with the speaker and delivery from the story.
+ * Lines the clips say that are not in the story (reworded beyond recognition) are left alone.
+ */
+export function reconcileWithStory(input: StoryClip[], story: string, clipSeconds = 8): { clips: StoryClip[]; restored: string[]; removed: string[] } {
+  let src: { speaker: string; dialogue: string; emotionOrAction?: string }[] = [];
+  try { src = parseStoryStructure(story).allDialogues.filter(d => d.dialogue && !isEmptyLine(d.dialogue)); } catch { /* no anchor */ }
+  if (src.length === 0 || input.length === 0) return { clips: input, restored: [], removed: [] };
+  const keys = src.map(d => squashLine(d.dialogue));
+  const matchOf = (line: string, used: Set<number>, from: number): number => {
+    const k = squashLine(line);
+    if (k.length < 2) return -1;
+    const exact = (i: number) => keys[i] === k;
+    const part = (i: number) => (keys[i].includes(k) && k.length >= 4) || (k.includes(keys[i]) && keys[i].length >= 4);
+    for (const test of [exact, part]) {
+      for (let i = from; i < keys.length; i++) if (!used.has(i) && test(i)) return i;
+      for (let i = 0; i < from; i++) if (!used.has(i) && test(i)) return i;
+    }
+    // every copy of this line is already used: a repeat
+    for (const test of [exact, part]) for (let i = 0; i < keys.length; i++) if (test(i)) return -2;
+    return -1;
+  };
+  const used = new Set<number>();
+  const where = new Map<number, number>();   // story line -> index in clips
+  const removed: string[] = [];
+  const clips: StoryClip[] = [];
+  let cursor = 0;
+  for (const c of input) {
+    const kept: StoryClip['dialogues'] = [];
+    for (const d of c.dialogues || []) {
+      const i = matchOf(d.line, used, cursor);
+      if (i === -2) { removed.push(d.line); continue; }
+      if (i >= 0) { used.add(i); where.set(i, clips.length); cursor = i + 1; }
+      kept.push(d);
+    }
+    if ((c.dialogues || []).length > 0 && kept.length === 0) continue;   // the clip only repeated lines
+    clips.push({ ...c, dialogues: kept });
+  }
+  const restored: string[] = [];
+  for (let i = 0; i < src.length; i++) {
+    if (used.has(i)) continue;
+    let after = -1;
+    for (let j = i - 1; j >= 0; j--) if (where.has(j)) { after = where.get(j)!; break; }
+    let before = clips.length;
+    for (let j = i + 1; j < src.length; j++) if (where.has(j)) { before = where.get(j)!; break; }
+    const at = after >= 0 ? after + 1 : Math.min(before, clips.length);
+    const near = clips[after >= 0 ? after : Math.min(at, clips.length - 1)];
+    const d = src[i];
+    const clip: StoryClip = {
+      clipNumber: 0,
+      title: near?.title || '',
+      durationSeconds: near?.durationSeconds || clipSeconds,
+      generatedPrompt: '',
+      dialogues: [{ speaker: d.speaker, line: d.dialogue, ...(d.emotionOrAction ? { emotion: d.emotionOrAction.replace(/^[(（]|[)）]$/g, '') } : {}) }],
+      charactersPresent: Array.from(new Set([...(near?.charactersPresent || []), d.speaker].filter(Boolean))),
+      locationName: near?.locationName,
+      timeOfDay: near?.timeOfDay,
+      startPoses: near?.endPoses,
+      endPoses: near?.endPoses,
+      endAction: near?.endAction,
+      sourceCursor: near?.sourceCursor
+    };
+    clips.splice(at, 0, clip);
+    where.forEach((v, k) => { if (v >= at) where.set(k, v + 1); });
+    where.set(i, at);
+    used.add(i);
+    restored.push(d.dialogue);
+  }
+  clips.forEach((c, k) => { c.clipNumber = k + 1; });
+  return { clips, restored, removed };
 }

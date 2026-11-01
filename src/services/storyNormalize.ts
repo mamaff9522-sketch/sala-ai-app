@@ -197,9 +197,88 @@ export function isClipByClipScript(raw: string): boolean {
   return lines.filter((l, i) => CLIP_LABEL_RE.test(l.trim()) && !isHeading(nextNonBlank(i))).length >= 3;
 }
 
+/** Labels that end in ":" but are not a person speaking. */
+const NOT_SPEAKER_RE = /^(?:ฉาก|ฉากที่|ตัวละคร|ตัวละครหลัก|รายชื่อตัวละคร|บทพูด|บท|การกระทำ|ภาพ|สถานที่|เวลา|หมายเหตุ|มุมกล้อง|กล้อง|แสง|อารมณ์|การแสดง|ตอนจบ|ตอนต้น|สไตล์|สไตล์ภาพ|ชื่อเรื่อง|เรื่อง|ตอนที่|คลิป|ช็อต|บรรยากาศ|เพลง|เสียง|ฉากหลัง|โทน|ความยาว|อัตราส่วน|คุณภาพ|หมายเหตุ|scene|action|camera|note|dialogue)\b/i;
+const INVISIBLE_RE = /[\u200B\u200C\u200D\u2060\uFEFF\u00AD]/g;
+
+/**
+ * Screenplay layout written by hand / copied from a chat:
+ *   ชัย:
+ *   (ล้วงซองจาก
+ *   กระเป๋าเสื้อ) เอ้า! นี่เบี้ยเลี้ยง…
+ * becomes `ชัย (ล้วงซองจากกระเป๋าเสื้อ): "เอ้า! นี่เบี้ยเลี้ยง…"`, and `ตง: (ยิ้ม) ขอบคุณครับ` gets its words
+ * in quotation marks. Without this every such line was read as an action: the story had no spoken
+ * lines to anchor on, so each run kept or lost different parts of it.
+ * Invisible characters (zero-width space before a name) are removed.
+ */
+export function joinSpeakerLines(lines: string[]): string[] {
+  const src = lines.map(l => l.replace(INVISIBLE_RE, '').replace(/\u00A0/g, ' '));
+  // a bracketed direction broken over several lines is one line
+  const joined: string[] = [];
+  for (let i = 0; i < src.length; i++) {
+    const t = src[i].trim();
+    if (/^[(（][^)）]*$/.test(t)) {
+      let j = i + 1;
+      while (j < src.length && j <= i + 3 && src[j].trim() && !/[)）]/.test(src[j])) j++;
+      if (j < src.length && j <= i + 3 && /[)）]/.test(src[j]) && src.slice(i + 1, j + 1).every(x => x.trim())) {
+        joined.push(src.slice(i, j + 1).map(x => x.trim()).join(''));
+        i = j;
+        continue;
+      }
+    }
+    joined.push(src[i]);
+  }
+  const speakerHead = (t: string) => {
+    const m = t.match(/^[*_\-•\s]*([^\s:："“”'()（）\[\]][^:："“”'()（）\[\]]{0,24}?)\s*(?:[(（]([^)）]{1,60})[)）])?\s*[:：]\s*$/);
+    if (!m) return null;
+    const name = m[1].replace(/[*_]+$/g, '').trim();
+    if (!name || NOT_SPEAKER_RE.test(name) || name.split(/\s+/).length > 3 || /^\d/.test(name)) return null;
+    return { name, how: (m[2] || '').trim() };
+  };
+  const quoted = (words: string) => (/^["“'‘«「]/.test(words) ? words : `"${words.replace(/^["“]|["”]$/g, '')}"`);
+  const withWords = (name: string, how: string, rest: string): string => {
+    const m = rest.match(/^[(（]([^)）]*)[)）]\s*(.*)$/);
+    const dir = [how, m ? m[1].trim() : ''].filter(Boolean).join(' ');
+    const words = (m ? m[2] : rest).trim();
+    if (!words) return '';
+    return `${name}${dir ? ` (${dir})` : ''}: ${quoted(words)}`;
+  };
+  const out: string[] = [];
+  for (let i = 0; i < joined.length; i++) {
+    const t = joined[i].trim();
+    const head = speakerHead(t);
+    if (head) {
+      // the next non-empty line holds the words (a lone direction line may come first)
+      let j = i + 1;
+      while (j < joined.length && !joined[j].trim()) j++;
+      let how = head.how;
+      if (j < joined.length && /^[(（][^)）]*[)）]$/.test(joined[j].trim())) {
+        how = [how, joined[j].trim().slice(1, -1).trim()].filter(Boolean).join(' ');
+        j++;
+        while (j < joined.length && !joined[j].trim()) j++;
+      }
+      const next = j < joined.length ? joined[j].trim() : '';
+      if (next && !speakerHead(next) && !isHeading(next) && !/^[^:："“]{1,25}[:：]/.test(next)) {
+        const line = withWords(head.name, how, next);
+        if (line) { out.push(line); i = j; continue; }
+      }
+      out.push(joined[i]);
+      continue;
+    }
+    // "ตง: (ยิ้ม) ขอบคุณครับ" / "ตง: (ยิ้ม) "ขอบคุณครับ"" — a direction after the colon
+    const inline = t.match(/^([^\s:："“”'()（）\[\]][^:："“”'()（）\[\]]{0,24}?)\s*[:：]\s*([(（][^)）]*[)）]\s*\S.*)$/);
+    if (inline && !NOT_SPEAKER_RE.test(inline[1].trim()) && inline[1].trim().split(/\s+/).length <= 3) {
+      out.push(withWords(inline[1].trim(), '', inline[2].trim()) || joined[i]);
+      continue;
+    }
+    out.push(joined[i]);
+  }
+  return out;
+}
+
 export function normalizeStoryScript(raw: string): string {
   if (!raw || typeof raw !== 'string') return raw;
-  const lines = preNormalizeLayout(raw.replace(/\r\n?/g, '\n').split('\n'));
+  const lines = preNormalizeLayout(joinSpeakerLines(raw.replace(/\r\n?/g, '\n').split('\n')));
   const out: string[] = [];
   let sceneNo = 0;
   let inChars = false;

@@ -867,6 +867,21 @@ function lockedSceneValue(value: string): string {
  * Another scene's locked time anywhere in the prompt, or another scene's place
  * on a Location line, is a conflict. Generation must stop.
  */
+/** A scene prompt without the parts that quote the story (spoken words, action, character notes, poses
+ * handed over): what is left are the prompt's own place / time / light words. */
+const STORY_TEXT_SECTIONS = new Set(['Character Lock', 'Scene Action', 'Script action', 'Core action', 'Starting moment',
+  'Ending momentum', 'Dialogue', 'Props']);
+function lockLabels(prompt: string): string {
+  return removeSections(String(prompt || ''), x => STORY_TEXT_SECTIONS.has(x.label)).prompt
+    .replace(/["“][^"”]*["”]/g, ' ')
+    .replace(/[(（][^)）]*[)）]/g, ' ');
+}
+/** A time word on its own, not inside a longer Thai word ("ตู้เย็น", "ใจเย็น" are not the evening). */
+function hasTimeWord(text: string, word: string): boolean {
+  const esc = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^\\u0E01-\\u0E4E])${esc}`).test(text);
+}
+
 export function findSceneLockConflicts(scenes: { sceneNumber: number; timeOfDay: string; location: string; prompt: string }[]): string[] {
   const conflicts: string[] = [];
   const rows = scenes.map(sc => ({
@@ -880,14 +895,17 @@ export function findSceneLockConflicts(scenes: { sceneNumber: number; timeOfDay:
     if (!scene.prompt.includes(binding)) {
       conflicts.push(`พรอมต์ฉากที่ ${scene.sceneNumber} ไม่ได้ระบุว่าผูกกับฉากนี้ เวลา ${scene.time || 'ไม่ระบุ'} สถานที่ ${scene.place || 'ไม่ระบุ'}`);
     }
-    let text = scene.prompt;
+    // Only the prompt's own place / time labels count. Story text may name other times in passing:
+    // dialogue ("เลิกงานห้าโมงเย็น ขับต่อถึงตีสอง"), a character note ("กลางคืนขับไรเดอร์"), an object
+    // ("ตู้เย็น" contains "เย็น") — none of that sets this scene's time.
+    let text = lockLabels(scene.prompt);
     if (scene.time) text = text.split(scene.time).join(' ');
     const ownLight = thaiLightingForTime(scene.time);
     if (ownLight) text = text.split(ownLight).join(' ');
     if (scene.place) text = text.split(scene.place).join(' ');
     for (const other of rows) {
       if (other.sceneNumber === scene.sceneNumber) continue;
-      if (scene.time && other.time && other.time !== scene.time && !scene.time.includes(other.time) && !other.time.includes(scene.time) && text.includes(other.time)) {
+      if (scene.time && other.time && other.time !== scene.time && !scene.time.includes(other.time) && !other.time.includes(scene.time) && hasTimeWord(text, other.time)) {
         conflicts.push(`ฉากที่ ${scene.sceneNumber} ล็อกเวลา ${scene.time} แต่พรอมต์มีเวลาของฉากที่ ${other.sceneNumber} คือ ${other.time}`);
       }
       if (scene.place && other.place && other.place !== scene.place && !scene.place.includes(other.place) && !other.place.includes(scene.place)) {

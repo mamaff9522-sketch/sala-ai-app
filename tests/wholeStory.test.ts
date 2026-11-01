@@ -445,4 +445,76 @@ await check('Meta AI video review fixes: set from picture 1, clean action, prop,
   assert.deepEqual(M.checkPromptProblems(v, 'video', ctx.camera), []);
 });
 
+
+// ---- "เนื้อเรื่องหาย": the name on its own line, words under it without quotation marks ----
+import { reconcileWithStory } from '../src/services/wholeStoryRunner';
+import { normalizeStoryScript } from '../src/services/storyNormalize';
+import { findSceneLockConflicts } from '../src/services/salaDirectorEngine';
+import { sourceDialogueLines, matchSourceLine } from '../src/services/storyProgress';
+
+const linesOf = (clips: any[]) => clips.flatMap(c => c.dialogues.map((d: any) => d.line));
+const exactlyOnce = (story: string, clips: any[]) => {
+  const src = sourceDialogueLines(normalizeStoryScript(story));
+  const idx = linesOf(clips).map(l => matchSourceLine(l, src));
+  src.forEach((l, i) => assert.equal(idx.filter(x => x === i).length, 1, `"${l.slice(0, 40)}" ${idx.filter(x => x === i).length} times`));
+  return src.length;
+};
+
+await check('"ชื่อ:" then "(ท่าทาง) คำพูด" lines (and a zero-width space, a direction over two lines) are spoken lines', () => {
+  const n = normalizeStoryScript('ฉากที่ 1 — หน้าร้าน / กลางวัน\nชัย:\n(ตะโกน) ตง! ยกทีวีไป\n​ตง:\n(ล้วงซองจาก\nกระเป๋าเสื้อ) ครับเฮีย\nตง: (ยิ้ม) ขอบคุณครับ\nตงเดินออกไป');
+  const beats = parseStoryStructure(n).narrativeBeats.map(b => (b.type === 'dialogue' ? [b.dialogue!.speaker, b.dialogue!.dialogue] : ['action', b.text]));
+  assert.deepEqual(beats, [['ชัย', 'ตง! ยกทีวีไป'], ['ตง', 'ครับเฮีย'], ['ตง', 'ขอบคุณครับ'], ['action', 'ตงเดินออกไป']]);
+});
+
+await check('the user\'s story (หน้าร้าน → บ้าน → โรงพยาบาล): every line exactly once, also when AI chunks drop and repeat lines', async () => {
+  const story = rd('tong-story.txt');
+  const r = await runWholeStory(story, { offline: true, clipSeconds: 8 }, fakeServer(false));
+  assert.equal(r.finished, true);
+  assert.equal(exactlyOnce(story, r.clips), 21);
+  // stand-in for Gemini: each chunk leaves one scene out and says another scene's line twice
+  for (let seed = 1; seed <= 5; seed++) {
+    let x = seed;
+    const rnd = () => { x = (x * 9301 + 49297) % 233280; return x / 233280; };
+    const gem = async (p: any) => {
+      const res: any = offlineContinuation({ ...p, offline: true });
+      const sc = res.scenes || [];
+      if (sc.length > 2) {
+        sc.splice(Math.floor(rnd() * sc.length), 1);
+        const j = Math.floor(rnd() * (sc.length - 1));
+        sc[j + 1] = { ...sc[j + 1], dialogues: [...(sc[j].dialogues || []), ...(sc[j + 1].dialogues || [])] };
+      }
+      return { success: true, ...res, scenes: sc };
+    };
+    const g = await runWholeStory(story, { clipSeconds: 8 }, gem);
+    exactlyOnce(story, g.clips);
+    assert.deepEqual(g.clips.map(c => c.clipNumber), g.clips.map((_, i) => i + 1));
+    assert.ok(g.notices.some(n => n.includes('กลับคืน')), 'a restored line is reported');
+  }
+});
+
+await check('reconcile: a missing line comes back after the line before it, at the same place; a repeated line goes', () => {
+  const story = 'ฉากที่ 1 — บ้าน / เย็น\nแม่: "กินข้าวหรือยังลูก"\nลูก: "ยังครับแม่"\nแม่: "งั้นมากินด้วยกัน"';
+  const clip = (n: number, speaker: string, line: string) => ({ clipNumber: n, title: '', durationSeconds: 8, generatedPrompt: 'x', dialogues: [{ speaker, line }], locationName: 'บ้าน', timeOfDay: 'เย็น' });
+  const r = reconcileWithStory([clip(1, 'แม่', 'กินข้าวหรือยังลูก'), clip(2, 'แม่', 'กินข้าวหรือยังลูก'), clip(3, 'แม่', 'งั้นมากินด้วยกัน')], normalizeStoryScript(story));
+  assert.deepEqual(linesOf(r.clips), ['กินข้าวหรือยังลูก', 'ยังครับแม่', 'งั้นมากินด้วยกัน']);
+  assert.equal(r.clips[1].locationName, 'บ้าน');
+  assert.deepEqual(r.restored, ['ยังครับแม่']);
+  assert.deepEqual(r.removed, ['กินข้าวหรือยังลูก']);
+  // a line the story itself says twice stays twice
+  const twice = 'แม่: "ลูก"\nลูก: "ครับ"\nแม่: "ลูก"';
+  const t = reconcileWithStory([clip(1, 'แม่', 'ลูก'), clip(2, 'ลูก', 'ครับ'), clip(3, 'แม่', 'ลูก')], normalizeStoryScript(twice));
+  assert.equal(t.clips.length, 3);
+});
+
+await check('scene lock: time words in what people say, in a character note or inside a word ("ตู้เย็น") are not a conflict', () => {
+  const rows = [
+    { sceneNumber: 1, timeOfDay: 'กลางวัน', location: 'หน้าร้าน', prompt: 'ผูกพรอมต์นี้กับฉากที่ 1 เวลา กลางวัน สถานที่ หน้าร้าน. Cinematic 8K masterpiece at หน้าร้าน, กลางวัน, 35mm lens, photorealistic film still. Character Lock: ตง (กลางคืนขับไรเดอร์). Scene Action: ตงยกตู้เย็น. Dialogue: ชัย speaks: "เลิกงานห้าโมงเย็น ขับต่อถึงกลางคืน".' },
+    { sceneNumber: 2, timeOfDay: 'เย็น', location: 'บ้าน', prompt: 'ผูกพรอมต์นี้กับฉากที่ 2 เวลา เย็น สถานที่ บ้าน. Cinematic 8K masterpiece at บ้าน, เย็น, 35mm lens, photorealistic film still.' },
+    { sceneNumber: 3, timeOfDay: 'กลางคืน', location: 'โรงพยาบาล', prompt: 'ผูกพรอมต์นี้กับฉากที่ 3 เวลา กลางคืน สถานที่ โรงพยาบาล. Cinematic 8K masterpiece at โรงพยาบาล, กลางคืน, 35mm lens, photorealistic film still.' }
+  ];
+  assert.deepEqual(findSceneLockConflicts(rows as any), []);
+  rows[1] = { ...rows[1], prompt: rows[1].prompt + ' Lighting Lock: กลางวัน แดดจ้า.' };
+  assert.ok(findSceneLockConflicts(rows as any).some(x => x.includes('ฉากที่ 2')));
+});
+
 console.log(`\nwhole story: ${passed} passed`);
