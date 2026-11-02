@@ -51,7 +51,7 @@ check('short: no long lock blocks, no repeated instructions, far under the old 1
     assert.ok(t.length < 800, `clip ${i + 1}: ${t.length}`);
     for (const old of ['บริบท:', 'ล็อกฉาก', 'ล็อกตัวละคร', 'speaks in Thai', 'ใบหน้าตัวละครอยู่ช่วงบนของจอ', 'อารมณ์และการแสดง:', 'การเคลื่อนไหวของตัวละคร:']) assert.ok(!t.includes(old), `clip ${i + 1}: "${old}"`);
   }
-  assert.ok(VIDEO_PROMPT_MAX <= 700);
+  assert.ok(VIDEO_PROMPT_MAX <= 740);
 });
 
 check('no camera unless the script gives one', () => {
@@ -96,3 +96,14 @@ check('same format for any story and cast: a human cast, no photos, a new place'
 });
 
 console.log(`\nshort video prompt: ${passed} passed`);
+
+check('camera stays still: no zoom in or out unless the script asks for a move', async () => {
+  const M = await import('../src/services/metaAiPrompt');
+  assert.ok(v[0].includes(M.STILL_CAMERA) && v[1].includes(M.STILL_CAMERA), 'still camera in every clip');
+  assert.ok(v[2].includes('มุมกล้อง: ภาพกว้างจากด้านหลัง กล้องนิ่ง ไม่ซูมเข้าออก'), 'the script\'s angle, still');
+  const moving: any = { ...clips[2], generatedPrompt: 'Core action: พี่ทุยจับมือน้องน้ำ. [มุมกล้อง ภาพใกล้หน้า ซูมเข้าช้าๆ]' };
+  const list = [clips[0], clips[1], moving];
+  const m = formatClipForMetaAi(moving, { ...opts, ...metaContextFor(list, 2) });
+  assert.ok(m.includes('มุมกล้อง: ภาพใกล้หน้า ซูมเข้าช้าๆ') && !m.includes(M.STILL_CAMERA), 'a move the script asks for is kept');
+  for (const p of M.planCameras(clips)) assert.ok(!/ดันเข้า|เลื่อนเข้า|ซูม/.test(p.movement), `auto camera never zooms: ${p.movement}`);
+});

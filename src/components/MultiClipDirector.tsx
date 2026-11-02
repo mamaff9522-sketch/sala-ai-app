@@ -231,7 +231,7 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
       visualStyle: 'Cinematic Photorealistic 8K',
       aspectRatio: '16:9',
       resolution: '720p',
-      cameraMovement: 'Cinematic tracking shot smoothly gliding alongside character',
+      cameraMovement: 'Static locked-off camera, no zoom in or out, no push-in or pull-out',
       cameraShotType: 'Medium Shot',
       lensType: '35mm Anamorphic Prime f/1.8',
       props: '',
@@ -458,7 +458,8 @@ export const MultiClipDirector: React.FC<MultiClipDirectorProps> = ({
       const resolvedLighting = userLock?.lighting || result.continuityLock?.lighting || result.lighting || '';
       const resolvedStyle = userLock?.visualStyle || result.continuityLock?.visualStyle || 'Cinematic Photorealistic 8K';
       const resolvedProps = userLock?.props || result.continuityLock?.props || '';
-      const resolvedCameraMovement = userLock?.cameraMovement || result.continuityLock?.cameraMovement || result.camera?.movement || 'Cinematic tracking shot smoothly gliding alongside character';
+      // the camera stays still unless the user sets a move (an AI-suggested push-in / tracking made it zoom by itself)
+      const resolvedCameraMovement = userLock?.cameraMovement || 'Static locked-off camera, no zoom in or out, no push-in or pull-out';
       const resolvedCameraShotType = userLock?.cameraShotType || (result.continuityLock?.cameraShotType as any) || result.camera?.shotType || 'Medium Shot';
       const resolvedLensType = userLock?.lensType || result.continuityLock?.lensType || result.camera?.lensType || '35mm Anamorphic Prime f/1.8';
       const lockedNames = expandCombinedCharacterNames([...(userLock?.characterNames || []), ...(mainCharParts.length > 1 ? mainCharParts : [])].filter(Boolean));

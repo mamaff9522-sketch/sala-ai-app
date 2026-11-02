@@ -2283,7 +2283,7 @@ CRITICAL CONTINUITY DIRECTIVES (MASTER CONTINUITY LOCK):
 - Time & Lighting Lock: ${continuityLock.timeOfDay || ''}, Lighting: ${continuityLock.lighting || ''}
 - Visual Style Lock: ${continuityLock.visualStyle || 'Photorealistic 8K, 35mm film'}
 - Aspect Ratio: ${continuityLock.aspectRatio || '16:9'}
-- Camera & Lens: Movement: ${continuityLock.cameraMovement || 'Cinematic tracking'}, Lens: ${continuityLock.lensType || '35mm anamorphic'}
+- Camera & Lens: Movement: ${continuityLock.cameraMovement || 'Static locked-off camera, no zoom in or out, no push-in or pull-out'}, Lens: ${continuityLock.lensType || '35mm anamorphic'}
 - Props Lock: ${continuityLock.props || ''}
 - Spatial Anchor: ${continuityLock.characterPosition || ''}
 - Action Momentum Continuity: The starting action of Clip N MUST seamlessly and directly continue from the ending frame and momentum of Clip N-1.
@@ -2555,7 +2555,7 @@ app.post('/api/director/regenerate-single-clip', requireAuth, async (req: any, r
     const lighting = continuityLock.lighting || '';
     const visualStyle = continuityLock.visualStyle || 'Cinematic 8K, 35mm lens';
     const aspectRatio = continuityLock.aspectRatio || '16:9';
-    const cameraMovement = continuityLock.cameraMovement || 'Smooth cinematic tracking shot';
+    const cameraMovement = continuityLock.cameraMovement || 'Static locked-off camera, no zoom in or out, no push-in or pull-out';
     const lensType = continuityLock.lensType || '35mm anamorphic prime';
     const props = continuityLock.props || '';
 
@@ -2861,7 +2861,7 @@ ${lockedContext}
   ],
   "lighting": "รายละเอียดแสงหลักที่คุมโทนทั้งเรื่อง",
   "camera": {
-    "movement": "การเคลื่อนไหวกล้องหลัก เช่น Cinematic tracking shot",
+    "movement": "การเคลื่อนไหวกล้องหลัก: ใช้ Static locked-off camera (กล้องนิ่ง ไม่ซูมเข้าออก) เว้นแต่บทระบุการเคลื่อนกล้องเอง",
     "lensType": "35mm Anamorphic Prime f/1.8",
     "shotType": "Medium Shot"
   },
@@ -2872,7 +2872,7 @@ ${lockedContext}
     "timeOfDay": "ช่วงเวลาหลัก",
     "lighting": "แสงหลัก",
     "visualStyle": "Cinematic Photorealistic 8K",
-    "cameraMovement": "Cinematic tracking shot smoothly gliding alongside character",
+    "cameraMovement": "Static locked-off camera, no zoom in or out, no push-in or pull-out",
     "cameraShotType": "Medium Shot",
     "lensType": "35mm Anamorphic Prime f/1.8",
     "props": "อุปกรณ์สำคัญที่ตัวละครถือหรือปรากฏในฉาก"

@@ -2082,7 +2082,7 @@ export function buildSalaMultiClipPrompts(params: BuildPromptsOptions): Directed
   const timeOfDay = cleanFieldValue(continuityLock.timeOfDay);
   const lighting = cleanFieldValue(continuityLock.lighting);
   const visualStyle = cleanFieldValue(continuityLock.visualStyle) || 'Cinematic 8K, 35mm film, photorealistic';
-  const cameraMovement = cleanFieldValue(continuityLock.cameraMovement) || 'Smooth cinematic tracking';
+  const cameraMovement = cleanFieldValue(continuityLock.cameraMovement) || 'Static locked-off camera, no zoom in or out, no push-in or pull-out';
   const lensType = cleanFieldValue(continuityLock.lensType) || '35mm anamorphic prime lens';
   const props = cleanFieldValue(continuityLock.props);
   const position = cleanFieldValue(continuityLock.characterPosition) || 'center frame';

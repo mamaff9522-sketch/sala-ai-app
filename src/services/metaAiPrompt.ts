@@ -268,14 +268,14 @@ export function planCameras(clips: ClipForMeta[]): CameraShot[] {
         ? shot('wide', `ภาพกว้าง เห็นทั้ง${place || 'สถานที่'}และทุกคนในฉาก${sidesText(names)}`, WIDE_GROUP_MOVE)
         : names.length === 0
           // nobody in the shot: an establishing view of the place itself
-          ? shot('wide', `ภาพกว้าง เห็นทั้ง${place || 'สถานที่'}`, 'กล้องค่อยๆ เลื่อนเข้าช้าๆ')
-          : shot('medium', `ภาพครึ่งตัว ${subject} เห็นพื้นหลังของ${place || 'สถานที่'}`, 'กล้องค่อยๆ เลื่อนเข้าช้าๆ');
+          ? shot('wide', `ภาพกว้าง เห็นทั้ง${place || 'สถานที่'}`, 'กล้องนิ่ง')
+          : shot('medium', `ภาพครึ่งตัว ${subject} เห็นพื้นหลังของ${place || 'สถานที่'}`, 'กล้องนิ่ง');
     } else if (lines.length === 0) {
       const prop = action.match(PROP_RE)?.[1];
       if (prop && prev?.kind !== 'insert') {
         cam = shot('insert', `ภาพใกล้${prop}${subject ? `ในมือ${subject}` : ''} แล้วเห็นสีหน้า${subject || 'ตัวละคร'}`, 'กล้องนิ่ง');
       } else if (prev?.kind !== 'close' && subject && !moving) {
-        cam = shot('close', `ภาพใกล้หน้า ${subject} เห็นอารมณ์ชัด`, 'กล้องค่อยๆ ดันเข้าช้าๆ');
+        cam = shot('close', `ภาพใกล้หน้า ${subject} เห็นอารมณ์ชัด`, 'กล้องนิ่ง');
       } else {
         cam = shot('medium', `ภาพครึ่งตัว ${subject || names[0] || ''}`.trim(), moving ? 'กล้องเลื่อนตามช้าๆ' : 'กล้องนิ่ง');
       }
@@ -285,12 +285,12 @@ export function planCameras(clips: ClipForMeta[]): CameraShot[] {
       const options: CameraShot[] = listener
         ? [
             shot('ots', `ภาพใกล้ระดับไหล่ ถ่ายข้ามไหล่${listener}ไปที่${speaker}${sidesText([listener, speaker])}`, 'กล้องนิ่ง'),
-            shot('close', `ภาพใกล้หน้า ${speaker} ขณะพูด`, emotional ? 'กล้องค่อยๆ ดันเข้าช้าๆ' : 'กล้องนิ่ง'),
+            shot('close', `ภาพใกล้หน้า ${speaker} ขณะพูด`, 'กล้องนิ่ง'),
             shot('two', `ภาพสองคน ${speaker} และ ${listener} อยู่ในเฟรม${sidesText([speaker, listener])}`, 'กล้องนิ่ง')
           ]
         : [
             shot('medium', `ภาพครึ่งตัว ${speaker}`, 'กล้องนิ่ง'),
-            shot('close', `ภาพใกล้หน้า ${speaker} ขณะพูด`, emotional ? 'กล้องค่อยๆ ดันเข้าช้าๆ' : 'กล้องนิ่ง')
+            shot('close', `ภาพใกล้หน้า ${speaker} ขณะพูด`, 'กล้องนิ่ง')
           ];
       if (emotional && listener) options.unshift(options.splice(1, 1)[0]);
       // two (or more) people talking in one clip: frame them together
@@ -775,6 +775,11 @@ function endingText(poses: PoseForMeta[] | undefined, fallback: string): string 
   return text || (/เพิ่งพูดจบ|หยุดพูด/.test(fallback) ? '' : fallback);
 }
 
+/** The video camera when the script asks for no move: no zoom, no push-in / pull-out, no pan */
+export const STILL_CAMERA = 'กล้องนิ่ง ไม่ซูมเข้าออก ไม่เลื่อนกล้อง';
+/** The script itself asks the camera to move ("ซูมเข้า", "แพนตาม", "ดันกล้องเข้า") */
+const SCRIPT_MOVE_RE = /ดัน|ถอย|เลื่อน|แพน|ตาม|ซูม|push|pull|pan|dolly|zoom|track/i;
+
 const sentence = (t: string) => String(t || '').replace(/\s+/g, ' ').replace(/[.;\s]+$/, '').trim();
 
 function videoPromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): VideoPart[] {
@@ -848,7 +853,11 @@ function videoPromptParts(clip: ClipForMeta, opts: MetaAiFormatOptions): VideoPa
     f.lighting,
     'ฉากและแสงคงเดิม'
   ].filter(Boolean).join(' '));
-  if (cam?.kind === 'script' && cam.scriptText) add('camera', `มุมกล้อง: ${cam.scriptText}${cam.movement ? ` ${cam.movement}` : ''}`);
+  // camera: still, no zooming in or out on its own (user rule); only a move the script itself asks for
+  if (cam?.kind === 'script' && cam.scriptText) {
+    const scriptMoves = SCRIPT_MOVE_RE.test(cam.scriptText);
+    add('camera', `มุมกล้อง: ${cam.scriptText}${scriptMoves ? '' : ` ${STILL_CAMERA}`}`);
+  } else add('camera', STILL_CAMERA);
   // 6. picture quality, format and sound
   add('quality', qualityLine(opts.aspectRatio, clip.durationSeconds, f.lines.length > 0));
   return parts;
@@ -1247,11 +1256,12 @@ export function formatPlaceVideoBatch(clips: ClipForMeta[], indexes: number[], o
   const master = first0Master(clips, indexes);
   const light = items[0].f.lighting;
   shared.push([master ? `ฉากตาม${master}` : '', light, 'ฉากและแสงคงเดิมทุกคลิป'].filter(Boolean).join(' '));
+  shared.push(`${STILL_CAMERA} ยกเว้นคลิปที่ระบุมุมกล้องเอง`);
   shared.push(qualityLine(opts.aspectRatio, lengths.length === 1 ? lengths[0] || undefined : undefined, true)
     .replace(VIDEO_SOUND_DIALOGUE, 'มีแค่เสียงพูดตามบทของแต่ละคลิป คลิปที่ไม่มีบทพูดให้เงียบ ไม่มีดนตรีหรือเสียงประกอบ'));
   const OWN: VideoPart['key'][] = ['start', 'action', 'lock', 'emotion', 'ending', 'safety', 'camera'];
   const shots = items.map(({ i, parts }, k) => {
-    const own = parts.filter(p => OWN.includes(p.key)).map(p => p.text)
+    const own = parts.filter(p => OWN.includes(p.key) && p.text !== STILL_CAMERA).map(p => p.text)
       // the look lock is in the shared part; keep only the dialogue lock here
       .map(t => t.replace(/\s*หน้าตาและชุดคงเดิม\S*(?: ไม่กลายเป็นมนุษย์)? ไม่มีตัวละครซ้ำ/, '').trim())
       .filter(Boolean);
@@ -1270,7 +1280,7 @@ export function formatPlaceVideoBatch(clips: ClipForMeta[], indexes: number[], o
 }
 
 /** Longest a video prompt may be, without its dialogue and look notes (old format: 1300-2300; the user example ~250). */
-export const VIDEO_PROMPT_MAX = 700;
+export const VIDEO_PROMPT_MAX = 740;
 
 /** Camera / shot-size terms allowed in English (no Thai word says it as precisely). */
 const TECH_WORDS = new Set(['close-up', 'medium', 'close', 'shot', 'long', 'full', 'wide', 'extreme', 'front', 'view', 'three-quarter',
@@ -1319,6 +1329,7 @@ export function checkPromptProblems(text: string, kind: 'image' | 'video', cam?:
     if (speaks && t.includes(VIDEO_SOUND_SILENT)) out.push('มีบทพูดแต่สั่งให้เงียบ');
     if (!/cinematic photorealistic/.test(t)) out.push('ไม่มี คุณภาพภาพ');
     if (!/เสียง|เงียบ/.test(t)) out.push('ไม่มี เสียง');
+    if (!/กล้องนิ่ง ไม่ซูมเข้าออก|มุมกล้อง:/.test(t)) out.push('ไม่ได้ล็อกกล้องให้นิ่ง');
     if (/ล็อกฉาก|ล็อกตัวละคร|ใบหน้าตัวละครอยู่ช่วงบนของจอ|speaks in Thai|อารมณ์และการแสดง:/.test(t)) out.push('ยังเป็นรูปแบบพรอมต์ยาวแบบเก่า');
     // long prompts are followed less well: dialogue and look notes do not count
     const own = t.replace(/"[^"]*"/g, '').replace(/\([^()]*(?:\([^()]*\)[^()]*)*\)/g, '');
@@ -1330,7 +1341,8 @@ export function checkPromptProblems(text: string, kind: 'image' | 'video', cam?:
     const max = VIDEO_PROMPT_MAX + 120 * Math.max(0, lineCount - 1) + 80 * Math.max(0, people - 2);
     if (own.length > max) out.push(`พรอมต์ยาวเกิน (${own.length} ตัวอักษร)`);
     if (cam) {
-      if (cam.kind !== 'script' && /มุมกล้อง/.test(t)) out.push('ใส่มุมกล้องที่บทไม่ได้กำหนด');
+      if (cam.kind !== 'script' && /มุมกล้อง:/.test(t)) out.push('ใส่มุมกล้องที่บทไม่ได้กำหนด');
+      if (/ซูมเข้า(?!ออก)|ดันกล้องเข้า|ดันเข้าช้า/.test(t.replace(/"[^"]*"/g, '')) && !(cam.kind === 'script' && SCRIPT_MOVE_RE.test(cam.scriptText || ''))) out.push('กล้องซูมเองโดยบทไม่ได้สั่ง');
       if (cam.kind === 'script' && cam.scriptText && !t.includes('มุมกล้อง')) out.push('ไม่มี มุมกล้องตามบท');
     }
   }
