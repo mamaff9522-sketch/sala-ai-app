@@ -11,7 +11,7 @@ function general(shots: ReturnType<typeof chineseDramaShots>, photoOk: (shot: nu
   for (const s of shots) for (const a of s.angles) {
     assert.ok(a.prompt.startsWith(CHINESE_DRAMA_OPENING));
     const speaks = a.prompt.includes('speaks Thai exactly');
-    assert.ok(a.prompt.endsWith(speaks ? AUDIO_SPEECH : AUDIO_SILENT), a.prompt);
+    assert.ok(a.prompt.replace(/(sound effects\.|ambient sound\.) No [^.]+\.$/, "$1").endsWith(speaks ? AUDIO_SPEECH : AUDIO_SILENT), a.prompt);
     assert.equal(cams(a.prompt), 1, a.prompt);
     if (speaks) assert.ok(/static camera/.test(a.prompt)); else if (/Reaction|Point-of-view/.test(a.prompt)) assert.ok(/slow push-in/.test(a.prompt));
     assert.ok(!thaiOutsideQuotes(a.prompt), a.prompt);
@@ -82,7 +82,7 @@ check('shot with no characters: one establishing angle, no character lock, silen
   const clips: any[] = [{ clipNumber: 9, ...at('ทุ่งนา'), charactersPresent: [], generatedPrompt: act('พระอาทิตย์ตกหลังทุ่งนา', 'The sun sets behind the rice field'), dialogues: [] }];
   const [s] = chineseDramaShots(clips, { knownCharacters: ['ต้น'], withPhoto: ['ต้น'] } as any, TR);
   assert.equal(s.angles.length, 1);
-  assert.ok(s.angles[0].prompt.includes('Wide establishing shot') && !s.angles[0].prompt.includes('Character lock') && s.angles[0].prompt.endsWith(AUDIO_SILENT));
+  assert.ok(s.angles[0].prompt.includes('Wide establishing shot') && !s.angles[0].prompt.includes('Character lock') && s.angles[0].prompt.includes(AUDIO_SILENT));
   general([s]);
 });
 check('character with no photo: no photo number, romanized name, still locked by look', () => {

@@ -33,7 +33,7 @@ check('every prompt: opening, style suffix (no camera), English outside the quot
     assert.ok(a.prompt.startsWith(CHINESE_DRAMA_OPENING));
     assert.ok(a.prompt.includes(CHINESE_DRAMA_STYLE));
     const speaks = a.prompt.includes('speaks Thai exactly');
-    assert.ok(a.prompt.endsWith(speaks ? AUDIO_SPEECH : AUDIO_SILENT), a.prompt);
+    assert.ok(a.prompt.replace(/(sound effects\.|ambient sound\.) No [^.]+\.$/, "$1").endsWith(speaks ? AUDIO_SPEECH : AUDIO_SILENT), a.prompt);
     assert.ok(!(speaks && a.prompt.includes(AUDIO_SILENT)) && !(!speaks && a.prompt.includes(AUDIO_SPEECH)));
     assert.ok(!/Static camera on dialogue|push-in on emotional/i.test(CHINESE_DRAMA_STYLE));
     assert.ok(!thaiOutsideQuotes(a.prompt), a.prompt);
@@ -61,7 +61,7 @@ check('listener from the previous shot; on-screen face lock only; no line in lis
     assert.ok(!s.angles[1].prompt.includes('speaks Thai'));
     assert.ok(s.angles[0].prompt.includes('speaks Thai exactly: "'));
   }
-  assert.ok(shots[0].angles[0].prompt.includes('navy t-shirt') && shots[0].angles[0].prompt.endsWith(AUDIO_SILENT));
+  assert.ok(shots[0].angles[0].prompt.includes('navy t-shirt') && shots[0].angles[0].prompt.includes(AUDIO_SILENT));
 });
 check('Thai editing notes: L-cut, J-cut, cut length 1.5–3 s', () => {
   assert.ok(shots[2].notes.some(n => n.startsWith('L-cut')));

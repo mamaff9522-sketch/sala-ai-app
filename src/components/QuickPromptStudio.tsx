@@ -5,6 +5,7 @@ import { api } from '../services/api';
 import { runWholeStory, type StoryClip } from '../services/wholeStoryRunner';
 import { metaOptionsForStory, offlineContinuation } from '../services/storyProgress';
 import { isClipByClipScript } from '../services/storyNormalize';
+import { isShotScript, parseShotScript } from '../services/shotScript';
 import { packMultiDialogueClips, MULTI_DIALOGUE_SECONDS } from '../services/multiDialogueClips';
 import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, formatPlaceVideoBatch, VIDEO_BATCH_SIZE, attachmentLine, sensitiveWords, formatLocationMasterPrompt, thaiLighting, locationNote, locationNoteFor, metaContextFor, characterNote, charactersInClip, photoNumbers, formatDramaShotText, formatAllChineseDrama, chineseDramaShots, dramaTranslatables } from '../services/metaAiPrompt';
 import { toCharacterLockPayload } from '../services/characterAppearance';
@@ -99,7 +100,18 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
         if (key && note) locationNotes[key] = note;
       }
     }
-    return { ...metaOptionsForStory(resultStory, lib, characterNote), aspectRatio: aspect, locationNotes };
+    const base = metaOptionsForStory(resultStory, lib, characterNote);
+    // shot-by-shot script: its own cast (groups split into members), looks and place description
+    const shot = parseShotScript(resultStory);
+    if (shot) {
+      const known = Array.from(new Set([...shot.knownCharacters, ...base.knownCharacters.filter(n => shot.knownCharacters.includes(n) || lib.some((c: any) => c.name === n))]));
+      return {
+        ...base, knownCharacters: known,
+        characterNotes: { ...shot.characterNotes, ...base.characterNotes },
+        aspectRatio: aspect, locationNotes: { ...shot.locationNotes, ...locationNotes }, shotTranslations: shot.translations
+      };
+    }
+    return { ...base, aspectRatio: aspect, locationNotes, shotTranslations: {} as Record<string, string> };
   }, [characters, locations, resultStory, aspect, brokenPhotos]);
   const prompts = useMemo(
     () => clips.map((c, i) => formatClipForMetaAi(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) })),
@@ -109,7 +121,7 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
   // text: Thai names / actions / places translated by the server AI (cached on the device).
   const [dramaTr, setDramaTr] = useState<Record<string, string>>(() => loadJson<Record<string, string>>('sala_drama_tr_en', {}));
   const [dramaTrState, setDramaTrState] = useState<'' | 'busy' | 'failed'>('');
-  const dramaNeed = useMemo(() => running ? [] : dramaTranslatables(clips as any, metaOpts).filter(t => !dramaTr[t]), [clips, metaOpts, dramaTr, running]);
+  const dramaNeed = useMemo(() => running ? [] : dramaTranslatables(clips as any, metaOpts).filter(t => !dramaTr[t] && !metaOpts.shotTranslations[t]), [clips, metaOpts, dramaTr, running]);
   useEffect(() => {
     if (!dramaNeed.length || dramaTrState === 'busy') return;
     let cancelled = false;
@@ -127,7 +139,7 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
       .catch(() => { if (!cancelled) setDramaTrState('failed'); });
     return () => { cancelled = true; };
   }, [dramaNeed.join('|')]);
-  const dramaShots = useMemo(() => chineseDramaShots(clips as any, metaOpts, dramaTr), [clips, metaOpts, dramaTr]);
+  const dramaShots = useMemo(() => chineseDramaShots(clips as any, metaOpts, { ...metaOpts.shotTranslations, ...dramaTr }), [clips, metaOpts, dramaTr]);
   const dramaTexts = useMemo(() => dramaShots.map((s, i) => formatDramaShotText(s, String(clips[i]?.title || ''))), [dramaShots, clips]);
 
   // Box 1 of every card: a still image that matches the clip (made first, then animated)
@@ -193,6 +205,18 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
     const lib = (characters || []).filter(c => c?.name && text.includes(c.name)).map(c => toCharacterLockPayload(c));
     // Already split clip by clip by the writer: use the clips exactly as written, on this phone,
     // free (Gemini would only rewrite them, at the cost of one call per 6 clips)
+    // "ช็อต 11 / คลิป 3 / ฉาก 2" scripts: one script shot = one clip, numbers kept, header = locks (on this phone, free)
+    const shot = parseShotScript(text);
+    if (shot && shot.clips.length) {
+      const sc = shot.clips as unknown as StoryClip[];
+      setClips(sc);
+      const notices = [`บทแบ่งช็อตมาแล้ว: ใช้ ${sc.length} ช็อตตามบท (ช็อต ${sc[0].clipNumber}–${sc[sc.length - 1].clipNumber}) ล็อกสถานที่ ตัวละคร และความต่อเนื่องจากหัวบททุกช็อต`];
+      setNotices(notices);
+      saveJson(RESULT_KEY, { story: text, clips: sc, notices, aspect, seconds: shot.seconds || seconds });
+      setRunning(false);
+      setProgress('');
+      return;
+    }
     const exact = isClipByClipScript(text);
     const runLocal = async (payload: any) => {
       await new Promise(r => setTimeout(r, 0)); // let the progress line update
@@ -333,7 +357,7 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
               </div>
             )}
             {!running && (
-              <button type="button" onClick={() => copy(formatAllChineseDrama(clips as any, metaOpts, dramaTr), 'dramaAll')}
+              <button type="button" onClick={() => copy(formatAllChineseDrama(clips as any, metaOpts, { ...metaOpts.shotTranslations, ...dramaTr }), 'dramaAll')}
                 className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-500/60 bg-rose-600/20 px-3 py-2 text-[13px] font-semibold text-rose-200">
                 {copied === 'dramaAll' ? <><Check className="w-4 h-4" /> คัดลอกแล้ว</> : <><Copy className="w-4 h-4" /> คัดลอกแบบหนังจีนทั้งหมด (หลายมุม + วิธีตัดต่อ)</>}
               </button>
