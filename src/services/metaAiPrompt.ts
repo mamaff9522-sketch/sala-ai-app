@@ -1414,10 +1414,10 @@ export function formatAllClipsForMetaAi(clips: ClipForMeta[], opts: MetaAiFormat
 // offline glossary for time and light. Only the faces on screen in an angle are locked.
 // ---------------------------------------------------------------------------------------------
 
-export const CHINESE_DRAMA_OPENING = 'Generate a 5-second 9:16 vertical photorealistic video.';
-export const CHINESE_DRAMA_STYLE = 'Chinese drama look, warm-teal grade.';
-export const AUDIO_SPEECH = 'Audio: dialogue only, no music or effects.';
-export const AUDIO_SILENT = 'Audio: silent, no voice, music or effects.';
+export const CHINESE_DRAMA_OPENING = 'Generate a 5-second 9:16 photorealistic video.';
+export const CHINESE_DRAMA_STYLE = 'Chinese drama style, warm-teal grade.';
+export const AUDIO_SPEECH = 'Audio: only the spoken Thai line. No music, no footsteps, no weapon sounds, no ambience, no breathing.';
+export const AUDIO_SILENT = 'Audio: complete silence, no ambience, no breathing.';
 export const NO_ONE_SPEAKS = 'No one speaks.';
 
 export const CONFLICT_RE = /ต่อสู้|สู้กัน|ทะเลาะ|ปะทะ|ชก|ต่อย|ตบ|เตะ|ฟัน|แทง|ยิง|ดวล|เถียง|ด่า|ตวาด|ล้อม|ขู่|ชี้ดาบ|มัด|ค้น|ตกใจ|จ่อปืน|ดาบ|ไคลแม็กซ์|ไคลแมกซ์|climax|fight|argue|argument|conflict|duel|surround|threaten/i;
@@ -1691,46 +1691,55 @@ export function formatChineseDramaShot(
   const master = place.location ? masterName(place.location) : '';
   const details = locationNoteFor(place.location, opts.locationNotes);
   /** Short look: "Thai man age 28, navy t-shirt, dark jeans" (max ~8 words, no "outfit :" labels). */
-  const shortLook = (n: string) => {
-    const t = tr(noteOf(n) || '').replace(/\b(?:look|outfit|costume|appearance)\s*:\s*/gi, '').replace(/\s*,\s*,/g, ',').replace(/\s+/g, ' ').replace(/^[,\s]+|[,.\s]+$/g, '');
-    if (!t || hasThai(t)) return '';
-    const base = nm(n).replace(/^the (?:first|second|third|fourth|fifth|sixth) /, '').replace(/^the /, '');
-    const t2 = t.split(/,\s*/).filter(x => x && x.toLowerCase() !== base.toLowerCase() && !/^(?:black|white|red|blue|green)$/i.test(x)).join(', ');
-    let out = '';
-    for (const part of t2.split(/,\s*/)) { const cand = out ? `${out}, ${part}` : part; if (cand.split(' ').length > (withPhoto.has(n) ? 7 : 5)) break; out = cand; }
-    if (out) return out;
-    return t.split(' ').slice(0, 6).join(' ').replace(/,$/, '');
+  /** ONE fixed look sentence per character, reused verbatim in every angle they (or their hands) appear in. */
+  const ORDN: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6 };
+  const aliasOf = (n: string) => { const m = nm(n).match(/^the (first|second|third|fourth|fifth|sixth) (?:[A-Z][\w-]* )?([a-z]+)$/); return m ? `${m[2]} ${ORDN[m[1]]}` : ''; };
+  const lookOf = (n: string) => {
+    const role = (aliasOf(n).split(' ')[0] || nm(n).replace(/^the /, '').split(' ').pop() || '').replace(/s$/, '').toLowerCase();
+    const parts = tr(noteOf(n) || '').replace(/\b(?:look|outfit|costume|appearance)\s*:\s*/gi, ', ').split(/\s*,\s*/).map(x => x.trim().replace(/\band an? /g, 'and ')).filter(x => x && !hasThai(x) && !(role.length > 3 && x.toLowerCase().includes(role)));
+    return Array.from(new Set(parts)).join(', ');
   };
-  /** One face-ref sentence per visible person (photo numbers per angle; photo 1 = location). Group members share one sentence. */
   const angleRefs = (onScreen: string[]) => {
     const attachments: { n: number; label: string }[] = [];
     if (master) attachments.push({ n: 1, label: `ภาพมาสเตอร์ ${master}` });
     const parts: string[] = [];
-    const groups = new Map<string, string[]>();
+    const plain: { who: string; look: string }[] = [];
     for (const n of onScreen) {
-      const en = nm(n);
-      const m = en.match(/^the (first|second|third|fourth|fifth|sixth) (.+)$/);
+      const look = lookOf(n);
       if (withPhoto.has(n)) {
         attachments.push({ n: attachments.length + 1, label: n });
-        const look = shortLook(n);
-        parts.push(`Photo ${attachments.length} is ${en}${look ? ` (${look})` : ''}.`);
-      } else if (m) { const g = groups.get(m[2]) || []; g.push(n); groups.set(m[2], g); }
-      else { const look = shortLook(n); parts.push(`${cap(en)}${look ? `: ${look}` : ''}.`); }
+        parts.push(`Photo ${attachments.length} is ${nm(n)}${look ? `: ${look}` : ''}.`);
+      } else {
+        const who = aliasOf(n) || nm(n);
+        const same = plain.find(p => p.look && p.look === look);
+        if (same) same.who = `${same.who} and ${who}`; else plain.push({ who, look });
+      }
     }
-    const NUMW = ['', 'one', 'two', 'three', 'four', 'five', 'six'];
-    for (const [base, mem] of groups) {
-      const full = (n: string) => tr(noteOf(n) || '').replace(/\b(?:look|outfit|costume|appearance)\s*:\s*/gi, '').split(/,\s*/).map(x => x.trim().replace(/^holds (?:a |an )?/, '')).filter(x => x && !hasThai(x) && x.toLowerCase() !== base.toLowerCase());
-      const all = mem.map(full);
-      const shared = all[0]?.filter(x => all.every(a => a.includes(x))) || [];
-      const own = all.map(a => a.find(x => !shared.includes(x)) || '');
-      parts.push(mem.length === 1
-        ? `${cap(nm(mem[0]))}${shortLook(mem[0]) ? `: ${shortLook(mem[0])}` : ''}.`
-        : `${cap(NUMW[mem.length] || String(mem.length))} ${base}s${shared.length ? ` in ${shared[0]}` : ''}${own.some(Boolean) ? ` (${own.map(x => x || '-').join(' / ')})` : ''}.`);
-    }
+    for (const p of plain) parts.push(`${cap(p.who)}${p.look ? `: ${p.look}` : ''}.`);
     return { attachments, refs: parts.join(' ') };
   };
+  // vivid setting from the script header: "in a misty border forest at dawn, dirt path with cart-wheel tracks, sunlight through the leaves"
   const placeShort = (tr(place.location) || '').split(/ (?:of|in|at|near) /)[0].replace(/^the /i, '');
-  const whereWhen = `${placeShort ? ` in the ${placeShort}` : ''}${place.timeOfDay ? `, ${tr(place.timeOfDay, 'time')}` : ''}`;
+  const setting = (() => {
+    if (!placeShort && !place.timeOfDay) return null;
+    const TIME: Record<string, string> = { 'early morning': 'dawn', 'late night': 'night', 'in the evening': 'dusk', 'evening': 'dusk', 'daytime': 'midday', 'morning': 'morning', 'night': 'night', 'noon': 'noon', 'afternoon': 'afternoon' };
+    const tEn = place.timeOfDay ? tr(place.timeOfDay, 'time').toLowerCase().replace(/[.\s]+$/, '') : '';
+    const t = TIME[tEn] || tEn;
+    let det = (details ? tr(details) : '').split(/\s*,\s*/).map(x => x.trim().toLowerCase()).filter(x => x && !hasThai(x));
+    const ADJ: [RegExp, string][] = [[/mist|fog/, 'misty'], [/rain/, 'rain-soaked'], [/snow/, 'snowy'], [/dust/, 'dusty'], [/smoke/, 'smoky']];
+    const adj = ADJ.filter(([re]) => det.some(d => re.test(d))).map(x => x[1])[0] || '';
+    if (adj) det = det.filter(d => !ADJ.find(x => x[1] === adj)![0].test(d));
+    det = det.filter(d => !/^(?:big|tall|large) trees$/.test(d) || det.length < 3);
+    const pi = det.findIndex(d => /path|road|trail/.test(d)); const ti = det.findIndex(d => /tracks|footprints|ruts/.test(d));
+    if (pi >= 0 && ti >= 0) { det[pi] = `${det[pi]} with ${det[ti]}`; det.splice(ti, 1); }
+    const noun = `${adj ? `${adj} ` : ''}${placeShort || 'place'}`;
+    const full = `in ${/^[aeiou]/.test(noun) ? 'an' : 'a'} ${noun}${t ? ` at ${t}` : ''}${det.length ? `, ${det[0]}` : ''}`;
+    // the action already names the place ("through the forest"): only time + mood + detail
+    const short = `${t ? `at ${t}` : ''}${adj ? `${t ? ', ' : ''}${adj} air` : ''}${det.length ? `, ${det[0]}` : ''}`.replace(/^, /, '');
+    return { full, short, key: (placeShort.split(' ').pop() || '').toLowerCase() };
+  })();
+  const settingFor = (head: string) => !setting ? '' : setting.key && new RegExp(`\\b${setting.key}\\b`, 'i').test(head) ? setting.short : setting.full;
+  const ownerName = (clip.worldLock?.match(/except ([^.]+?)'s phone/)?.[1] || '').trim();
   const angles: DramaAngle[] = [];
   const notes: string[] = [];
   const push = (label: string, seconds: number, camera: string, act: string, audio: string, onScreen: string[]) => {
@@ -1738,28 +1747,33 @@ export function formatChineseDramaShot(
     const { attachments, refs } = angleRefs(vis);
     const speaks = /speaks Thai exactly/.test(audio);
     const header = opening.replace(/\.$/, master ? '; photo 1 is the location.' : '.');
-    const ww = whereWhen.trim().replace(/^in /, '').replace(/, /, ' at ');
-    const a2 = act.replace(/[.\s]+$/, '');
-    const doing = a2 ? `${ww ? `In ${ww}, ` : ''}${ww ? a2.replace(/^(The|A|An) /, m => m.toLowerCase()) : cap(a2)}.` : (ww ? `In ${ww}.` : '');
-    const exceptW = clip.worldLock?.match(/except ([^.]+)\./)?.[1] || '';
-    const phone = clip.propsLock ? `Same phone${/\d+%/.test(clip.propsLock) ? ` (${clip.propsLock.match(/\d+%/)![0]} battery)` : ''}; nothing else modern.` : '';
-    const world = !phone && clip.worldLock ? `No modern objects${exceptW ? ` except ${exceptW}` : ''}.` : '';
-    const same = '';
-    const noSound = cue ? ` No ${cue.sound}.` : '';
-    let prompt = [header, refs, doing, camera, audio, phone, world, same, CHINESE_DRAMA_STYLE, (speaks ? AUDIO_SPEECH : AUDIO_SILENT) + noSound].filter(Boolean).join(' ').replace(/\s+/g, ' ');
-    // numbered group members: full name once in the face ref, then "soldier 1" (keeps the angle short)
-    if (!speaks) prompt = prompt.replace(` ${NO_ONE_SPEAKS}`, '');
-    // a group named once in full ("Three Suriyanakhon soldiers ...") -> later "the three soldiers", "soldier 1"
-    for (const m of [...refs.matchAll(/\b(?:Two|Three|Four|Five|Six|\d+) ([A-Z][\w-]*) ([a-z]+s)\b/g)]) {
-      const i = prompt.indexOf(m[0]) + m[0].length;
-      prompt = prompt.slice(0, i) + prompt.slice(i).split(`${m[1]} ${m[2]}`).join(m[2]).split(`${m[1]} ${m[2].replace(/s$/, '')}`).join(m[2].replace(/s$/, ''));
-    }
-    const ORD: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6 };
-    prompt = prompt.replace(/\b([Tt])he (first|second|third|fourth|fifth|sixth) (?:[A-Z][\w-]* )?([a-z]+)\b/g, (m, t, o, role, off, all) => {
-      const first = all.search(new RegExp(`\\b[Tt]he ${o} (?:[A-Z][\\w-]* )?${role}\\b`)) === off;
-      const adj = m.match(/ ([A-Z][\w-]*) [a-z]+$/)?.[1];
-      return first && adj ? `${t === 'T' ? cap(role) : role} ${ORD[o]} (${adj})` : `${t === 'T' ? cap(role) : role} ${ORD[o]}`;
-    });
+    let a2 = act.replace(/[.\s]+$/, '');
+    // who + concrete action + where, one sentence (a "; X is not in the frame" note stays at the end)
+    const semi = a2.indexOf(';');
+    const head = semi >= 0 ? a2.slice(0, semi) : a2;
+    const tailNote = semi >= 0 ? a2.slice(semi) : '';
+    const st = settingFor(head);
+    const doing = a2 ? `${cap(head)}${st ? ` ${st}` : ''}${tailNote}.` : (setting ? `${cap(setting.full)}.` : '');
+    // face-only close-ups: hands out of frame (not for hand / object close-ups)
+    const cam = camera.replace(/^Close-up on ([^,]+?)(?:'s face)?,/, 'Close-up on $1, face only, hands out of frame,');
+    const inFrame = `${doing} ${cam}`;
+    const ownerVisible = ownerName && (vis.some(n => nm(n) === ownerName) || /phone/i.test(inFrame));
+    const setMatch = master ? 'Set matches photo 1 exactly.' : '';
+    const modern = clip.worldLock || clip.propsLock
+      ? (ownerVisible && clip.propsLock && /phone/i.test(inFrame) ? `Same phone${/\d+%/.test(clip.propsLock) ? ` (${clip.propsLock.match(/\d+%/)![0]} battery)` : ''}; no other modern objects.`
+        : ownerVisible ? `No modern objects except ${ownerName}'s phone.` : 'No modern objects.')
+      : '';
+    const say = speaks ? audio : '';
+    let prompt = [header, refs, doing, cam, say, setMatch, modern, CHINESE_DRAMA_STYLE, speaks ? AUDIO_SPEECH : AUDIO_SILENT].filter(Boolean).join(' ').replace(/\s+/g, ' ');
+    // numbered group members -> "soldier 1"; a full group stays "the three Suriyanakhon soldiers"
+    prompt = prompt.replace(/\b([Tt])he (first|second|third|fourth|fifth|sixth) (?:[A-Z][\w-]* )?([a-z]+)\b/g, (_m, t, o, role, off) => `${t === 'T' && (off === 0 || /[.!?]\s$/.test(prompt.slice(0, off))) ? cap(role) : role} ${ORDN[o]}`);
+    // never a capital mid-sentence except proper names / "Photo" / "Audio"
+    const proper = new Set([...cast, ...(opts.knownCharacters || [])].map(n => nm(n)).filter(e => /^[A-Z]/.test(e) && !/^(?:The|A|An) /.test(e)).flatMap(e => e.split(' ')));
+    prompt = prompt.replace(/([,;:] |\b(?:and|then|of|in|on|toward|at) )([A-Z][a-z]+)\b/g, (m, pre, w) => proper.has(w) || /^(?:Photo|Thai|Ton|Audio|POV)$/.test(w) || /^[A-Z][a-z]*[A-Z]/.test(w) ? m : `${pre}${w.toLowerCase()}`);
+    // keep each angle within ~100 words: shorten the setting first, then the foreground note, then the style line
+    const words = (t: string) => t.split(/\s+/).length;
+    const cuts: [RegExp | string, string][] = [[/(in an? [^,.;]+? at [a-z]+), [^.;]+?([.;])/, '$1$2'], [/, [A-Z][a-z]+ blurred in foreground/, ''], [/ No other modern objects\.| no other modern objects/, ''], [`${CHINESE_DRAMA_STYLE} `, ''], [/ at (?:dawn|dusk|night|midday|noon|morning|afternoon)(?=[.;])/, '']];
+    for (const [re, to] of cuts) { if (words(prompt) <= 100) break; prompt = prompt.replace(re as any, to); }
     angles.push({ label, seconds, prompt, onScreen: vis, attachments });
   };
   const NUMW2 = ['', 'one', 'two', 'three', 'four', 'five', 'six'];
@@ -1907,6 +1921,7 @@ export function formatChineseDramaShot(
   angles.forEach((a, i) => notes.push(`มุม ${ANGLE_LETTERS[i]} (${a.label}): ตัดยาว ${a.seconds} วินาที`));
   const nextLine = next ? (next.dialogues || []).find(d => String(d?.line || '').trim()) : undefined;
   if (nextLine) notes.push(`J-cut: ให้เสียง "${String(nextLine.line).trim()}" ของช็อตถัดไปเข้าก่อนภาพประมาณ 0.5 วินาที ตอนท้ายมุมสุดท้ายของช็อตนี้`);
+  if (f.lines.length) notes.push('ปิดเสียงมุม B ทั้งหมด เก็บเสียงจากมุม A ไว้แค่ช่วงที่พูด');
   notes.push(f.lines.length ? 'เสียง: ใช้เสียงพูดอย่างเดียว ไม่ใส่ดนตรี เสียงหวือ หรือเสียงประกอบ' : 'เสียง: ช็อตนี้เงียบ ไม่มีเสียงพูด ดนตรี หรือเสียงประกอบ (ยกเว้นเสียง J-cut ของช็อตถัดไป)');
   return { shotNumber, kind, angles, notes, untranslated: Array.from(untranslated) };
 }

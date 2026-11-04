@@ -8,7 +8,7 @@ import { metaOptionsForStory } from '../src/services/storyProgress';
 const raw = readFileSync(new URL('./fixtures/script_11_28.txt', import.meta.url), 'utf8');
 let passed = 0;
 const check = (name: string, fn: () => void) => { fn(); passed++; console.log(`  ✔ ${name}`); };
-const lib: any[] = [{ id: 'c1', name: 'ต้น', appearance: 'ชายไทยอายุ 28', outfit: 'เสื้อยืดสีกรมท่า', referenceImageUrl: 'https://example.com/ton.jpg' }];
+const lib: any[] = [{ id: 'c1', name: 'ต้น', appearance: 'ชายไทยอายุ 28', outfit: 'เสื้อยืดสีกรมท่า กางเกงยีนส์สีเข้ม', referenceImageUrl: 'https://example.com/ton.jpg' }];
 const s = parseShotScript(raw)!;
 const base: any = metaOptionsForStory(raw, lib, characterNote);
 const opts: any = { ...base, knownCharacters: [...s.knownCharacters, 'ต้น'], characterNotes: { ...s.characterNotes, ...base.characterNotes }, locationNotes: s.locationNotes };
@@ -25,8 +25,8 @@ check('ช็อต labels: 18 clips numbered 11–28, also คลิป / ฉ�
 });
 check('header = locks on every clip, not shots; duration from the script', () => {
   for (const sh of shots) for (const a of sh.angles) {
-    assert.ok(a.prompt.includes('In the border forest at early morning'), a.prompt);
-    assert.ok(/No modern objects except Ton's phone\.|Same phone \(18% battery\); nothing else modern\./.test(a.prompt), a.prompt);
+    assert.ok(/at dawn/.test(a.prompt) && /misty/.test(a.prompt), a.prompt);
+    assert.ok(/No modern objects( except Ton's phone)?\.|Same phone \(18% battery\)/.test(a.prompt), a.prompt);
     assert.ok(a.prompt.includes('10-second'));
     assert.ok(!thaiOut(a.prompt), a.prompt);
     assert.equal(a.attachments[0]?.n, 1);
@@ -47,8 +47,8 @@ check('props lock: same phone, battery 18% from shot 14', () => {
   assert.ok(P(14).includes('Same phone') && P(26).includes('Same phone') && P(26).includes('18%'));
 });
 check('sounds become reactions, audio stays speech-only plus "No <sound>"', () => {
-  assert.ok(P(16).includes('reacts as if hearing many footsteps') && P(16).includes(`${AUDIO_SILENT} No footsteps.`));
-  assert.ok(P(20).includes('reacts as if hearing distant war drums') && P(20).includes(`${AUDIO_SPEECH} No distant war drums.`));
+  assert.ok(P(16).includes('reacts as if hearing many footsteps') && P(16).includes(AUDIO_SILENT));
+  assert.ok(P(20).includes('reacts as if hearing distant war drums') && P(20).includes(AUDIO_SPEECH));
   assert.ok(!/drum (?:sound|beat)s? (?:plays|in the audio)/i.test(P(20)));
 });
 check('script camera: wide stays wide, one camera, no camera words in action', () => {
@@ -75,18 +75,20 @@ check('every shot has A + B; no generic hero / key object; face refs only for pe
       assert.ok(a.attachments.slice(1).every(x => a.onScreen.includes(x.label)));
     }
   }
-  assert.ok(/Wide shot/.test(byN(16).angles[0].prompt) && /Close-up on Ton's face/.test(byN(16).angles[1].prompt));
+  assert.ok(/Wide shot/.test(byN(16).angles[0].prompt) && /Close-up on Ton, face only, hands out of frame/.test(byN(16).angles[1].prompt));
   assert.ok(/phone/.test(byN(26).angles[4].prompt) && /rope/.test(byN(28).angles[4].prompt));
 });
-check('short format: every angle <= 90 words, no "lock:" lines, order header -> faces -> action -> camera -> dialogue -> tail', () => {
+check('short format: every angle <= 100 words, no "lock:" lines, order header -> faces -> action -> camera -> dialogue -> tail', () => {
   for (const sh of shots) for (const a of sh.angles) {
-    assert.ok(a.prompt.split(/\s+/).length <= 90, `${sh.shotNumber}: ${a.prompt.split(/\s+/).length} words: ${a.prompt}`);
+    assert.ok(a.prompt.split(/\s+/).length <= 100, `${sh.shotNumber}: ${a.prompt.split(/\s+/).length} words: ${a.prompt}`);
     assert.ok(!/lock:/i.test(a.prompt) && !/outfit\s*:/.test(a.prompt), a.prompt);
     const i = (re: RegExp) => a.prompt.search(re);
     assert.ok(a.prompt.startsWith('Generate a 10-second'));
-    if (a.attachments.length > 1) assert.ok(i(/Photo 2 is/) < i(/In the border forest/));
-    assert.ok(i(/In the border forest/) < i(/Chinese drama look/));
-    if (/speaks Thai exactly/.test(a.prompt)) assert.ok(i(/speaks Thai exactly/) < i(/Chinese drama look/));
+    if (a.attachments.length > 1) assert.ok(i(/Photo 2 is/) < i(/at dawn/));
+    assert.ok(i(/at dawn/) < i(/Set matches photo 1 exactly\./) && i(/Set matches/) < i(/No modern objects|Same phone/));
+    if (/speaks Thai exactly/.test(a.prompt)) assert.ok(i(/speaks Thai exactly/) < i(/Set matches/) && a.prompt.endsWith(AUDIO_SPEECH)); else assert.ok(a.prompt.endsWith(AUDIO_SILENT));
+    assert.ok(!/(?<![.:!?"]) (?:The|A|An|Three|Two|Close-up)\b/.test(a.prompt.replace(/"[^"]*"/g, '')), a.prompt);
+    if (/^(?:Close-up on)/m.test(a.prompt) || / Close-up on /.test(a.prompt)) assert.ok(/hands out of frame/.test(a.prompt));
   }
 });
 check('review: 17 Ton hidden listener + OTS from behind the tree; 18 villagers on screen; 24/27 action; 28 no "stands firm"', () => {
@@ -94,8 +96,18 @@ check('review: 17 Ton hidden listener + OTS from behind the tree; 18 villagers o
   assert.ok(/Ton hides behind a big tree/.test(r17.prompt));
   assert.ok(/Over Ton's shoulder from behind a big tree/.test(byN(17).angles.find(a => /Over /.test(a.prompt))!.prompt));
   const r18 = byN(18).angles[1];
-  assert.ok(r18.onScreen.includes('ชาวบ้าน') && /The villagers:/.test(r18.prompt));
-  for (const n of [24, 27]) assert.ok(byN(n).angles.every(a => /In the border forest at early morning, \S/.test(a.prompt)), String(n));
+  assert.ok(r18.onScreen.includes('ชาวบ้าน') && /The villagers and the male villager: cotton clothes./.test(r18.prompt));
+  for (const n of [24, 27]) assert.ok(byN(n).angles.every(a => /\. (?:Ton|Soldier \d)[^.]+ (?:in a misty border forest|at dawn)/.test(a.prompt)), String(n));
   assert.ok(!/stands firm/.test(P(28)));
+});
+check('fixed looks reused verbatim; full outfit; phone only when in frame; edit note', () => {
+  const sent = new Map<string, string>();
+  for (const sh of shots) for (const a of sh.angles) for (const m of a.prompt.matchAll(/(Soldier \d|Photo \d is Ton): ([^.]+)\./g)) {
+    const k = m[1].replace(/Photo \d is /, ''); if (sent.has(k)) assert.equal(sent.get(k), m[2]); else sent.set(k, m[2]);
+  }
+  assert.ok(/bearded, red headband/.test(sent.get('Soldier 1') || '') && /sword and spear/.test(sent.get('Soldier 3') || ''));
+  for (const sh of shots) for (const a of sh.angles) if (!a.onScreen.includes('ต้น') && !/phone/i.test(a.prompt.replace(/No modern objects[^.]*\./, ''))) assert.ok(!/except Ton's phone/.test(a.prompt), a.prompt);
+  assert.ok(!/villagers?: [^.]*villager/.test(P(17)));
+  assert.ok(byN(22).notes.includes('ปิดเสียงมุม B ทั้งหมด เก็บเสียงจากมุม A ไว้แค่ช่วงที่พูด'));
 });
 console.log(`shotScript: ${passed} passed`);

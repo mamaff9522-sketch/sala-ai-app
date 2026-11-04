@@ -17,7 +17,10 @@ const ARRIVE_RE = /หลบ|ซ่อน|แอบ|วิ่งเข้าม�
 const LEAVE_RE = /วิ่งหนี|หนีไป|จากไป|เดินจากไป|ออกไป|หายไป|วิ่งผ่าน/;
 const COUNT_RE = /(\d+)\s*(?:นาย|คน|ตัว)/;
 const ORD = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth'];
-const TRAITS = ['black beard, red headband', 'thin moustache, bronze helmet', 'scar on the left cheek, leather armor', 'shaved head, broad shoulders', 'young face, cloth wrap on the head', 'grey beard, iron helmet'];
+const TRAITS = ['bearded, red headband', 'thin moustache, bronze helmet', 'scarred cheek, black headband', 'shaved head, broad shoulders', 'young face, cloth head wrap', 'grey beard, iron helmet'];
+/** fixed kit per weapon: one costume + weapon description, reused verbatim */
+const WEAPON_KIT: Record<string, string> = { sword: 'plain straight sword', spear: 'wooden spear', bow: 'wooden longbow', knife: 'short knife', 'axe': 'iron axe' };
+const ROLE_COSTUME: [RegExp, string][] = [[/soldier|guard|warrior/, 'leather armor'], [/bandit/, 'ragged dark clothes'], [/villager|farmer/, 'cotton clothes']];
 
 export interface CastEntry { name: string; desc: string; members?: string[]; role?: string }
 export interface ShotClip {
@@ -105,8 +108,10 @@ export function parseShotScript(raw: string): ShotScript | null {
       const wEn = weapons.map(w => glossaryTranslate(w) || '').filter(Boolean);
       members.forEach((m, i) => {
         translations[m] = `${ORD[i] || `#${i + 1}`} ${en}`;
-        const kit = wEn.length ? (i < wEn.length ? `holds a ${wEn[i]}` : `holds a ${wEn.join(' and a ')}`) : '';
-        characterNotes[m] = [`${en}, ancient costume`, kit, TRAITS[i % TRAITS.length]].filter(Boolean).join(', ');
+        const kitOf = (w: string) => WEAPON_KIT[w.replace(/^an? /, '')] || w.replace(/^an? /, '');
+        const kit = wEn.length ? (i < wEn.length ? kitOf(wEn[i]) : wEn.map(w => w.replace(/^an? /, '')).join(' and ')) : '';
+        const costume = ROLE_COSTUME.find(([re]) => re.test(en))?.[1] || 'ancient costume';
+        characterNotes[m] = [TRAITS[i % TRAITS.length], costume, kit].filter(Boolean).join(', ');
         groupOf.set(m, c);
       });
       translations[c.name] = `${en}s`;
