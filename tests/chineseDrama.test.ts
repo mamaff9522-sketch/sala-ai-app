@@ -51,8 +51,8 @@ check('one camera instruction per angle: static speaker, push-in listener', () =
 check('listener from the previous shot; on-screen face lock only; no line in listener angle', () => {
   const b17 = shots[1].angles[1].prompt;
   assert.ok(b17.includes('Reaction shot of Ton') && b17.includes('hides behind a huge tree'));
-  assert.ok(b17.includes('photo 3 is the face reference for Ton') && !b17.includes('attach') && !b17.includes('a male villager'), b17);
-  assert.ok(shots[1].notes.some(n => n.includes('รูปที่ 3') && n.includes('ต้น')));
+  assert.ok(b17.includes('photo 2 is the face reference for Ton') && !b17.includes('attach') && !b17.includes('a male villager'), b17);
+  assert.deepEqual(shots[1].angles[1].attachments.map(a => a.label), ['ป่าชายแดน Master', 'ต้น'].map((x, i) => i ? x : `ภาพมาสเตอร์ ${x}`));
   assert.ok(!b17.includes('the people or scene'));
   const b18 = shots[2].angles[1].prompt;
   assert.ok(b18.includes('villagers in cotton clothes running past') && !b18.includes('Character lock'));

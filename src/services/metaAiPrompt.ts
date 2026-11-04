@@ -437,7 +437,7 @@ export function charactersInClip(clip: ClipForMeta, knownCharacters: string[] = 
     // "กฤต" inside "ทนายกฤต" is the same person, not a second character
     const longer = [...knownCharacters, ...out].filter(m => m && m !== n && m.includes(n));
     const text = longer.reduce((t, m) => t.split(m).join(' '), where);
-    if (text.includes(n)) add(n);
+    if (hasWord(text, n)) add(n);
   });
   // Same person under a short and a long name ("กฤต" / "ทนายกฤต"): keep the long name once
   const all = [...knownCharacters, ...out].filter(Boolean);
@@ -1506,7 +1506,13 @@ export function dramaTranslatables(clips: ClipForMeta[], opts: MetaAiFormatOptio
   return Array.from(out);
 }
 
-export interface DramaAngle { label: string; seconds: number; prompt: string; onScreen: string[] }
+export interface DramaAngle {
+  label: string; seconds: number; prompt: string;
+  /** characters visible in this angle (each one face-locked) */
+  onScreen: string[];
+  /** what to attach for THIS angle, numbered for this angle only */
+  attachments: { n: number; label: string }[];
+}
 
 export interface DramaShot {
   shotNumber: number;
@@ -1520,15 +1526,68 @@ export interface DramaShot {
 
 const ANGLE_LETTERS = 'ABCDEFGH';
 
+/** Thai role words: a character whose name starts with one is a generic role ("the border soldier"), not a proper name */
+export const GENERIC_ROLE_RE = /^(?:ทหาร|ชาวบ้าน|ชาวนา|ชาวประมง|ชาวเขา|พ่อค้า|แม่ค้า|ยาม|โจร|องครักษ์|ขุนนาง|คนรับใช้|สาวใช้|ผู้คุม|ตำรวจ|นักเลง|ผู้ชาย|ผู้หญิง|ชายหนุ่ม|หญิงสาว|ชายแก่|หญิงชรา|เด็ก|คนแปลกหน้า|พระ(?!เอก)|เณร|ทาส|นักรบ|ผู้ใหญ่บ้าน|กำนัน|คนขับ|พนักงาน|ลูกน้อง|สมุน)/;
+/** Thai words a speaker uses to address the person they talk to */
+const ADDRESS_RE = /(?:^|[\s!?,.])?(เจ้า|ท่าน|คุณ|พี่|น้อง|แก|เธอ|นาย|หลวงพ่อ|ลุง|ป้า|น้า|อา|ตา|ยาย)(?=[\s!?,.ๆ]|$|[ก-๙])/;
+const NAME_PREFIX_RE = /^(?:พี่|น้อง|ป้า|ลุง|น้า|อา|ตา|ยาย|หมอ|คุณ|นาย|นาง|นางสาว|ครู|หลวงพ่อ|ท่าน|แม่|พ่อ|เจ้า|ขุน|หมื่น|พระ)(?=[ก-๙]{2,})/;
+
+/** "ต้น" inside "ต้นข้าว" / "ต้นไม้" is not the name: whole Thai words only (Intl.Segmenter), plain includes as fallback. */
+export function hasWord(text: string, word: string): boolean {
+  const t = String(text || ''); const w = String(word || '').trim();
+  if (!w || !t.includes(w)) return false;
+  const Seg = (Intl as any).Segmenter;
+  if (!Seg || !/[ก-๙]/.test(w)) return true;
+  const segs: string[] = Array.from(new Seg('th', { granularity: 'word' }).segment(t) as Iterable<any>).map((x: any) => x.segment);
+  let pos = 0;
+  for (let i = 0; i < segs.length; pos += segs[i].length, i++) {
+    let acc = '';
+    for (let j = i; j < segs.length && acc.length < w.length; j++) {
+      acc += segs[j];
+      if (acc === w) {
+        const rest = t.slice(pos);
+        // the segmenter splits some compounds ("ต้น|ข้าว"): a known compound starting with the name is not the name
+        if (!THAI_COMPOUNDS.some(c => c.length > w.length && c.startsWith(w) && rest.startsWith(c))) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Common Thai words that start with a short given name (ต้น, น้ำ, ฟ้า, ดาว, แก้ว, ทอง, ใบ, หมอก…) */
+export const THAI_COMPOUNDS = [
+  'ต้นไม้', 'ต้นข้าว', 'ต้นหญ้า', 'ต้นกล้า', 'ต้นไผ่', 'ต้นมะพร้าว', 'ต้นปาล์ม', 'ต้นกล้วย', 'ต้นตาล', 'ต้นโพธิ์', 'ต้นไทร', 'ต้นสัก', 'ต้นยาง',
+  'ต้นเหตุ', 'ต้นทาง', 'ต้นฉบับ', 'ต้นทุน', 'ต้นน้ำ', 'ต้นคอ', 'ต้นแขน', 'ต้นขา', 'ต้นตอ', 'ต้นแบบ', 'ต้นเสียง', 'ต้นสาย', 'ต้นเดือน', 'ต้นปี', 'ต้นเรื่อง', 'ต้นห้อง', 'ต้นตระกูล',
+  'น้ำตา', 'น้ำใจ', 'น้ำเสียง', 'น้ำหนัก', 'น้ำท่วม', 'น้ำตก', 'น้ำมัน', 'น้ำแข็ง', 'น้ำชา', 'น้ำมนต์', 'น้ำพริก',
+  'ฟ้าผ่า', 'ฟ้าร้อง', 'ฟ้าแลบ', 'ดาวเทียม', 'ดาวตก', 'แก้วน้ำ', 'แก้วตา', 'ทองคำ', 'ทองแดง', 'ทองเหลือง', 'ใบไม้', 'ใบหน้า', 'ใบหู', 'ใบมีด', 'หมอกควัน',
+  'ฝนตก', 'ลมพัด', 'เดือนหงาย', 'ข้าวสาร', 'ข้าวเปลือก', 'บัวบาน', 'ส้มตำ', 'ไผ่ลำ', 'เพชรพลอย', 'มดแดง', 'นกแก้ว', 'นกเขา', 'ปลาทู', 'แดดร่ม'
+];
+
+/** Name or nickname ("หมออิน" -> "อิน") of a character said in a line. */
+function mentions(line: string, name: string): boolean {
+  if (hasWord(line, name)) return true;
+  const nick = name.replace(NAME_PREFIX_RE, '');
+  return nick !== name && nick.length >= 2 && hasWord(line, nick);
+}
+
+/** Story protagonist: the character with a reference photo seen most often, else the most frequent character. */
+export function storyProtagonist(clips: ClipForMeta[], opts: MetaAiFormatOptions = {}): string {
+  const count = new Map<string, number>();
+  for (const c of clips) for (const n of charactersInClip(c, opts.knownCharacters || [])) count.set(n, (count.get(n) || 0) + 1 + (c.dialogues || []).filter(d => d?.speaker === n).length * 0.5);
+  const photo = new Set(Array.isArray(opts.withPhoto) ? opts.withPhoto : Array.from(count.keys()));
+  const rank = (ns: string[]) => ns.sort((a, b) => (count.get(b) || 0) - (count.get(a) || 0))[0] || '';
+  const all = Array.from(count.keys()).filter(n => !GENERIC_ROLE_RE.test(n));
+  return rank(all.filter(n => photo.has(n))) || rank(all) || rank(Array.from(count.keys()));
+}
+
 /** One script shot as Chinese-short-drama angle prompts (each its own 5 s Meta AI video). */
 export function formatChineseDramaShot(
-  clip: ClipForMeta, opts: MetaAiFormatOptions = {}, next?: ClipForMeta, prev?: ClipForMeta | ClipForMeta[], translations: DramaTranslations = {}
+  clip: ClipForMeta, opts: MetaAiFormatOptions & { protagonist?: string } = {}, next?: ClipForMeta, prev?: ClipForMeta | ClipForMeta[], translations: DramaTranslations = {}
 ): DramaShot {
   const trRaw = makeTr(translations);
   const untranslated = new Set<string>();
   const tr = (t: string, kind: 'time' | 'light' | 'text' | 'name' = 'text') => { const r = trRaw(t, kind); if (hasThai(r)) untranslated.add(r); return r; };
-  const { f, faces, action } = dramaCtx(clip, opts);
-  const attachCount = attachmentsFor(clip, opts, f, 'video').list.length;
+  const { f, action } = dramaCtx(clip, opts);
   // earlier shots still in the same scene (nearest first; a scene change stops the search)
   const prevList = (Array.isArray(prev) ? prev : prev ? [prev] : []);
   const prevCtxs: DramaCtx[] = [];
@@ -1538,107 +1597,124 @@ export function formatChineseDramaShot(
     prevCtxs.push(c);
   }
   const prevCtx = prevCtxs[0];
-  const nm = (n: string) => tr(n, 'name');
-  const photoOf = new Map<string, number>();
-  faces.forEach(x => photoOf.set(x.name, x.n));
+  // names: proper names as is (romanized), generic roles with an article ("the border soldier")
+  const known = new Set(opts.knownCharacters || []);
+  const withPhoto = new Set(Array.isArray(opts.withPhoto) ? opts.withPhoto : [...f.names, ...prevCtxs.flatMap(c => c.f.names)]);
+  const isGeneric = (n: string) => {
+    if (GENERIC_ROLE_RE.test(n)) return true;
+    const en = trRaw(n, 'name');
+    return !withPhoto.has(n) && !known.has(n) && /^[a-z]/.test(en);
+  };
+  const nm = (n: string) => {
+    const en = tr(n, 'name');
+    if (!isGeneric(n)) return en;
+    const low = en.replace(/^(?:the|a|an)\s+/i, '').replace(/^[A-Z](?=[a-z])/, ch => ch.toLowerCase());
+    return `the ${low}`;
+  };
+  const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
   const noteOf = (n: string) => f.notes[n] || prevCtxs.map(c => c.f.notes[n]).find(Boolean) || (opts.characterNotes?.[n] || '').replace(/[.\s]+$/, '');
 
-  const charLock = (names: string[]) => {
-    if (!names.length) return '';
-    const who = names.map(n => {
-      const ph = photoOf.get(n);
-      const note = noteOf(n);
-      return `${ph ? `photo ${ph} is the face reference for ${nm(n)}` : `${nm(n)} (no reference photo)`}${note ? `, look: ${tr(note)}` : ''}`;
-    }).join('; ');
-    return `Character lock: ${who}. Keep the same face, hair, makeup, accessories, outfit and voice in every clip; never turn into another person.`;
-  };
   const place = f.place;
+  const master = place.location ? masterName(place.location) : '';
   const details = locationNoteFor(place.location, opts.locationNotes);
   const locLock = place.location || place.timeOfDay
-    ? `Location lock: ${tr(place.location) || 'same location'}${place.timeOfDay ? `, ${tr(place.timeOfDay, 'time')}` : ''}${details ? `, ${tr(details)}` : ''}, ${tr(f.lighting || LIGHT_TH.plain, 'light')}. Set matches the location master image exactly; do not change the location.`
+    ? `Location lock: ${tr(place.location) || 'same location'}${place.timeOfDay ? `, ${tr(place.timeOfDay, 'time')}` : ''}${details ? `, ${tr(details)}` : ''}, ${tr(f.lighting || LIGHT_TH.plain, 'light')}. Set matches ${master ? 'photo 1, the location master image,' : 'the location'} exactly; do not change the location.`
     : '';
-  const build = (camera: string, act: string, audio: string, onScreen: string[]) => {
+  /** Attachments + character lock for the characters visible in ONE angle (numbered for that angle). */
+  const angleRefs = (onScreen: string[]) => {
+    const attachments: { n: number; label: string }[] = [];
+    if (master) attachments.push({ n: 1, label: `ภาพมาสเตอร์ ${master}` });
+    const num = new Map<string, number>();
+    for (const n of onScreen) if (withPhoto.has(n)) { num.set(n, attachments.length + 1); attachments.push({ n: attachments.length + 1, label: n }); }
+    const who = onScreen.map(n => {
+      const note = noteOf(n);
+      return `${num.has(n) ? `photo ${num.get(n)} is the face reference for ${nm(n)}` : `${cap(nm(n))} (no reference photo)`}${note ? `, look: ${tr(note)}` : ''}`;
+    }).join('; ');
+    const lock = onScreen.length ? `Character lock: ${who}. Keep the same face, hair, makeup, accessories, outfit and voice in every clip; never turn into another person.` : '';
+    return { attachments, lock };
+  };
+  const angles: DramaAngle[] = [];
+  const notes: string[] = [];
+  const push = (label: string, seconds: number, camera: string, act: string, audio: string, onScreen: string[]) => {
+    const vis = Array.from(new Set(onScreen.filter(Boolean)));
+    const { attachments, lock } = angleRefs(vis);
     const speaks = /speaks Thai exactly/.test(audio);
-    return [CHINESE_DRAMA_OPENING, camera, act ? `Action: ${act}.` : '', audio, charLock(onScreen), locLock, CHINESE_DRAMA_STYLE, speaks ? AUDIO_SPEECH : AUDIO_SILENT].filter(Boolean).join(' ');
+    const prompt = [CHINESE_DRAMA_OPENING, camera, act ? `Action: ${act}.` : '', audio, lock, locLock, CHINESE_DRAMA_STYLE, speaks ? AUDIO_SPEECH : AUDIO_SILENT].filter(Boolean).join(' ');
+    angles.push({ label, seconds, prompt, onScreen: vis, attachments });
   };
-  // a character borrowed from the previous shot gets the next photo number of this clip
-  const borrowed: { name: string; n: number }[] = [];
-  const borrow = (n: string) => {
-    if (photoOf.has(n) || !prevCtxs.some(c => c.f.photoNames.includes(n))) return;
-    const num = attachCount + borrowed.length + 1;
-    borrowed.push({ name: n, n: num });
-    photoOf.set(n, num);
-  };
+  const say = (l: ClipLine, speaker: string) => `${cap(nm(speaker))} speaks Thai exactly: "${l.line}"`;
 
   const shotNumber = Number(clip.clipNumber) || 0;
   const allText = [action, ...f.lines.map(l => l.line)].join(' ');
   const kind: DramaShot['kind'] = CONFLICT_RE.test(allText) ? 'conflict' : f.lines.length ? 'dialogue' : 'silent';
-  const hero = f.speakers[0] || f.names[0] || '';
-  const heroEn = hero ? nm(hero) : 'the main character';
-  const other = f.names.find(n => n !== hero) || '';
   const actEn = tr(action);
-  const angles: DramaAngle[] = [];
-  const notes: string[] = [];
-  const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
-  const say = (l: ClipLine) => `${cap(nm(l.speaker || hero))} speaks Thai exactly: "${l.line}"`;
-  const push = (label: string, seconds: number, prompt: string, onScreen: string[]) => angles.push({ label, seconds, prompt, onScreen });
+  // hero = story protagonist when in the shot (mentioned in the action counts), else a non-generic character
+  const inShot = (n: string) => f.names.includes(n) || hasWord(action, n);
+  const hero = (opts.protagonist && inShot(opts.protagonist) ? opts.protagonist : '') || f.names.find(n => !isGeneric(n) && withPhoto.has(n)) || f.names.find(n => !isGeneric(n)) || f.speakers[0] || f.names[0] || '';
+  const cast = Array.from(new Set([...f.names, ...(hero && !f.names.includes(hero) ? [hero] : [])]));
+
+  /** Listener of line i: addressed / mentioned in the line, then address word -> previous / other speaker, then speaker order. */
+  const listenerFor = (i: number, speaker: string, candidates: string[]): string => {
+    const line = f.lines[i]?.line || '';
+    const named = candidates.find(n => mentions(line, n));
+    if (named) return named;
+    if (ADDRESS_RE.test(line)) {
+      const lastSp = [...f.lines.slice(0, i)].reverse().map(l => l.speaker).find(s => s && s !== speaker && candidates.includes(s));
+      const otherSp = f.lines.map(l => l.speaker).find(s => s && s !== speaker && candidates.includes(s));
+      if (lastSp || otherSp) return (lastSp || otherSp)!;
+    }
+    const nextSp = f.lines.slice(i + 1).map(l => l.speaker).find(s => s && s !== speaker && candidates.includes(s));
+    const lastSp = [...f.lines.slice(0, i)].reverse().map(l => l.speaker).find(s => s && s !== speaker && candidates.includes(s));
+    return nextSp || lastSp || candidates.find(n => hasWord(action, n)) || candidates.find(n => !isGeneric(n)) || candidates[0] || '';
+  };
 
   if (kind === 'conflict') {
+    const opp = cast.find(n => n !== hero) || '';
+    const oppEn = opp ? nm(opp) : 'the opponents';
     const l0 = f.lines[0];
+    const sp0 = l0 ? (l0.speaker || hero) : hero;
     const l1 = f.lines[1];
-    const otherEn = other ? nm(other) : 'the opponent';
-    push('Close-up', 2, build(`Close-up of ${heroEn}'s face, intense emotion, static camera.`, actEn, l0 ? `${say(l0)}, lips shown briefly.` : NO_ONE_SPEAKS, hero ? [hero] : []), hero ? [hero] : []);
-    push('Over-the-shoulder', 2, build(`Over-the-shoulder shot from behind ${otherEn} toward ${heroEn}, static camera.`, actEn, l1 ? `${say(l1)}.` : NO_ONE_SPEAKS, f.names), f.names);
-    push('Low angle (hero)', 2, build(`Low angle shot looking up at ${heroEn}, the hero looks strong, static camera.`, actEn, NO_ONE_SPEAKS, hero ? [hero] : []), hero ? [hero] : []);
-    push('High angle (weaker side)', 1.5, build(`High angle shot looking down at ${otherEn}, small and pressured in the frame, slow push-in.`, actEn, NO_ONE_SPEAKS, other ? [other] : []), other ? [other] : []);
-    push('Object close-up', 1.5, build('Close-up of a key object or hand that shows the tension, slow push-in.', actEn, NO_ONE_SPEAKS, []), []);
+    const sp1 = l1 ? (l1.speaker || hero) : '';
+    const heroEn = hero ? nm(hero) : 'the hero';
+    const fg = sp0 && sp0 !== hero && hero ? `, ${heroEn} out of focus in the foreground` : '';
+    push('Close-up', 2, `Close-up of ${nm(sp0 || hero) || 'the speaker'}'s face${fg}, intense emotion, static camera.`, actEn, l0 ? `${say(l0, sp0)}, lips shown briefly.` : NO_ONE_SPEAKS, [sp0, fg ? hero : '']);
+    push('Over-the-shoulder', 2, `Over-the-shoulder shot from behind ${heroEn} toward ${oppEn}, ${l1 ? 'static camera' : 'slow push-in'}.`, actEn, l1 ? `${say(l1, sp1)}.` : NO_ONE_SPEAKS, [hero, opp]);
+    push('Low angle (hero)', 2, `Low angle shot looking up at ${heroEn}, the hero stands firm, slow push-in.`, actEn, NO_ONE_SPEAKS, [hero]);
+    push('High angle (opposing side)', 1.5, `High angle shot looking down at ${oppEn}, slow push-in.`, actEn, NO_ONE_SPEAKS, [opp]);
+    push('Object close-up', 1.5, `Close-up of ${heroEn}'s hands and the key object of the conflict, slow push-in.`, actEn, NO_ONE_SPEAKS, [hero]);
     if (l0) notes.push(`L-cut: เสียงประโยค "${l0.line}" จากมุม A พูดต่อคร่อมภาพมุม B`);
     if (f.lines.length > 2) notes.push(`ประโยคที่เหลือ (${f.lines.slice(2).map(l => `"${l.line}"`).join(', ')}) ใช้เสียงคร่อมภาพมุม C–E`);
   } else if (kind === 'dialogue') {
     f.lines.forEach((l, i) => {
       const speaker = l.speaker || hero;
       const spEn = nm(speaker);
-      push(`Close-up ${speaker} (ผู้พูด)`, 1.5, build(`Close-up of ${spEn}'s face, static camera, lips shown briefly.`, actEn, `${say(l)}.`, [speaker]), [speaker]);
-      // listener: someone else named in this shot, else the main character of the previous shot,
-      // else what the speaker is looking at (when the action says so, it wins over the previous shot)
+      push(`Close-up ${speaker} (ผู้พูด)`, 1.5, `Close-up of ${spEn}'s face, static camera, lips shown briefly.`, actEn, `${say(l, speaker)}.`, [speaker]);
+      // listener: in this shot, else a character still in the scene from an earlier shot, else POV of what the speaker sees
       const target = lookTarget(action);
-      const others = f.names.filter(n => n !== speaker);
-      const nextSp = f.lines[i + 1]?.speaker || '';
-      const lastSp = f.lines[i - 1]?.speaker || '';
-      const named = others.find(n => n === nextSp) || others.find(n => n === lastSp) || others.find(n => action.includes(n)) || others[0] || '';
+      const named = listenerFor(i, speaker, f.names.filter(n => n !== speaker));
       const fromCtx = !named && !target ? prevCtxs.find(c => [...c.f.speakers, ...c.f.names].some(n => n && n !== speaker)) : undefined;
-      const prevMain = fromCtx ? [...fromCtx.f.speakers, ...fromCtx.f.names].find(n => n && n !== speaker) || '' : '';
-      const listener = named || prevMain;
-      let label: string; let cam: string; let act: string; let onScreen: string[];
+      const listener = named || (fromCtx ? [...fromCtx.f.speakers, ...fromCtx.f.names].find(n => n && n !== speaker) || '' : '');
       if (listener) {
         const lEn = nm(listener);
-        const fromPrev = !f.names.includes(listener) ? fromCtx : undefined;
-        if (fromPrev) borrow(listener);
-        label = `Reaction ${listener} (ผู้ฟัง)`;
-        cam = `Reaction shot of ${lEn}, slow push-in.`;
-        act = fromPrev ? `${lEn} stays as at the end of the previous shot (${tr(fromPrev.action)}), silently watching what happens` : `${lEn} listens silently and reacts`;
-        onScreen = [listener];
+        const act = fromCtx ? `${cap(lEn)} stays as at the end of the previous shot (${tr(fromCtx.action)}), silently watching what happens` : `${cap(lEn)} listens silently and reacts`;
+        push(`Reaction ${listener} (ผู้ฟัง)`, 2.5, `Reaction shot of ${lEn}, slow push-in.`, act, NO_ONE_SPEAKS, [listener]);
       } else {
-          const seen = target ? tr(target) : (prevCtx ? tr(prevCtx.action) : actEn);
-        label = 'Reaction (สิ่งที่ผู้พูดมอง)';
-        cam = `Point-of-view shot of what ${spEn} is looking at, slow push-in.`;
-        act = `${seen}; ${spEn} is not in the frame`;
-        onScreen = [];
+        const seen = target ? tr(target) : (prevCtx ? tr(prevCtx.action) : actEn);
+        push('Reaction (สิ่งที่ผู้พูดมอง)', 2.5, `Point-of-view shot of what ${spEn} is looking at, slow push-in.`, `${cap(seen)}; ${spEn} is not in the frame`, NO_ONE_SPEAKS, []);
       }
-      push(label, 2.5, build(cam, act, NO_ONE_SPEAKS, onScreen), onScreen);
       notes.push(`L-cut: เห็นปาก${speaker}ในมุม ${ANGLE_LETTERS[i * 2]} แค่ต้นประโยค แล้วตัดไปมุม ${ANGLE_LETTERS[i * 2 + 1]} โดยลากเสียงประโยค "${l.line}" จากมุม ${ANGLE_LETTERS[i * 2]} คร่อมภาพจนจบ (คลิปมุม ${ANGLE_LETTERS[i * 2 + 1]} ไม่มีเสียงพูด)`);
     });
   } else {
-    const on = f.names;
-    if (on.length) push('Single angle', 3, build(`Medium close-up of ${on.slice(0, 2).map(n => nm(n)).join(' and ')}, slow push-in.`, actEn, 'No one speaks.', on.slice(0, 2)), on.slice(0, 2));
-    else push('Establishing (ไม่มีตัวละคร)', 3, build('Wide establishing shot of the location, no people in frame, slow push-in.', actEn, 'No one speaks.', []), []);
+    const on = cast.slice(0, 2);
+    if (on.length) push('Single angle', 3, `Medium close-up of ${on.map(n => nm(n)).join(' and ')}, slow push-in.`, actEn, 'No one speaks.', on);
+    else push('Establishing (ไม่มีตัวละคร)', 3, 'Wide establishing shot of the location, no people in frame, slow push-in.', actEn, 'No one speaks.', []);
   }
   // 3 or more characters in the scene: one over-the-shoulder group angle (conflict shots already have one)
   if (kind !== 'conflict' && f.names.length >= 3) {
-    const [a1, b1] = [hero || f.names[0], f.names.find(n => n !== (hero || f.names[0]))!];
-    push('Over-the-shoulder (กลุ่ม)', 2, build(`Over-the-shoulder shot from behind ${nm(b1)} toward ${nm(a1)} and the others, slow push-in.`, actEn, NO_ONE_SPEAKS, f.names), f.names);
+    const a1 = hero || f.names[0];
+    const b1 = f.names.find(n => n !== a1)!;
+    push('Over-the-shoulder (กลุ่ม)', 2, `Over-the-shoulder shot from behind ${nm(b1)} toward ${nm(a1)} and the others, slow push-in.`, actEn, NO_ONE_SPEAKS, f.names);
   }
-  for (const b of borrowed) notes.push(`แนบรูปเพิ่ม: รูปที่ ${b.n} = รูปโปรไฟล์ของ${b.name} (ต่อจากรูปอื่นของคลิปนี้) ใช้ในมุมที่มี${b.name}`);
   angles.forEach((a, i) => notes.push(`มุม ${ANGLE_LETTERS[i]} (${a.label}): ตัดยาว ${a.seconds} วินาที`));
   const nextLine = next ? (next.dialogues || []).find(d => String(d?.line || '').trim()) : undefined;
   if (nextLine) notes.push(`J-cut: ให้เสียง "${String(nextLine.line).trim()}" ของช็อตถัดไปเข้าก่อนภาพประมาณ 0.5 วินาที ตอนท้ายมุมสุดท้ายของช็อตนี้`);
@@ -1651,13 +1727,14 @@ const KIND_TH = { dialogue: 'ช็อตพูด 2 มุม', silent: 'ช็
 export function formatDramaShotText(s: DramaShot, title = ''): string {
   return [
     `ช็อต ${s.shotNumber}${title ? ` — ${title}` : ''} (${KIND_TH[s.kind]})`,
-    ...s.angles.map((a, i) => `มุม ${ANGLE_LETTERS[i]} — ${a.label} (${a.seconds} วิ)\n${a.prompt}`),
+    ...s.angles.map((a, i) => `มุม ${ANGLE_LETTERS[i]} — ${a.label} (${a.seconds} วิ)${a.attachments.length ? `\nแนบก่อนพิมพ์: ${a.attachments.map(x => `รูปที่ ${x.n} ${x.label}`).join(' · ')}` : ''}\n${a.prompt}`),
     `วิธีตัดต่อ:\n${s.notes.map(n => `- ${n}`).join('\n')}`
   ].join('\n\n');
 }
 
 export function chineseDramaShots(clips: ClipForMeta[], opts: MetaAiFormatOptions = {}, translations: DramaTranslations = {}): DramaShot[] {
-  return clips.map((c, i) => formatChineseDramaShot(c, { ...opts, ...metaContextFor(clips, i) }, clips[i + 1], clips.slice(Math.max(0, i - 3), i).reverse(), translations));
+  const protagonist = storyProtagonist(clips, opts);
+  return clips.map((c, i) => formatChineseDramaShot(c, { ...opts, ...metaContextFor(clips, i), protagonist }, clips[i + 1], clips.slice(Math.max(0, i - 3), i).reverse(), translations));
 }
 
 /** Every clip in Chinese short drama format, ready to copy. */
