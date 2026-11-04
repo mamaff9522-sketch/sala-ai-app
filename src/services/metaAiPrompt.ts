@@ -1408,7 +1408,9 @@ export function formatAllClipsForMetaAi(clips: ClipForMeta[], opts: MetaAiFormat
 // ---------------------------------------------------------------------------------------------
 
 export const CHINESE_DRAMA_OPENING = 'Generate a video, 5 seconds, vertical 9:16, cinematic photorealistic.';
-export const CHINESE_DRAMA_STYLE = 'Chinese short drama style: shallow depth of field, warm-teal color grading, dramatic rim light. Audio: spoken dialogue only. No music, no sound effects, no ambient sound.';
+export const CHINESE_DRAMA_STYLE = 'Chinese short drama style: shallow depth of field, warm-teal color grading, dramatic rim light.';
+export const AUDIO_SPEECH = 'Audio: spoken dialogue only. No music, no sound effects, no ambient sound.';
+export const AUDIO_SILENT = 'Audio: silent, no voice, no music, no sound effects.';
 export const NO_ONE_SPEAKS = 'No one on screen speaks, mouths closed.';
 
 export const CONFLICT_RE = /ต่อสู้|สู้กัน|ทะเลาะ|ปะทะ|ชก|ต่อย|ตบ|เตะ|ฟัน|แทง|ยิง|ดวล|เถียง|ด่า|ตวาด|ไคลแม็กซ์|ไคลแมกซ์|climax|fight|argue|argument|conflict|duel/i;
@@ -1490,6 +1492,7 @@ export function formatChineseDramaShot(
   const untranslated = new Set<string>();
   const tr = (t: string, kind: 'time' | 'light' | 'text' = 'text') => { const r = trRaw(t, kind); if (hasThai(r)) untranslated.add(r); return r; };
   const { f, faces, action } = dramaCtx(clip, opts);
+  const attachCount = attachmentsFor(clip, opts, f, 'video').list.length;
   const prevCtx = prev ? dramaCtx(prev, { ...opts, previous: undefined, inheritedPlace: f.place }) : undefined;
   const photoOf = new Map<string, number>();
   faces.forEach(x => photoOf.set(x.name, x.n));
@@ -1499,9 +1502,8 @@ export function formatChineseDramaShot(
     if (!names.length) return '';
     const who = names.map(n => {
       const ph = photoOf.get(n);
-      const extraPhoto = !ph && !!prevCtx?.f.photoNames.includes(n);
       const note = noteOf(n);
-      return `${ph ? `photo ${ph} is the face reference for ${tr(n)}` : extraPhoto ? `attach ${tr(n)}'s profile photo as the face reference` : `${tr(n)} (no reference photo)`}${note ? `, look: ${tr(note)}` : ''}`;
+      return `${ph ? `photo ${ph} is the face reference for ${tr(n)}` : `${tr(n)} (no reference photo)`}${note ? `, look: ${tr(note)}` : ''}`;
     }).join('; ');
     return `Character lock: ${who}. Keep the same face, hair, makeup, accessories, outfit and voice in every clip; never turn into another person.`;
   };
@@ -1510,8 +1512,18 @@ export function formatChineseDramaShot(
   const locLock = place.location || place.timeOfDay
     ? `Location lock: ${tr(place.location) || 'same location'}${place.timeOfDay ? `, ${tr(place.timeOfDay, 'time')}` : ''}${details ? `, ${tr(details)}` : ''}, ${tr(f.lighting || LIGHT_TH.plain, 'light')}. Set matches the location master image exactly; do not change the location.`
     : '';
-  const build = (camera: string, act: string, audio: string, onScreen: string[]) =>
-    [CHINESE_DRAMA_OPENING, camera, act ? `Action: ${act}.` : '', audio, charLock(onScreen), locLock, CHINESE_DRAMA_STYLE].filter(Boolean).join(' ');
+  const build = (camera: string, act: string, audio: string, onScreen: string[]) => {
+    const speaks = /speaks Thai exactly/.test(audio);
+    return [CHINESE_DRAMA_OPENING, camera, act ? `Action: ${act}.` : '', audio, charLock(onScreen), locLock, CHINESE_DRAMA_STYLE, speaks ? AUDIO_SPEECH : AUDIO_SILENT].filter(Boolean).join(' ');
+  };
+  // a character borrowed from the previous shot gets the next photo number of this clip
+  const borrowed: { name: string; n: number }[] = [];
+  const borrow = (n: string) => {
+    if (photoOf.has(n) || !prevCtx?.f.photoNames.includes(n)) return;
+    const num = attachCount + borrowed.length + 1;
+    borrowed.push({ name: n, n: num });
+    photoOf.set(n, num);
+  };
 
   const shotNumber = Number(clip.clipNumber) || 0;
   const allText = [action, ...f.lines.map(l => l.line)].join(' ');
@@ -1551,6 +1563,7 @@ export function formatChineseDramaShot(
       if (listener) {
         const lEn = tr(listener);
         const fromPrev = !f.names.includes(listener) && prevCtx;
+        if (fromPrev) borrow(listener);
         label = `Reaction ${listener} (ผู้ฟัง)`;
         cam = `Reaction shot of ${lEn}, slow push-in.`;
         act = fromPrev ? `${lEn} stays as at the end of the previous shot (${tr(prevCtx!.action)}), silently watching what happens` : `${lEn} listens silently and reacts`;
@@ -1569,10 +1582,11 @@ export function formatChineseDramaShot(
     const on = f.names.length ? f.names : [];
     push('Single angle', 3, build(`Medium close-up of ${on.length ? on.map(n => tr(n)).join(' and ') : 'the scene'}, slow push-in.`, actEn, 'No one speaks.', on), on);
   }
+  for (const b of borrowed) notes.push(`แนบรูปเพิ่ม: รูปที่ ${b.n} = รูปโปรไฟล์ของ${b.name} (ต่อจากรูปอื่นของคลิปนี้) ใช้ในมุมที่มี${b.name}`);
   angles.forEach((a, i) => notes.push(`มุม ${ANGLE_LETTERS[i]} (${a.label}): ตัดยาว ${a.seconds} วินาที`));
   const nextLine = next ? (next.dialogues || []).find(d => String(d?.line || '').trim()) : undefined;
   if (nextLine) notes.push(`J-cut: ให้เสียง "${String(nextLine.line).trim()}" ของช็อตถัดไปเข้าก่อนภาพประมาณ 0.5 วินาที ตอนท้ายมุมสุดท้ายของช็อตนี้`);
-  notes.push('เสียง: ใช้เสียงพูดอย่างเดียว ไม่ใส่ดนตรี เสียงหวือ หรือเสียงประกอบ');
+  notes.push(f.lines.length ? 'เสียง: ใช้เสียงพูดอย่างเดียว ไม่ใส่ดนตรี เสียงหวือ หรือเสียงประกอบ' : 'เสียง: ช็อตนี้เงียบ ไม่มีเสียงพูด ดนตรี หรือเสียงประกอบ (ยกเว้นเสียง J-cut ของช็อตถัดไป)');
   return { shotNumber, kind, angles, notes, untranslated: Array.from(untranslated) };
 }
 

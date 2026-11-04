@@ -1,6 +1,6 @@
 /** Chinese short drama mode: angles per shot, on-screen face locks, English prompt text, one camera per angle, speech only. */
 import assert from 'node:assert/strict';
-import { formatChineseDramaShot, formatAllChineseDrama, chineseDramaShots, dramaTranslatables, CHINESE_DRAMA_OPENING, CHINESE_DRAMA_STYLE, NO_ONE_SPEAKS } from '../src/services/metaAiPrompt';
+import { formatChineseDramaShot, formatAllChineseDrama, chineseDramaShots, dramaTranslatables, CHINESE_DRAMA_OPENING, CHINESE_DRAMA_STYLE, NO_ONE_SPEAKS, AUDIO_SPEECH, AUDIO_SILENT } from '../src/services/metaAiPrompt';
 
 let passed = 0;
 const check = (name: string, fn: () => void) => { fn(); passed++; console.log(`  ✔ ${name}`); };
@@ -31,7 +31,10 @@ check('angle count: silent 1, dialogue 2, conflict 5', () => {
 check('every prompt: opening, style suffix (no camera), English outside the quoted dialogue', () => {
   for (const s of shots) for (const a of s.angles) {
     assert.ok(a.prompt.startsWith(CHINESE_DRAMA_OPENING));
-    assert.ok(a.prompt.endsWith(CHINESE_DRAMA_STYLE));
+    assert.ok(a.prompt.includes(CHINESE_DRAMA_STYLE));
+    const speaks = a.prompt.includes('speaks Thai exactly');
+    assert.ok(a.prompt.endsWith(speaks ? AUDIO_SPEECH : AUDIO_SILENT), a.prompt);
+    assert.ok(!(speaks && a.prompt.includes(AUDIO_SILENT)) && !(!speaks && a.prompt.includes(AUDIO_SPEECH)));
     assert.ok(!/Static camera on dialogue|push-in on emotional/i.test(CHINESE_DRAMA_STYLE));
     assert.ok(!thaiOutsideQuotes(a.prompt), a.prompt);
     assert.ok(a.prompt.includes('Location lock: border jungle, daytime'));
@@ -48,7 +51,8 @@ check('one camera instruction per angle: static speaker, push-in listener', () =
 check('listener from the previous shot; on-screen face lock only; no line in listener angle', () => {
   const b17 = shots[1].angles[1].prompt;
   assert.ok(b17.includes('Reaction shot of Ton') && b17.includes('hides behind a huge tree'));
-  assert.ok(b17.includes("Ton's profile photo") && !b17.includes('a male villager'));
+  assert.ok(b17.includes('photo 3 is the face reference for Ton') && !b17.includes('attach') && !b17.includes('a male villager'), b17);
+  assert.ok(shots[1].notes.some(n => n.includes('รูปที่ 3') && n.includes('ต้น')));
   assert.ok(!b17.includes('the people or scene'));
   const b18 = shots[2].angles[1].prompt;
   assert.ok(b18.includes('villagers in cotton clothes running past') && !b18.includes('Character lock'));
@@ -57,7 +61,7 @@ check('listener from the previous shot; on-screen face lock only; no line in lis
     assert.ok(!s.angles[1].prompt.includes('speaks Thai'));
     assert.ok(s.angles[0].prompt.includes('speaks Thai exactly: "'));
   }
-  assert.ok(shots[0].angles[0].prompt.includes('navy t-shirt') && shots[0].angles[0].prompt.includes('No one speaks.'));
+  assert.ok(shots[0].angles[0].prompt.includes('navy t-shirt') && shots[0].angles[0].prompt.endsWith(AUDIO_SILENT));
 });
 check('Thai editing notes: L-cut, J-cut, cut length 1.5–3 s', () => {
   assert.ok(shots[2].notes.some(n => n.startsWith('L-cut')));
