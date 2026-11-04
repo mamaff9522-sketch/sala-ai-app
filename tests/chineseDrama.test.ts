@@ -1,6 +1,6 @@
-/** Chinese short drama mode: angle count per shot, fixed opening + style, Thai lines kept, speech only. */
+/** Chinese short drama mode: angles per shot, on-screen face locks, English prompt text, one camera per angle, speech only. */
 import assert from 'node:assert/strict';
-import { formatChineseDramaShot, formatAllChineseDrama, CHINESE_DRAMA_OPENING, CHINESE_DRAMA_STYLE } from '../src/services/metaAiPrompt';
+import { formatChineseDramaShot, formatAllChineseDrama, chineseDramaShots, dramaTranslatables, CHINESE_DRAMA_OPENING, CHINESE_DRAMA_STYLE, NO_ONE_SPEAKS } from '../src/services/metaAiPrompt';
 
 let passed = 0;
 const check = (name: string, fn: () => void) => { fn(); passed++; console.log(`  ✔ ${name}`); };
@@ -12,31 +12,63 @@ const clips: any[] = [
   { clipNumber: 19, title: 'ปะทะ', ...place, charactersPresent: ['ต้น', 'ทหาร'], generatedPrompt: 'Core action: ต้นกับทหารทะเลาะกันเสียงดัง.', dialogues: [{ speaker: 'ทหาร', line: 'เจ้าเป็นใคร!' }] }
 ];
 const opts: any = { aspectRatio: '9:16', knownCharacters: ['ต้น'], photoOrder: ['ต้น'], withPhoto: ['ต้น'], characterNotes: { 'ต้น': 'ชายไทยอายุ 28 ชุด: เสื้อยืดสีกรมท่า กางเกงยีนส์เข้ม' } };
-const shots = clips.map((c, i) => formatChineseDramaShot(c, opts, clips[i + 1]));
+// what the server's /api/translate/en returns for these texts
+export const TR: Record<string, string> = {
+  'ต้น': 'Ton', 'ชาวบ้านชาย': 'a male villager', 'ทหาร': 'a soldier', 'ป่าชายแดน': 'border jungle',
+  'ชายไทยอายุ 28 ชุด: เสื้อยืดสีกรมท่า กางเกงยีนส์เข้ม': 'Thai man, 28, outfit: navy t-shirt, dark jeans',
+  'ต้นได้ยินเสียงฝีเท้าหลายคน เขารีบหลบหลังต้นไม้ใหญ่': 'Ton hears many footsteps and quickly hides behind a huge tree',
+  'ชาวบ้านในชุดผ้าฝ้ายโบราณวิ่งผ่าน บางคนแบกกระสอบข้าว บางคนอุ้มลูก': 'Villagers in ancient cotton clothes run past in panic, some carry rice sacks, a mother holds her child',
+  'ต้นเดินออกจากหลังต้นไม้ มองชาวบ้านที่วิ่งผ่านหน้า': 'Ton steps out from behind the tree and watches the villagers running past',
+  'ชาวบ้านที่วิ่งผ่านหน้า': 'ancient villagers in cotton clothes running past in panic',
+  'ต้นกับทหารทะเลาะกันเสียงดัง': 'Ton and a soldier argue loudly'
+};
+const shots = chineseDramaShots(clips, opts, TR);
+const thaiOutsideQuotes = (p: string) => /[ก-๙]/.test(p.replace(/"[^"]*"/g, ''));
 
 check('angle count: silent 1, dialogue 2, conflict 5', () => {
   assert.deepEqual(shots.map(s => s.angles.length), [1, 2, 2, 5]);
-  assert.equal(shots[3].kind, 'conflict');
 });
-check('every prompt: opening, style suffix, locks', () => {
+check('every prompt: opening, style suffix (no camera), English outside the quoted dialogue', () => {
   for (const s of shots) for (const a of s.angles) {
     assert.ok(a.prompt.startsWith(CHINESE_DRAMA_OPENING));
-    assert.ok(a.prompt.includes(CHINESE_DRAMA_STYLE));
-    assert.ok(a.prompt.includes('ล็อกสถานที่: สถานที่ ป่าชายแดน'));
-    assert.ok(!/whoosh|music swell|heartbeat/i.test(a.prompt));
+    assert.ok(a.prompt.endsWith(CHINESE_DRAMA_STYLE));
+    assert.ok(!/Static camera on dialogue|push-in on emotional/i.test(CHINESE_DRAMA_STYLE));
+    assert.ok(!thaiOutsideQuotes(a.prompt), a.prompt);
+    assert.ok(a.prompt.includes('Location lock: border jungle, daytime'));
   }
-  assert.ok(shots[0].angles[0].prompt.includes('เสื้อยืดสีกรมท่า'));
+  assert.deepEqual(shots.flatMap(s => s.untranslated), []);
 });
-check('dialogue exact, voice carries over the reaction, Thai notes', () => {
-  assert.ok(shots[2].angles[0].prompt.includes('ต้น speaks Thai exactly: "เดี๋ยวก่อนครับ! นี่ถ่ายละครกันอยู่เหรอ?"'));
-  assert.ok(shots[2].angles[1].prompt.includes('voice continues off-screen'));
+check('one camera instruction per angle: static speaker, push-in listener', () => {
+  for (const s of shots) for (const a of s.angles) {
+    const n = (a.prompt.match(/static camera|slow push-in/gi) || []).length;
+    assert.equal(n, 1, a.prompt);
+  }
+  assert.ok(/static camera/.test(shots[2].angles[0].prompt) && /slow push-in/.test(shots[2].angles[1].prompt));
+});
+check('listener from the previous shot; on-screen face lock only; no line in listener angle', () => {
+  const b17 = shots[1].angles[1].prompt;
+  assert.ok(b17.includes('Reaction shot of Ton') && b17.includes('hides behind a huge tree'));
+  assert.ok(b17.includes("Ton's profile photo") && !b17.includes('a male villager'));
+  assert.ok(!b17.includes('the people or scene'));
+  const b18 = shots[2].angles[1].prompt;
+  assert.ok(b18.includes('villagers in cotton clothes running past') && !b18.includes('Character lock'));
+  for (const s of shots.slice(1, 3)) {
+    assert.ok(s.angles[1].prompt.includes(NO_ONE_SPEAKS));
+    assert.ok(!s.angles[1].prompt.includes('speaks Thai'));
+    assert.ok(s.angles[0].prompt.includes('speaks Thai exactly: "'));
+  }
+  assert.ok(shots[0].angles[0].prompt.includes('navy t-shirt') && shots[0].angles[0].prompt.includes('No one speaks.'));
+});
+check('Thai editing notes: L-cut, J-cut, cut length 1.5–3 s', () => {
   assert.ok(shots[2].notes.some(n => n.startsWith('L-cut')));
   assert.ok(shots[1].notes.some(n => n.includes('J-cut')));
   for (const s of shots) for (const a of s.angles) assert.ok(a.seconds >= 1.5 && a.seconds <= 3);
 });
-check('copy-all text has every shot', () => {
-  const all = formatAllChineseDrama(clips, opts);
-  assert.ok(all.includes('ช็อต 16') && all.includes('ช็อต 18') && all.includes('วิธีตัดต่อ'));
+check('offline fallback: no translations -> glossary for time/light, Thai kept and reported', () => {
+  const s = formatChineseDramaShot(clips[0], opts);
+  assert.ok(s.angles[0].prompt.includes('daytime') && s.angles[0].prompt.includes('bright natural daylight'));
+  assert.ok(s.untranslated.length > 0);
+  assert.ok(dramaTranslatables(clips, opts).includes('ป่าชายแดน'));
 });
-if (process.env.PRINT_SAMPLE) console.log(formatAllChineseDrama(clips.slice(0, 3), opts));
+if (process.env.PRINT_SAMPLE) console.log(formatAllChineseDrama(clips.slice(0, 3), opts, TR));
 console.log(`chineseDrama: ${passed} passed`);

@@ -6,7 +6,7 @@ import { runWholeStory, type StoryClip } from '../services/wholeStoryRunner';
 import { metaOptionsForStory, offlineContinuation } from '../services/storyProgress';
 import { isClipByClipScript } from '../services/storyNormalize';
 import { packMultiDialogueClips, MULTI_DIALOGUE_SECONDS } from '../services/multiDialogueClips';
-import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, formatPlaceVideoBatch, VIDEO_BATCH_SIZE, attachmentLine, sensitiveWords, formatLocationMasterPrompt, thaiLighting, locationNote, locationNoteFor, metaContextFor, characterNote, charactersInClip, photoNumbers, formatChineseDramaShot, formatDramaShotText, formatAllChineseDrama } from '../services/metaAiPrompt';
+import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, formatPlaceVideoBatch, VIDEO_BATCH_SIZE, attachmentLine, sensitiveWords, formatLocationMasterPrompt, thaiLighting, locationNote, locationNoteFor, metaContextFor, characterNote, charactersInClip, photoNumbers, formatDramaShotText, formatAllChineseDrama, chineseDramaShots, dramaTranslatables } from '../services/metaAiPrompt';
 import { toCharacterLockPayload } from '../services/characterAppearance';
 
 /**
@@ -105,11 +105,31 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
     () => clips.map((c, i) => formatClipForMetaAi(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) })),
     [clips, metaOpts]
   );
-  // Chinese short drama: several short angle prompts per clip + Thai editing notes
-  const dramaTexts = useMemo(
-    () => clips.map((c, i) => formatDramaShotText(formatChineseDramaShot(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) }, clips[i + 1] as any), String(c.title || ''))),
-    [clips, metaOpts]
-  );
+  // Chinese short drama: several short angle prompts per clip + Thai editing notes. English prompt
+  // text: Thai names / actions / places translated by the server AI (cached on the device).
+  const [dramaTr, setDramaTr] = useState<Record<string, string>>(() => loadJson<Record<string, string>>('sala_drama_tr_en', {}));
+  const [dramaTrState, setDramaTrState] = useState<'' | 'busy' | 'failed'>('');
+  const dramaNeed = useMemo(() => running ? [] : dramaTranslatables(clips as any, metaOpts).filter(t => !dramaTr[t]), [clips, metaOpts, dramaTr, running]);
+  useEffect(() => {
+    if (!dramaNeed.length || dramaTrState === 'busy') return;
+    let cancelled = false;
+    setDramaTrState('busy');
+    fetch('/api/translate/en', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texts: dramaNeed }) })
+      .then(r => r.json())
+      .then(j => {
+        if (cancelled) return;
+        if (!j?.success) { setDramaTrState('failed'); return; }
+        const merged = { ...dramaTr, ...(j.translations || {}) };
+        try { localStorage.setItem('sala_drama_tr_en', JSON.stringify(merged)); } catch { /* full storage */ }
+        setDramaTr(merged);
+        setDramaTrState(Object.keys(j.translations || {}).length ? '' : 'failed');
+      })
+      .catch(() => { if (!cancelled) setDramaTrState('failed'); });
+    return () => { cancelled = true; };
+  }, [dramaNeed.join('|')]);
+  const dramaShots = useMemo(() => chineseDramaShots(clips as any, metaOpts, dramaTr), [clips, metaOpts, dramaTr]);
+  const dramaTexts = useMemo(() => dramaShots.map((s, i) => formatDramaShotText(s, String(clips[i]?.title || ''))), [dramaShots, clips]);
+
   // Box 1 of every card: a still image that matches the clip (made first, then animated)
   const imagePrompts = useMemo(
     () => clips.map((c, i) => formatClipImagePrompt(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) })),
@@ -313,7 +333,7 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
               </div>
             )}
             {!running && (
-              <button type="button" onClick={() => copy(formatAllChineseDrama(clips as any, metaOpts), 'dramaAll')}
+              <button type="button" onClick={() => copy(formatAllChineseDrama(clips as any, metaOpts, dramaTr), 'dramaAll')}
                 className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-500/60 bg-rose-600/20 px-3 py-2 text-[13px] font-semibold text-rose-200">
                 {copied === 'dramaAll' ? <><Check className="w-4 h-4" /> คัดลอกแล้ว</> : <><Copy className="w-4 h-4" /> คัดลอกแบบหนังจีนทั้งหมด (หลายมุม + วิธีตัดต่อ)</>}
               </button>
@@ -431,6 +451,9 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                         {copied === `drama${i}` ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> คัดลอกแล้ว</> : <><Copy className="w-3.5 h-3.5" /> คัดลอกแบบหนังจีน</>}
                       </button>
                     </div>
+                    {dramaShots[i]?.untranslated.length > 0 && (
+                      <div className="mt-1 text-[12px] text-amber-200">{dramaTrState === 'busy' ? 'กำลังแปลเป็นอังกฤษ...' : 'ยังแปลเป็นอังกฤษไม่ครบ (ต้องต่อเน็ตและตั้งค่า Gemini) ข้อความไทยบางส่วนยังอยู่ในพรอมต์'}</div>
+                    )}
                     <details className="mt-1">
                       <summary className="text-[12px] text-slate-400 cursor-pointer">ดูทุกมุมและวิธีตัดต่อ</summary>
                       <p className="mt-1.5 text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">{dramaTexts[i]}</p>

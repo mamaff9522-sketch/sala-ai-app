@@ -2707,6 +2707,29 @@ function buildLockedContinuityContext(continuityLock: any, characters?: any[], l
 
 // 6.2.1 AI Script Splitter Endpoint (Gemini Flash, strict: no silent fallback)
 // The local parser is used ONLY when the user explicitly chooses offline mode.
+// Thai -> English for the Chinese-drama Meta prompts (names, looks, places, actions). Dialogue is never sent.
+app.post('/api/translate/en', async (req: express.Request, res: express.Response) => {
+  try {
+    const texts: string[] = Array.isArray(req.body?.texts) ? req.body.texts.filter((t: unknown) => typeof t === 'string' && t.trim()).slice(0, 200).map((t: string) => t.slice(0, 600)) : [];
+    if (!texts.length) return res.json({ success: true, translations: {} });
+    const headerKey = typeof req.headers['x-gemini-key'] === 'string' ? (req.headers['x-gemini-key'] as string) : '';
+    const ai = getGeminiClient(headerKey.trim() || undefined);
+    if (!ai) return res.status(400).json({ success: false, code: 'GEMINI_KEY_MISSING', message: 'ยังไม่ได้ตั้งค่า Gemini API Key แปลเป็นอังกฤษไม่ได้' });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.1-flash-lite',
+      contents: `Translate each Thai text to short natural English for a video-generation prompt. Character names: romanize (e.g. ต้น -> Ton). Return ONLY a JSON object mapping each original text to its English.\n${JSON.stringify(texts)}`,
+      config: { responseMimeType: 'application/json' }
+    });
+    const raw = (response.text || '').replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+    const parsed = JSON.parse(raw || '{}');
+    const translations: Record<string, string> = {};
+    for (const t of texts) if (typeof parsed?.[t] === 'string' && parsed[t].trim()) translations[t] = parsed[t].trim();
+    res.json({ success: true, translations });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: `แปลไม่สำเร็จ: ${err?.message || err}` });
+  }
+});
+
 app.post('/api/script/split', async (req: express.Request, res: express.Response) => {
   try {
     const {
