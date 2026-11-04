@@ -1413,7 +1413,7 @@ export const AUDIO_SPEECH = 'Audio: spoken dialogue only. No music, no sound eff
 export const AUDIO_SILENT = 'Audio: silent, no voice, no music, no sound effects.';
 export const NO_ONE_SPEAKS = 'No one on screen speaks, mouths closed.';
 
-export const CONFLICT_RE = /ต่อสู้|สู้กัน|ทะเลาะ|ปะทะ|ชก|ต่อย|ตบ|เตะ|ฟัน|แทง|ยิง|ดวล|เถียง|ด่า|ตวาด|ไคลแม็กซ์|ไคลแมกซ์|climax|fight|argue|argument|conflict|duel/i;
+export const CONFLICT_RE = /ต่อสู้|สู้กัน|ทะเลาะ|ปะทะ|ชก|ต่อย|ตบ|เตะ|ฟัน|แทง|ยิง|ดวล|เถียง|ด่า|ตวาด|ล้อม|ขู่|ชี้ดาบ|จ่อปืน|ดาบ|ไคลแม็กซ์|ไคลแมกซ์|climax|fight|argue|argument|conflict|duel|surround|threaten/i;
 
 /** Thai -> English for the drama prompts (from the server's AI; Thai text with no entry gets the glossary or stays). */
 export type DramaTranslations = Record<string, string>;
@@ -1430,13 +1430,49 @@ const LIGHT_EN: Record<string, string> = {
 };
 const hasThai = (t: string) => /[ก-๙]/.test(t);
 
+// Offline name romanizer (rough RTGS): used only when the server gave no English for a name
+const TH_INIT: Record<string, string> = { ก:'k',ข:'kh',ฃ:'kh',ค:'kh',ฅ:'kh',ฆ:'kh',ง:'ng',จ:'ch',ฉ:'ch',ช:'ch',ซ:'s',ฌ:'ch',ญ:'y',ฎ:'d',ฏ:'t',ฐ:'th',ฑ:'th',ฒ:'th',ณ:'n',ด:'d',ต:'t',ถ:'th',ท:'th',ธ:'th',น:'n',บ:'b',ป:'p',ผ:'ph',ฝ:'f',พ:'ph',ฟ:'f',ภ:'ph',ม:'m',ย:'y',ร:'r',ล:'l',ว:'w',ศ:'s',ษ:'s',ส:'s',ห:'h',ฬ:'l',อ:'',ฮ:'h' };
+const TH_FINAL: Record<string, string> = { ก:'k',ข:'k',ค:'k',ฆ:'k',ง:'ng',จ:'t',ช:'t',ซ:'t',ญ:'n',ฎ:'t',ฏ:'t',ฐ:'t',ฑ:'t',ฒ:'t',ณ:'n',ด:'t',ต:'t',ถ:'t',ท:'t',ธ:'t',น:'n',บ:'p',ป:'p',พ:'p',ฟ:'p',ภ:'p',ม:'m',ย:'i',ร:'n',ล:'n',ว:'o',ศ:'t',ษ:'t',ส:'t',ฬ:'n' };
+const TH_VOWEL: Record<string, string> = { 'ะ':'a','ั':'a','า':'a','ำ':'am','ิ':'i','ี':'i','ึ':'ue','ื':'ue','ุ':'u','ู':'u','เ':'e','แ':'ae','โ':'o','ใ':'ai','ไ':'ai','็':'' };
+export function romanizeThaiName(name: string): string {
+  const PRE = 'เแโใไ';
+  const isC = (c?: string) => !!c && TH_INIT[c] !== undefined;
+  const words = String(name || '').trim().split(/\s+/).map(w => {
+    const ch = Array.from(w.replace(/[่้๊๋์็]/g, '').replace(/ฤ/g, 'ร')); // ฤ ~ rue
+    let out = ''; let state: 'start' | 'init' | 'vowel' | 'final' = 'start'; let pending = '';
+    for (let i = 0; i < ch.length; i++) {
+      const c = ch[i]; const nx = ch[i + 1];
+      const nextIsVowel = !!nx && !isC(nx) && !PRE.includes(nx) && TH_VOWEL[nx] !== undefined;
+      if (PRE.includes(c)) { pending = TH_VOWEL[c]; state = 'final'; continue; }
+      if (isC(c)) {
+        if (state === 'init') {
+          if (c === 'อ' || c === 'ว' && !nextIsVowel && nx) { out += c === 'อ' ? 'o' : 'ua'; state = 'vowel'; continue; }
+          if (nextIsVowel) { out += 'a' + TH_INIT[c]; state = 'init'; continue; }
+          out += 'o' + (TH_FINAL[c] ?? TH_INIT[c]); state = 'final'; continue;
+        }
+        if (state === 'vowel' && (!nx || isC(nx) || PRE.includes(nx)) && !pending) { out += TH_FINAL[c] ?? TH_INIT[c]; state = 'final'; continue; }
+        out += TH_INIT[c];
+        if (pending) { out += pending; pending = ''; state = 'vowel'; } else state = 'init';
+        continue;
+      }
+      if (TH_VOWEL[c] !== undefined) { out += TH_VOWEL[c]; state = 'vowel'; continue; }
+      out += c;
+    }
+    if (state === 'init') out += 'o';
+    out = out.replace(/[^A-Za-z]/g, '');
+    return out ? out[0].toUpperCase() + out.slice(1) : '';
+  }).filter(Boolean);
+  return words.join(' ') || 'Character';
+}
+
 function makeTr(map: DramaTranslations = {}) {
-  return (t: string, kind: 'time' | 'light' | 'text' = 'text'): string => {
+  return (t: string, kind: 'time' | 'light' | 'text' | 'name' = 'text'): string => {
     const x = String(t || '').trim().replace(/[.\s]+$/, '');
     if (!x || !hasThai(x)) return x;
     if (map[x]) return map[x].trim().replace(/[.\s]+$/, '');
     if (kind === 'time') return TIME_EN.find(([re]) => re.test(x))?.[1] || x;
     if (kind === 'light') return LIGHT_EN[x] || x;
+    if (kind === 'name') return romanizeThaiName(x);
     return x;
   };
 }
@@ -1486,24 +1522,33 @@ const ANGLE_LETTERS = 'ABCDEFGH';
 
 /** One script shot as Chinese-short-drama angle prompts (each its own 5 s Meta AI video). */
 export function formatChineseDramaShot(
-  clip: ClipForMeta, opts: MetaAiFormatOptions = {}, next?: ClipForMeta, prev?: ClipForMeta, translations: DramaTranslations = {}
+  clip: ClipForMeta, opts: MetaAiFormatOptions = {}, next?: ClipForMeta, prev?: ClipForMeta | ClipForMeta[], translations: DramaTranslations = {}
 ): DramaShot {
   const trRaw = makeTr(translations);
   const untranslated = new Set<string>();
-  const tr = (t: string, kind: 'time' | 'light' | 'text' = 'text') => { const r = trRaw(t, kind); if (hasThai(r)) untranslated.add(r); return r; };
+  const tr = (t: string, kind: 'time' | 'light' | 'text' | 'name' = 'text') => { const r = trRaw(t, kind); if (hasThai(r)) untranslated.add(r); return r; };
   const { f, faces, action } = dramaCtx(clip, opts);
   const attachCount = attachmentsFor(clip, opts, f, 'video').list.length;
-  const prevCtx = prev ? dramaCtx(prev, { ...opts, previous: undefined, inheritedPlace: f.place }) : undefined;
+  // earlier shots still in the same scene (nearest first; a scene change stops the search)
+  const prevList = (Array.isArray(prev) ? prev : prev ? [prev] : []);
+  const prevCtxs: DramaCtx[] = [];
+  for (const p of prevList) {
+    const c = dramaCtx(p, { ...opts, previous: undefined, inheritedPlace: f.place });
+    if (f.place.location && c.f.place.location && !samePlace(f.place.location, c.f.place.location)) break;
+    prevCtxs.push(c);
+  }
+  const prevCtx = prevCtxs[0];
+  const nm = (n: string) => tr(n, 'name');
   const photoOf = new Map<string, number>();
   faces.forEach(x => photoOf.set(x.name, x.n));
-  const noteOf = (n: string) => f.notes[n] || prevCtx?.f.notes[n] || (opts.characterNotes?.[n] || '').replace(/[.\s]+$/, '');
+  const noteOf = (n: string) => f.notes[n] || prevCtxs.map(c => c.f.notes[n]).find(Boolean) || (opts.characterNotes?.[n] || '').replace(/[.\s]+$/, '');
 
   const charLock = (names: string[]) => {
     if (!names.length) return '';
     const who = names.map(n => {
       const ph = photoOf.get(n);
       const note = noteOf(n);
-      return `${ph ? `photo ${ph} is the face reference for ${tr(n)}` : `${tr(n)} (no reference photo)`}${note ? `, look: ${tr(note)}` : ''}`;
+      return `${ph ? `photo ${ph} is the face reference for ${nm(n)}` : `${nm(n)} (no reference photo)`}${note ? `, look: ${tr(note)}` : ''}`;
     }).join('; ');
     return `Character lock: ${who}. Keep the same face, hair, makeup, accessories, outfit and voice in every clip; never turn into another person.`;
   };
@@ -1519,7 +1564,7 @@ export function formatChineseDramaShot(
   // a character borrowed from the previous shot gets the next photo number of this clip
   const borrowed: { name: string; n: number }[] = [];
   const borrow = (n: string) => {
-    if (photoOf.has(n) || !prevCtx?.f.photoNames.includes(n)) return;
+    if (photoOf.has(n) || !prevCtxs.some(c => c.f.photoNames.includes(n))) return;
     const num = attachCount + borrowed.length + 1;
     borrowed.push({ name: n, n: num });
     photoOf.set(n, num);
@@ -1529,19 +1574,19 @@ export function formatChineseDramaShot(
   const allText = [action, ...f.lines.map(l => l.line)].join(' ');
   const kind: DramaShot['kind'] = CONFLICT_RE.test(allText) ? 'conflict' : f.lines.length ? 'dialogue' : 'silent';
   const hero = f.speakers[0] || f.names[0] || '';
-  const heroEn = hero ? tr(hero) : 'the main character';
+  const heroEn = hero ? nm(hero) : 'the main character';
   const other = f.names.find(n => n !== hero) || '';
   const actEn = tr(action);
   const angles: DramaAngle[] = [];
   const notes: string[] = [];
   const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
-  const say = (l: ClipLine) => `${cap(tr(l.speaker || hero))} speaks Thai exactly: "${l.line}"`;
+  const say = (l: ClipLine) => `${cap(nm(l.speaker || hero))} speaks Thai exactly: "${l.line}"`;
   const push = (label: string, seconds: number, prompt: string, onScreen: string[]) => angles.push({ label, seconds, prompt, onScreen });
 
   if (kind === 'conflict') {
     const l0 = f.lines[0];
     const l1 = f.lines[1];
-    const otherEn = other ? tr(other) : 'the opponent';
+    const otherEn = other ? nm(other) : 'the opponent';
     push('Close-up', 2, build(`Close-up of ${heroEn}'s face, intense emotion, static camera.`, actEn, l0 ? `${say(l0)}, lips shown briefly.` : NO_ONE_SPEAKS, hero ? [hero] : []), hero ? [hero] : []);
     push('Over-the-shoulder', 2, build(`Over-the-shoulder shot from behind ${otherEn} toward ${heroEn}, static camera.`, actEn, l1 ? `${say(l1)}.` : NO_ONE_SPEAKS, f.names), f.names);
     push('Low angle (hero)', 2, build(`Low angle shot looking up at ${heroEn}, the hero looks strong, static camera.`, actEn, NO_ONE_SPEAKS, hero ? [hero] : []), hero ? [hero] : []);
@@ -1552,24 +1597,29 @@ export function formatChineseDramaShot(
   } else if (kind === 'dialogue') {
     f.lines.forEach((l, i) => {
       const speaker = l.speaker || hero;
-      const spEn = tr(speaker);
+      const spEn = nm(speaker);
       push(`Close-up ${speaker} (ผู้พูด)`, 1.5, build(`Close-up of ${spEn}'s face, static camera, lips shown briefly.`, actEn, `${say(l)}.`, [speaker]), [speaker]);
       // listener: someone else named in this shot, else the main character of the previous shot,
       // else what the speaker is looking at (when the action says so, it wins over the previous shot)
-      const prevMain = prevCtx ? (prevCtx.f.speakers[0] || prevCtx.f.names[0] || '') : '';
       const target = lookTarget(action);
-      const listener = f.names.find(n => n !== speaker) || (!target && prevMain && prevMain !== speaker ? prevMain : '');
+      const others = f.names.filter(n => n !== speaker);
+      const nextSp = f.lines[i + 1]?.speaker || '';
+      const lastSp = f.lines[i - 1]?.speaker || '';
+      const named = others.find(n => n === nextSp) || others.find(n => n === lastSp) || others.find(n => action.includes(n)) || others[0] || '';
+      const fromCtx = !named && !target ? prevCtxs.find(c => [...c.f.speakers, ...c.f.names].some(n => n && n !== speaker)) : undefined;
+      const prevMain = fromCtx ? [...fromCtx.f.speakers, ...fromCtx.f.names].find(n => n && n !== speaker) || '' : '';
+      const listener = named || prevMain;
       let label: string; let cam: string; let act: string; let onScreen: string[];
       if (listener) {
-        const lEn = tr(listener);
-        const fromPrev = !f.names.includes(listener) && prevCtx;
+        const lEn = nm(listener);
+        const fromPrev = !f.names.includes(listener) ? fromCtx : undefined;
         if (fromPrev) borrow(listener);
         label = `Reaction ${listener} (ผู้ฟัง)`;
         cam = `Reaction shot of ${lEn}, slow push-in.`;
-        act = fromPrev ? `${lEn} stays as at the end of the previous shot (${tr(prevCtx!.action)}), silently watching what happens` : `${lEn} listens silently and reacts`;
+        act = fromPrev ? `${lEn} stays as at the end of the previous shot (${tr(fromPrev.action)}), silently watching what happens` : `${lEn} listens silently and reacts`;
         onScreen = [listener];
       } else {
-        const seen = target ? tr(target) : (prevCtx ? tr(prevCtx.action) : actEn);
+          const seen = target ? tr(target) : (prevCtx ? tr(prevCtx.action) : actEn);
         label = 'Reaction (สิ่งที่ผู้พูดมอง)';
         cam = `Point-of-view shot of what ${spEn} is looking at, slow push-in.`;
         act = `${seen}; ${spEn} is not in the frame`;
@@ -1579,8 +1629,14 @@ export function formatChineseDramaShot(
       notes.push(`L-cut: เห็นปาก${speaker}ในมุม ${ANGLE_LETTERS[i * 2]} แค่ต้นประโยค แล้วตัดไปมุม ${ANGLE_LETTERS[i * 2 + 1]} โดยลากเสียงประโยค "${l.line}" จากมุม ${ANGLE_LETTERS[i * 2]} คร่อมภาพจนจบ (คลิปมุม ${ANGLE_LETTERS[i * 2 + 1]} ไม่มีเสียงพูด)`);
     });
   } else {
-    const on = f.names.length ? f.names : [];
-    push('Single angle', 3, build(`Medium close-up of ${on.length ? on.map(n => tr(n)).join(' and ') : 'the scene'}, slow push-in.`, actEn, 'No one speaks.', on), on);
+    const on = f.names;
+    if (on.length) push('Single angle', 3, build(`Medium close-up of ${on.slice(0, 2).map(n => nm(n)).join(' and ')}, slow push-in.`, actEn, 'No one speaks.', on.slice(0, 2)), on.slice(0, 2));
+    else push('Establishing (ไม่มีตัวละคร)', 3, build('Wide establishing shot of the location, no people in frame, slow push-in.', actEn, 'No one speaks.', []), []);
+  }
+  // 3 or more characters in the scene: one over-the-shoulder group angle (conflict shots already have one)
+  if (kind !== 'conflict' && f.names.length >= 3) {
+    const [a1, b1] = [hero || f.names[0], f.names.find(n => n !== (hero || f.names[0]))!];
+    push('Over-the-shoulder (กลุ่ม)', 2, build(`Over-the-shoulder shot from behind ${nm(b1)} toward ${nm(a1)} and the others, slow push-in.`, actEn, NO_ONE_SPEAKS, f.names), f.names);
   }
   for (const b of borrowed) notes.push(`แนบรูปเพิ่ม: รูปที่ ${b.n} = รูปโปรไฟล์ของ${b.name} (ต่อจากรูปอื่นของคลิปนี้) ใช้ในมุมที่มี${b.name}`);
   angles.forEach((a, i) => notes.push(`มุม ${ANGLE_LETTERS[i]} (${a.label}): ตัดยาว ${a.seconds} วินาที`));
@@ -1601,7 +1657,7 @@ export function formatDramaShotText(s: DramaShot, title = ''): string {
 }
 
 export function chineseDramaShots(clips: ClipForMeta[], opts: MetaAiFormatOptions = {}, translations: DramaTranslations = {}): DramaShot[] {
-  return clips.map((c, i) => formatChineseDramaShot(c, { ...opts, ...metaContextFor(clips, i) }, clips[i + 1], clips[i - 1], translations));
+  return clips.map((c, i) => formatChineseDramaShot(c, { ...opts, ...metaContextFor(clips, i) }, clips[i + 1], clips.slice(Math.max(0, i - 3), i).reverse(), translations));
 }
 
 /** Every clip in Chinese short drama format, ready to copy. */
