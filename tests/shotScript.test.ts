@@ -25,9 +25,9 @@ check('ช็อต labels: 18 clips numbered 11–28, also คลิป / ฉ�
 });
 check('header = locks on every clip, not shots; duration from the script', () => {
   for (const sh of shots) for (const a of sh.angles) {
-    assert.ok(a.prompt.includes('Location lock: the border forest') && a.prompt.includes('early morning'), a.prompt);
-    assert.ok(a.prompt.includes("No modern buildings, roads, vehicles or technology in the forest, except Ton's phone."));
-    assert.ok(a.prompt.includes('10 seconds') && a.prompt.includes('Continuity: same outfits'));
+    assert.ok(a.prompt.includes('In the border forest at early morning'), a.prompt);
+    assert.ok(/No modern objects except Ton's phone\.|Same phone \(18% battery\); nothing else modern\./.test(a.prompt), a.prompt);
+    assert.ok(a.prompt.includes('10-second'));
     assert.ok(!thaiOut(a.prompt), a.prompt);
     assert.equal(a.attachments[0]?.n, 1);
   }
@@ -37,14 +37,14 @@ check('cast per shot: villagers not lingering, numbered soldiers kept whole and 
   assert.deepEqual(byN(21).angles[3].onScreen, ['ทหารคนที่ 1', 'ทหารคนที่ 2', 'ทหารคนที่ 3']);
   const looks = ['ทหารคนที่ 1', 'ทหารคนที่ 2', 'ทหารคนที่ 3'].map(n => s.characterNotes[n]);
   assert.equal(new Set(looks).size, 3);
-  assert.ok(P(21).includes('the three Suriyanakhon soldiers'));
+  assert.ok(P(21).includes('Three Suriyanakhon soldiers'));
 });
 check('self-talk -> POV of what the speaker sees', () => {
   assert.ok(P(15).includes('Cart-wheel tracks') && P(13).includes('no road or wall'));
   assert.ok(P(14).includes('phone screen') && P(14).includes('18%'));
 });
 check('props lock: same phone, battery 18% from shot 14', () => {
-  assert.ok(P(14).includes('Props lock') && P(26).includes('Props lock') && P(26).includes('18%'));
+  assert.ok(P(14).includes('Same phone') && P(26).includes('Same phone') && P(26).includes('18%'));
 });
 check('sounds become reactions, audio stays speech-only plus "No <sound>"', () => {
   assert.ok(P(16).includes('reacts as if hearing many footsteps') && P(16).includes(`${AUDIO_SILENT} No footsteps.`));
@@ -70,12 +70,32 @@ check('every shot has A + B; no generic hero / key object; face refs only for pe
     for (const a of sh.angles) {
       assert.ok(!/\bhero\b|key object/i.test(a.prompt), a.prompt);
       assert.equal(a.attachments[0].n, 1);
-      const refs = (a.prompt.match(/photo \d+ is the face reference/g) || []).length;
+      const refs = (a.prompt.match(/Photo \d+ is /g) || []).length;
       assert.equal(refs, a.attachments.length - 1);
       assert.ok(a.attachments.slice(1).every(x => a.onScreen.includes(x.label)));
     }
   }
-  assert.ok(/Wide shot/.test(byN(16).angles[0].prompt) && /Close-up reaction shot of Ton/.test(byN(16).angles[1].prompt));
+  assert.ok(/Wide shot/.test(byN(16).angles[0].prompt) && /Close-up on Ton's face/.test(byN(16).angles[1].prompt));
   assert.ok(/phone/.test(byN(26).angles[4].prompt) && /rope/.test(byN(28).angles[4].prompt));
+});
+check('short format: every angle <= 90 words, no "lock:" lines, order header -> faces -> action -> camera -> dialogue -> tail', () => {
+  for (const sh of shots) for (const a of sh.angles) {
+    assert.ok(a.prompt.split(/\s+/).length <= 90, `${sh.shotNumber}: ${a.prompt.split(/\s+/).length} words: ${a.prompt}`);
+    assert.ok(!/lock:/i.test(a.prompt) && !/outfit\s*:/.test(a.prompt), a.prompt);
+    const i = (re: RegExp) => a.prompt.search(re);
+    assert.ok(a.prompt.startsWith('Generate a 10-second'));
+    if (a.attachments.length > 1) assert.ok(i(/Photo 2 is/) < i(/In the border forest/));
+    assert.ok(i(/In the border forest/) < i(/Chinese drama look/));
+    if (/speaks Thai exactly/.test(a.prompt)) assert.ok(i(/speaks Thai exactly/) < i(/Chinese drama look/));
+  }
+});
+check('review: 17 Ton hidden listener + OTS from behind the tree; 18 villagers on screen; 24/27 action; 28 no "stands firm"', () => {
+  const r17 = byN(17).angles.find(a => a.onScreen.length === 1 && a.onScreen[0] === 'ต้น')!;
+  assert.ok(/Ton hides behind a big tree/.test(r17.prompt));
+  assert.ok(/Over Ton's shoulder from behind a big tree/.test(byN(17).angles.find(a => /Over /.test(a.prompt))!.prompt));
+  const r18 = byN(18).angles[1];
+  assert.ok(r18.onScreen.includes('ชาวบ้าน') && /The villagers:/.test(r18.prompt));
+  for (const n of [24, 27]) assert.ok(byN(n).angles.every(a => /In the border forest at early morning, \S/.test(a.prompt)), String(n));
+  assert.ok(!/stands firm/.test(P(28)));
 });
 console.log(`shotScript: ${passed} passed`);

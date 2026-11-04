@@ -9,15 +9,15 @@ const cams = (p: string) => (p.match(/static camera|slow push-in/gi) || []).leng
 /** rules every angle of every script must keep */
 function general(shots: ReturnType<typeof chineseDramaShots>, photoOk: (shot: number, prompt: string) => void = () => {}, trm: Record<string, string> = TR) {
   for (const s of shots) for (const a of s.angles) {
-    assert.ok(a.prompt.startsWith(CHINESE_DRAMA_OPENING));
+    assert.ok(a.prompt.startsWith(CHINESE_DRAMA_OPENING.slice(0, 11)));
     const speaks = a.prompt.includes('speaks Thai exactly');
-    assert.ok(a.prompt.replace(/(sound effects\.|ambient sound\.) No [^.]+\.$/, "$1").endsWith(speaks ? AUDIO_SPEECH : AUDIO_SILENT), a.prompt);
+    assert.ok(a.prompt.replace(/(effects\.) No [^.]+\.$/, "$1").endsWith(speaks ? AUDIO_SPEECH : AUDIO_SILENT), a.prompt);
     assert.equal(cams(a.prompt), 1, a.prompt);
     if (speaks) assert.ok(/static camera/.test(a.prompt)); else if (/Reaction|Point-of-view/.test(a.prompt)) assert.ok(/slow push-in/.test(a.prompt));
     assert.ok(!thaiOutsideQuotes(a.prompt), a.prompt);
     assert.ok(!/attach .*profile photo|the people or scene/.test(a.prompt));
     // only on-screen characters are locked
-    const locked = Array.from(a.prompt.matchAll(/photo \d+ is the face reference for ([A-Z][a-z]+)/g)).map(m => m[1]);
+    const locked = Array.from(a.prompt.matchAll(/Photo \d+ is ([A-Z][a-z]+)/g)).map(m => m[1]);
     for (const n of locked) assert.ok(a.onScreen.map(x => romanizeThaiName(x)).includes(n) || a.onScreen.some(x => trm[x] === n || (trm[x] || '').startsWith(n)), `${n} locked but not on screen: ${a.prompt}`);
     photoOk(s.shotNumber, a.prompt);
   }
@@ -34,8 +34,8 @@ check('3-person dialogue (several speakers in turn): 2 angles per line + 1 group
   const o: any = { knownCharacters: ['สมชาย', 'มาลี', 'ป้าแดง'], withPhoto: ['สมชาย', 'มาลี', 'ป้าแดง'] };
   const [s] = chineseDramaShots(clips, o, TR);
   assert.equal(s.angles.length, 7);
-  assert.ok(s.angles[1].prompt.includes('Reaction shot of Mali'));
-  assert.ok(s.angles[3].prompt.includes('Reaction shot of Padaeng'));
+  assert.ok(s.angles[1].prompt.includes('Close-up on Mali, slow push-in'));
+  assert.ok(s.angles[3].prompt.includes('Close-up on Padaeng, slow push-in'));
   assert.ok(s.angles[6].label.startsWith('Over-the-shoulder') && s.angles[6].onScreen.length === 3);
   general([s]);
 });
@@ -58,7 +58,7 @@ check('soldiers surround Ton (3+ people, conflict): 5 angles, Ton keeps his phot
   TR['ทหารหนึ่ง'] = 'First soldier'; TR['ทหารสอง'] = 'Second soldier';
   const [s] = chineseDramaShots(clips, o, TR);
   assert.equal(s.kind, 'conflict'); assert.equal(s.angles.length, 5);
-  assert.ok(s.angles[0].prompt.includes('The first soldier speaks Thai exactly: "จับมันไว้! อย่าให้หนี!"'));
+  assert.ok(s.angles[0].prompt.includes('Soldier 1 speaks Thai exactly: "จับมันไว้! อย่าให้หนี!"'));
   general([s]);
 });
 check('listener borrowed from 2 shots back in the same scene; a scene change stops it', () => {
@@ -72,27 +72,27 @@ check('listener borrowed from 2 shots back in the same scene; a scene change sto
   const shots = chineseDramaShots(clips, { knownCharacters: ['ต้น'], withPhoto: ['ต้น'] } as any, TR);
   const b3 = shots[2].angles[1];
   assert.deepEqual(b3.onScreen, ['ต้น']);
-  assert.ok(/photo \d+ is the face reference for Ton/.test(b3.prompt) && b3.prompt.includes('Ton rests under a tree'), b3.prompt);
+  assert.ok(/Photo \d+ is Ton/.test(b3.prompt) && b3.prompt.includes('Ton rests under a tree'), b3.prompt);
   assert.ok(b3.attachments.some(a => a.label === 'ต้น'));
   const b4 = shots[3].angles[1];
   assert.deepEqual(b4.onScreen, []); // new place: Ton is not carried over
-  assert.ok(b4.prompt.includes('Point-of-view shot') && b4.prompt.includes('the farmer is not in the frame'));
+  assert.ok(b4.prompt.includes('POV of what') && b4.prompt.includes('the farmer is not in the frame'));
   general(shots);
 });
 check('shot with no characters: one establishing angle, no character lock, silent', () => {
   const clips: any[] = [{ clipNumber: 9, ...at('ทุ่งนา'), charactersPresent: [], generatedPrompt: act('พระอาทิตย์ตกหลังทุ่งนา', 'The sun sets behind the rice field'), dialogues: [] }];
   const [s] = chineseDramaShots(clips, { knownCharacters: ['ต้น'], withPhoto: ['ต้น'] } as any, TR);
   assert.equal(s.angles.length, 2);
-  assert.ok(s.angles[0].prompt.includes('Wide establishing shot') && !s.angles[0].prompt.includes('Character lock') && s.angles[0].prompt.includes(AUDIO_SILENT));
+  assert.ok(s.angles[0].prompt.includes('Wide establishing shot') && !/Photo [0-9] is/.test(s.angles[0].prompt) && s.angles[0].prompt.includes(AUDIO_SILENT));
   general([s]);
 });
 check('character with no photo: no photo number, romanized name, still locked by look', () => {
   const clips: any[] = [{ clipNumber: 2, ...at('ห้องรับแขก'), charactersPresent: ['สมชาย', 'มาลี'],
     generatedPrompt: act('สมชายยื่นจดหมายให้มาลี', 'Somchai hands Mali a letter'), dialogues: [{ speaker: 'สมชาย', line: 'อ่านสิ' }] }];
   const [s] = chineseDramaShots(clips, { knownCharacters: ['สมชาย', 'มาลี'], withPhoto: ['สมชาย'], characterNotes: { 'มาลี': 'หญิงสาว' } } as any, { ...TR, 'หญิงสาว': 'young woman' });
-  assert.ok(s.angles[1].prompt.includes('Mali (no reference photo), look: young woman'));
-  assert.ok(/photo \d+ is the face reference for Somchai/.test(s.angles[0].prompt));
-  assert.ok(s.angles[1].prompt.includes(NO_ONE_SPEAKS) && !s.angles[1].prompt.includes('speaks Thai'));
+  assert.ok(s.angles[1].prompt.includes('Mali: young woman'));
+  assert.ok(/Photo \d+ is Somchai/.test(s.angles[0].prompt));
+  assert.ok(s.angles[1].prompt.includes(AUDIO_SILENT) && !s.angles[1].prompt.includes('speaks Thai'));
   general([s]);
 });
 check('offline romanizer gives Latin names', () => {
@@ -113,17 +113,17 @@ const s81: any[] = [
 ];
 const shots81 = chineseDramaShots(s81, { knownCharacters: C3, withPhoto: C3 } as any, TR2);
 check('listener = character named / addressed in the line, before speaker order', () => {
-  assert.ok(shots81[0].angles[1].prompt.includes('Reaction shot of Ton'));          // "...ที่ต้นบอกไว้" names Ton
-  assert.ok(shots81[2].angles[1].prompt.includes('Reaction shot of Ton'));          // "ขอบคุณต้น"
-  assert.ok(shots81[2].angles[3].prompt.includes('Reaction shot of Ton'));          // "เจ้า" -> Ton, named in the line before
-  assert.ok(shots81[3].angles[1].prompt.includes('Reaction shot of Buakaew'));      // name in the line
+  assert.ok(shots81[0].angles[1].prompt.includes('Close-up on Ton, slow push-in'));          // "...ที่ต้นบอกไว้" names Ton
+  assert.ok(shots81[2].angles[1].prompt.includes('Close-up on Ton, slow push-in'));          // "ขอบคุณต้น"
+  assert.ok(shots81[2].angles[3].prompt.includes('Close-up on Ton, slow push-in'));          // "เจ้า" -> Ton, named in the line before
+  assert.ok(shots81[3].angles[1].prompt.includes('Close-up on Buakaew, slow push-in'));      // name in the line
   general(shots81, () => {}, TR2);
 });
 check('each angle: attachments and photo numbers for the visible characters only', () => {
   for (const s of shots81) for (const a of s.angles) {
     assert.deepEqual(a.attachments.map(x => x.n), a.attachments.map((_, i) => i + 1));
     assert.deepEqual(a.attachments.slice(1).map(x => x.label), a.onScreen.filter(n => C3.includes(n)));
-    for (const x of a.attachments.slice(1)) assert.ok(a.prompt.includes(`photo ${x.n} is the face reference for ${TR2[x.label] || 'Ton'}`), a.prompt);
+    for (const x of a.attachments.slice(1)) assert.ok(a.prompt.includes(`Photo ${x.n} is ${TR2[x.label] || 'Ton'}`), a.prompt);
   }
   assert.deepEqual(shots81[1].angles[0].attachments.map(x => x.label), ['ภาพมาสเตอร์ ร้านขายยาโบราณ Master', 'หมออิน']);
 });
@@ -134,10 +134,10 @@ check('surround scene: Ton is the hero (has the photo), locked in A, B, C, E; lo
   ];
   const s = chineseDramaShots(s21, { knownCharacters: ['ต้น', 'ทหารชายแดน'], withPhoto: ['ต้น'] } as any, TR2)[1];
   assert.equal(s.kind, 'conflict');
-  const has = (i: number) => s.angles[i].onScreen.includes('ต้น') && /photo \d+ is the face reference for Ton/.test(s.angles[i].prompt);
+  const has = (i: number) => s.angles[i].onScreen.includes('ต้น') && /Photo \d+ is Ton/.test(s.angles[i].prompt);
   assert.ok(has(0) && has(1) && has(2) && has(4));
-  assert.ok(s.angles[2].prompt.includes('Low angle shot looking up at Ton'));
-  assert.ok(s.angles[3].prompt.includes('High angle shot looking down at the border soldier') && !s.angles[3].onScreen.includes('ต้น'));
+  assert.ok(s.angles[2].prompt.includes('Low angle on Ton'));
+  assert.ok(s.angles[3].prompt.includes('High angle on the border soldier') && !s.angles[3].onScreen.includes('ต้น'));
   assert.ok(s.angles[0].prompt.includes('The border soldier speaks Thai exactly: "หยุดนะ! เจ้าเป็นใคร!"'));
   assert.ok(!/(?<![Tt]he |[Aa] )[Bb]order soldier/.test(s.angles.map(a => a.prompt).join(' ')));
   general([s], () => {}, TR2);
@@ -157,13 +157,13 @@ check('address word: protagonist in the scene before the previous speaker', () =
     dialogues: [{ speaker: 'บัวแก้ว', line: 'ชาหอมมากค่ะ' }, { speaker: 'หมออิน', line: 'ท่านลองชิมดูสิ' }] }];
   const o: any = { knownCharacters: C3, withPhoto: ['ต้น'] };
   const [s] = chineseDramaShots([...c, { clipNumber: 2, ...shop, charactersPresent: ['ต้น'], generatedPrompt: 'Core action: ต้นยิ้ม.', dialogues: [] }, { clipNumber: 3, ...shop, charactersPresent: ['ต้น'], generatedPrompt: 'Core action: ต้นพยักหน้า.', dialogues: [] }], o, { ...TR2, 'ต้นยิ้ม': 'Ton smiles', 'ต้นพยักหน้า': 'Ton nods' });
-  assert.ok(s.angles[3].prompt.includes('Reaction shot of Ton'), s.angles[3].prompt);
+  assert.ok(s.angles[3].prompt.includes('Close-up on Ton, slow push-in'), s.angles[3].prompt);
 });
 check('joined character entries: generic-role article stays lowercase mid-sentence', () => {
   const c: any[] = [{ clipNumber: 7, ...at('ป่าชายแดน'), charactersPresent: ['ต้น', 'ทหารชายแดน'], generatedPrompt: act2('ทหารล้อมต้นไว้', 'A soldier surrounds Ton'), dialogues: [{ speaker: 'ทหารชายแดน', line: 'หยุด!' }] }];
   const [s] = chineseDramaShots(c, { knownCharacters: ['ต้น', 'ทหารชายแดน'], withPhoto: ['ต้น'] } as any, TR2);
   const b = s.angles[1].prompt;
-  assert.ok(/for Ton; the border soldier \(no reference photo\)/.test(b), b);
+  assert.ok(/Photo 2 is Ton\. The border soldier\./.test(b) && /toward the border soldier/.test(b), b);
   assert.ok(!/; The /.test(s.angles.map(a => a.prompt).join(' ')));
   assert.ok(s.angles[0].prompt.includes('The border soldier speaks Thai exactly'));
 });

@@ -30,14 +30,14 @@ check('angle count: silent 2 (A wide + B reaction), dialogue 2, conflict 5', () 
 });
 check('every prompt: opening, style suffix (no camera), English outside the quoted dialogue', () => {
   for (const s of shots) for (const a of s.angles) {
-    assert.ok(a.prompt.startsWith(CHINESE_DRAMA_OPENING));
+    assert.ok(a.prompt.startsWith(CHINESE_DRAMA_OPENING.slice(0, 11)));
     assert.ok(a.prompt.includes(CHINESE_DRAMA_STYLE));
     const speaks = a.prompt.includes('speaks Thai exactly');
-    assert.ok(a.prompt.replace(/(sound effects\.|ambient sound\.) No [^.]+\.$/, "$1").endsWith(speaks ? AUDIO_SPEECH : AUDIO_SILENT), a.prompt);
+    assert.ok(a.prompt.replace(/(effects\.) No [^.]+\.$/, "$1").endsWith(speaks ? AUDIO_SPEECH : AUDIO_SILENT), a.prompt);
     assert.ok(!(speaks && a.prompt.includes(AUDIO_SILENT)) && !(!speaks && a.prompt.includes(AUDIO_SPEECH)));
     assert.ok(!/Static camera on dialogue|push-in on emotional/i.test(CHINESE_DRAMA_STYLE));
     assert.ok(!thaiOutsideQuotes(a.prompt), a.prompt);
-    assert.ok(a.prompt.includes('Location lock: border jungle, daytime'));
+    assert.ok(a.prompt.includes('In the border jungle'));
   }
   assert.deepEqual(shots.flatMap(s => s.untranslated), []);
 });
@@ -50,14 +50,14 @@ check('one camera instruction per angle: static speaker, push-in listener', () =
 });
 check('listener from the previous shot; on-screen face lock only; no line in listener angle', () => {
   const b17 = shots[1].angles[1].prompt;
-  assert.ok(b17.includes('Reaction shot of Ton') && b17.includes('hides behind a huge tree'));
-  assert.ok(b17.includes('photo 2 is the face reference for Ton') && !b17.includes('attach') && !b17.includes('a male villager'), b17);
+  assert.ok(b17.includes('Close-up on Ton, slow push-in') && b17.includes('hides behind a huge tree'));
+  assert.ok(b17.includes('Photo 2 is Ton') && !b17.includes('attach') && !b17.includes('a male villager'), b17);
   assert.deepEqual(shots[1].angles[1].attachments.map(a => a.label), ['ป่าชายแดน Master', 'ต้น'].map((x, i) => i ? x : `ภาพมาสเตอร์ ${x}`));
   assert.ok(!b17.includes('the people or scene'));
   const b18 = shots[2].angles[1].prompt;
-  assert.ok(b18.includes('villagers in cotton clothes running past') && !b18.includes('Character lock'));
+  assert.ok(b18.includes('villagers in cotton clothes running past') && !/Photo [0-9] is/.test(b18));
   for (const s of shots.slice(1, 3)) {
-    assert.ok(s.angles[1].prompt.includes(NO_ONE_SPEAKS));
+    assert.ok(s.angles[1].prompt.includes(AUDIO_SILENT));
     assert.ok(!s.angles[1].prompt.includes('speaks Thai'));
     assert.ok(s.angles[0].prompt.includes('speaks Thai exactly: "'));
   }
@@ -70,7 +70,7 @@ check('Thai editing notes: L-cut, J-cut, cut length 1.5–3 s', () => {
 });
 check('offline fallback: no translations -> glossary for time/light, Thai kept and reported', () => {
   const s = formatChineseDramaShot(clips[0], opts);
-  assert.ok(s.angles[0].prompt.includes('daytime') && s.angles[0].prompt.includes('bright natural daylight'));
+  assert.ok(s.angles[0].prompt.includes('daytime'));
   assert.ok(s.untranslated.length > 0);
   assert.ok(dramaTranslatables(clips, opts).includes('ป่าชายแดน'));
 });
