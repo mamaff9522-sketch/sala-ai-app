@@ -1699,7 +1699,7 @@ export function formatChineseDramaShot(
     const parts = tr(noteOf(n) || '').replace(/\b(?:look|outfit|costume|appearance)\s*:\s*/gi, ', ').split(/\s*,\s*/).map(x => x.trim().replace(/\band an? /g, 'and ')).filter(x => x && !hasThai(x) && !(role.length > 3 && x.toLowerCase().includes(role)));
     return Array.from(new Set(parts)).join(', ');
   };
-  const angleRefs = (onScreen: string[]) => {
+  const angleRefs = (onScreen: string[], far = false) => {
     const attachments: { n: number; label: string }[] = [];
     if (master) attachments.push({ n: 1, label: `ภาพมาสเตอร์ ${master}` });
     const parts: string[] = [];
@@ -1715,7 +1715,16 @@ export function formatChineseDramaShot(
         if (same) same.who = `${same.who} and ${who}`; else plain.push({ who, look });
       }
     }
-    for (const p of plain) parts.push(`${cap(p.who)}${p.look ? `: ${p.look}` : ''}.`);
+    const NW = ['', 'one', 'two', 'three', 'four', 'five', 'six'];
+    const memb = plain.filter(p => /^[a-z]+ \d+$/.test(p.who));
+    if (far && memb.length > 1 && memb.every(p => p.who.split(' ')[0] === memb[0].who.split(' ')[0])) {
+      const rest = memb.slice(1);
+      const role = memb[0].who.split(' ')[0];
+      const armored = rest.every(p => /armor/.test(p.look)) ? 'armored ' : '';
+      for (const p of rest) plain.splice(plain.indexOf(p), 1);
+      plain.push({ who: `__${cap(NW[rest.length] || String(rest.length))} other ${armored}${role}${rest.length > 1 ? 's' : ''}`, look: '' });
+    }
+    for (const p of plain) parts.push(p.who.startsWith('__') ? `${p.who.slice(2)}.` : `${cap(p.who)}${p.look ? `: ${p.look}` : ''}.`);
     return { attachments, refs: parts.join(' ') };
   };
   // vivid setting from the script header: "in a misty border forest at dawn, dirt path with cart-wheel tracks, sunlight through the leaves"
@@ -1744,9 +1753,14 @@ export function formatChineseDramaShot(
   const notes: string[] = [];
   const push = (label: string, seconds: number, camera: string, act: string, audio: string, onScreen: string[]) => {
     const vis = Array.from(new Set(onScreen.filter(Boolean)));
-    const { attachments, refs } = angleRefs(vis);
+    const far = /^(?:Over |Wide|High angle|Medium shot)/.test(camera);
+    const { attachments, refs: refs0 } = angleRefs(vis, far);
+    // 4: a group in the action but not in frame as faces ("the villagers flee") -> one short crowd sentence
+    const crowdS = [...cast, ...(opts.knownCharacters || [])].filter((n, i, a) => a.indexOf(n) === i && !vis.includes(n) && /^the [a-z]+s$/.test(nm(n)) && new RegExp(`\\b${nm(n)}\\b`, 'i').test(act) && vis.some(v => lookOf(v) && lookOf(v) === lookOf(n)))
+      .map(n => `${cap(nm(n).replace(/^the /, ''))}${lookOf(n) ? ` in ${lookOf(n)}` : ''} ${(act.match(/\b(flee|run|rush|walk|hurry|march)\b/i)?.[1] || 'pass').toLowerCase()} past.`);
+    const refs = [...crowdS, refs0].filter(Boolean).join(' ');
     const speaks = /speaks Thai exactly/.test(audio);
-    const header = opening.replace(/\.$/, master ? '; photo 1 is the location.' : '.');
+    const header = opening;
     let a2 = act.replace(/[.\s]+$/, '');
     // who + concrete action + where, one sentence (a "; X is not in the frame" note stays at the end)
     const semi = a2.indexOf(';');
@@ -1772,7 +1786,7 @@ export function formatChineseDramaShot(
     prompt = prompt.replace(/([,;:] |\b(?:and|then|of|in|on|toward|at) )([A-Z][a-z]+)\b/g, (m, pre, w) => proper.has(w) || /^(?:Photo|Thai|Ton|Audio|POV)$/.test(w) || /^[A-Z][a-z]*[A-Z]/.test(w) ? m : `${pre}${w.toLowerCase()}`);
     // keep each angle within ~100 words: shorten the setting first, then the foreground note, then the style line
     const words = (t: string) => t.split(/\s+/).length;
-    const cuts: [RegExp | string, string][] = [[/(in an? [^,.;]+? at [a-z]+), [^.;]+?([.;])/, '$1$2'], [/, [A-Z][a-z]+ blurred in foreground/, ''], [/ No other modern objects\.| no other modern objects/, ''], [`${CHINESE_DRAMA_STYLE} `, ''], [/ at (?:dawn|dusk|night|midday|noon|morning|afternoon)(?=[.;])/, '']];
+    const cuts: [RegExp | string, string][] = [[/(in an? [^,.;]+? at [a-z]+), [^.;]+?([.;])/, '$1$2'], [/, [A-Z][a-z]+ blurred in foreground/, ''], [/ No other modern objects\.| no other modern objects/, ''], [/ at (?:dawn|dusk|night|midday|noon|morning|afternoon)(?=[.;])/, '']];
     for (const [re, to] of cuts) { if (words(prompt) <= 100) break; prompt = prompt.replace(re as any, to); }
     angles.push({ label, seconds, prompt, onScreen: vis, attachments });
   };
@@ -1909,7 +1923,9 @@ export function formatChineseDramaShot(
     } else push('A Establishing (ไม่มีตัวละคร)', 3, 'Wide establishing shot of the location, no people in frame, slow push-in.', actEn, NO_ONE_SPEAKS, []);
     // B: close reaction of the main person in the shot (no one: a close detail of the place)
     const rx = on.find(n => n === hero) || on[0];
-    if (rx) push(`B Reaction ${rx}`, 2, `Close-up on ${nm(rx)}'s face, slow push-in.`, actEn || `${cap(nm(rx))} reacts silently`, NO_ONE_SPEAKS, [rx]);
+    const moving = /\b(?:runs?|hides?|flees?|walks?|steps?|climbs?|jumps?|rushes|charges?|crawls?|dodges?|falls?|escapes?)\b/i.test(actEn);
+    if (rx && moving) push(`B Reaction ${rx}`, 2, `Medium close-up on ${nm(rx)}, slow push-in.`, `${cap(nm(rx))} freezes, eyes widen, glances around`, NO_ONE_SPEAKS, [rx]);
+    else if (rx) push(`B Reaction ${rx}`, 2, `Close-up on ${nm(rx)}'s face, slow push-in.`, actEn || `${cap(nm(rx))} reacts silently`, NO_ONE_SPEAKS, [rx]);
     else push('B Detail', 2, 'Close-up detail of the location, no people in frame, slow push-in.', actEn, NO_ONE_SPEAKS, []);
   }
   // 3 or more characters in the scene: one over-the-shoulder group angle (conflict shots already have one)

@@ -20,7 +20,7 @@ const ORD = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth'];
 const TRAITS = ['bearded, red headband', 'thin moustache, bronze helmet', 'scarred cheek, black headband', 'shaved head, broad shoulders', 'young face, cloth head wrap', 'grey beard, iron helmet'];
 /** fixed kit per weapon: one costume + weapon description, reused verbatim */
 const WEAPON_KIT: Record<string, string> = { sword: 'plain straight sword', spear: 'wooden spear', bow: 'wooden longbow', knife: 'short knife', 'axe': 'iron axe' };
-const ROLE_COSTUME: [RegExp, string][] = [[/soldier|guard|warrior/, 'leather armor'], [/bandit/, 'ragged dark clothes'], [/villager|farmer/, 'cotton clothes']];
+const ROLE_COSTUME: [RegExp, string][] = [[/soldier|guard|warrior/, 'leather armor, bare arms'], [/bandit/, 'ragged dark clothes'], [/villager|farmer/, 'cotton clothes']];
 
 export interface CastEntry { name: string; desc: string; members?: string[]; role?: string }
 export interface ShotClip {

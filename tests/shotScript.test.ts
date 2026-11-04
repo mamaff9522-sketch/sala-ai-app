@@ -75,7 +75,7 @@ check('every shot has A + B; no generic hero / key object; face refs only for pe
       assert.ok(a.attachments.slice(1).every(x => a.onScreen.includes(x.label)));
     }
   }
-  assert.ok(/Wide shot/.test(byN(16).angles[0].prompt) && /Close-up on Ton, face only, hands out of frame/.test(byN(16).angles[1].prompt));
+  assert.ok(/Wide shot/.test(byN(16).angles[0].prompt) && /hides/.test(byN(16).angles[0].prompt) && /Ton freezes, eyes widen, glances around/.test(byN(16).angles[1].prompt) && !/face only/.test(byN(16).angles[1].prompt));
   assert.ok(/phone/.test(byN(26).angles[4].prompt) && /rope/.test(byN(28).angles[4].prompt));
 });
 check('short format: every angle <= 100 words, no "lock:" lines, order header -> faces -> action -> camera -> dialogue -> tail', () => {
@@ -105,9 +105,16 @@ check('fixed looks reused verbatim; full outfit; phone only when in frame; edit 
   for (const sh of shots) for (const a of sh.angles) for (const m of a.prompt.matchAll(/(Soldier \d|Photo \d is Ton): ([^.]+)\./g)) {
     const k = m[1].replace(/Photo \d is /, ''); if (sent.has(k)) assert.equal(sent.get(k), m[2]); else sent.set(k, m[2]);
   }
-  assert.ok(/bearded, red headband/.test(sent.get('Soldier 1') || '') && /sword and spear/.test(sent.get('Soldier 3') || ''));
+  assert.ok(/bearded, red headband/.test(sent.get('Soldier 1') || '') && /sword and spear/.test(s.characterNotes['ทหารคนที่ 3']));
   for (const sh of shots) for (const a of sh.angles) if (!a.onScreen.includes('ต้น') && !/phone/i.test(a.prompt.replace(/No modern objects[^.]*\./, ''))) assert.ok(!/except Ton's phone/.test(a.prompt), a.prompt);
   assert.ok(!/villagers?: [^.]*villager/.test(P(17)));
   assert.ok(byN(22).notes.includes('ปิดเสียงมุม B ทั้งหมด เก็บเสียงจากมุม A ไว้แค่ช่วงที่พูด'));
+});
+check('1.9.67: style never trimmed, no "photo 1 is the location", bare arms, far group summarized, crowd sentence', () => {
+  for (const sh of shots) for (const a of sh.angles) { assert.ok(a.prompt.includes('Chinese drama style, warm-teal grade.')); assert.ok(!a.prompt.includes('photo 1 is the location')); }
+  assert.ok(/Soldier 1: [^.]*bare arms/.test(P(21)));
+  const ots = byN(21).angles.find(a => /^Generate[^]*Over Ton's shoulder/.test(a.prompt))!.prompt;
+  assert.ok(ots.includes('Two other armored soldiers.') && !/Soldier 2:/.test(ots));
+  assert.ok(byN(17).angles[0].prompt.includes('Villagers in cotton clothes flee past.'));
 });
 console.log(`shotScript: ${passed} passed`);
