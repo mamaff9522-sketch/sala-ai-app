@@ -1628,7 +1628,7 @@ export function formatChineseDramaShot(
     for (const n of onScreen) if (withPhoto.has(n)) { num.set(n, attachments.length + 1); attachments.push({ n: attachments.length + 1, label: n }); }
     const who = onScreen.map(n => {
       const note = noteOf(n);
-      return `${num.has(n) ? `photo ${num.get(n)} is the face reference for ${nm(n)}` : `${cap(nm(n))} (no reference photo)`}${note ? `, look: ${tr(note)}` : ''}`;
+      return `${num.has(n) ? `photo ${num.get(n)} is the face reference for ${nm(n)}` : `${nm(n)} (no reference photo)`}${note ? `, look: ${tr(note)}` : ''}`;
     }).join('; ');
     const lock = onScreen.length ? `Character lock: ${who}. Keep the same face, hair, makeup, accessories, outfit and voice in every clip; never turn into another person.` : '';
     return { attachments, lock };
@@ -1659,6 +1659,11 @@ export function formatChineseDramaShot(
     const named = candidates.find(n => mentions(line, n));
     if (named) return named;
     if (ADDRESS_RE.test(line)) {
+      // who the speaker is talking to in this exchange: named in the nearby lines, else the protagonist here
+      const near = [f.lines[i - 1], f.lines[i + 1], f.lines[i - 2], f.lines[i + 2]].filter(Boolean).map(x => x!.line);
+      const talkedTo = candidates.find(n => near.some(t => mentions(t, n)));
+      if (talkedTo) return talkedTo;
+      if (opts.protagonist && candidates.includes(opts.protagonist)) return opts.protagonist;
       const lastSp = [...f.lines.slice(0, i)].reverse().map(l => l.speaker).find(s => s && s !== speaker && candidates.includes(s));
       const otherSp = f.lines.map(l => l.speaker).find(s => s && s !== speaker && candidates.includes(s));
       if (lastSp || otherSp) return (lastSp || otherSp)!;

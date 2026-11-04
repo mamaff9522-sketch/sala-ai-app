@@ -114,7 +114,7 @@ const shots81 = chineseDramaShots(s81, { knownCharacters: C3, withPhoto: C3 } as
 check('listener = character named / addressed in the line, before speaker order', () => {
   assert.ok(shots81[0].angles[1].prompt.includes('Reaction shot of Ton'));          // "...ที่ต้นบอกไว้" names Ton
   assert.ok(shots81[2].angles[1].prompt.includes('Reaction shot of Ton'));          // "ขอบคุณต้น"
-  assert.ok(shots81[2].angles[3].prompt.includes('Reaction shot of Buakaew'));      // "เจ้า" -> the previous speaker
+  assert.ok(shots81[2].angles[3].prompt.includes('Reaction shot of Ton'));          // "เจ้า" -> Ton, named in the line before
   assert.ok(shots81[3].angles[1].prompt.includes('Reaction shot of Buakaew'));      // name in the line
   general(shots81, () => {}, TR2);
 });
@@ -150,5 +150,20 @@ check('name inside another word is not the character (ต้นข้าว / �
   assert.ok(hasWord('ทหารล้อมต้นไว้', 'ต้น') && hasWord('ต้นกับกฤตทะเลาะกัน', 'กฤต'));
   const clip: any = { clipNumber: 1, ...at('ทุ่งนา'), generatedPrompt: 'Core action: ลมพัดต้นข้าวไหว.', dialogues: [] };
   assert.deepEqual(charactersInClip(clip, ['ต้น']), []);
+});
+check('address word: protagonist in the scene before the previous speaker', () => {
+  const c: any[] = [{ clipNumber: 1, ...shop, charactersPresent: C3, generatedPrompt: act2('ทั้งสามนั่งดื่มชา', 'The three sit drinking tea'),
+    dialogues: [{ speaker: 'บัวแก้ว', line: 'ชาหอมมากค่ะ' }, { speaker: 'หมออิน', line: 'ท่านลองชิมดูสิ' }] }];
+  const o: any = { knownCharacters: C3, withPhoto: ['ต้น'] };
+  const [s] = chineseDramaShots([...c, { clipNumber: 2, ...shop, charactersPresent: ['ต้น'], generatedPrompt: 'Core action: ต้นยิ้ม.', dialogues: [] }, { clipNumber: 3, ...shop, charactersPresent: ['ต้น'], generatedPrompt: 'Core action: ต้นพยักหน้า.', dialogues: [] }], o, { ...TR2, 'ต้นยิ้ม': 'Ton smiles', 'ต้นพยักหน้า': 'Ton nods' });
+  assert.ok(s.angles[3].prompt.includes('Reaction shot of Ton'), s.angles[3].prompt);
+});
+check('joined character entries: generic-role article stays lowercase mid-sentence', () => {
+  const c: any[] = [{ clipNumber: 7, ...at('ป่าชายแดน'), charactersPresent: ['ต้น', 'ทหารชายแดน'], generatedPrompt: act2('ทหารล้อมต้นไว้', 'A soldier surrounds Ton'), dialogues: [{ speaker: 'ทหารชายแดน', line: 'หยุด!' }] }];
+  const [s] = chineseDramaShots(c, { knownCharacters: ['ต้น', 'ทหารชายแดน'], withPhoto: ['ต้น'] } as any, TR2);
+  const b = s.angles[1].prompt;
+  assert.ok(/for Ton; the border soldier \(no reference photo\)/.test(b), b);
+  assert.ok(!/; The /.test(s.angles.map(a => a.prompt).join(' ')));
+  assert.ok(s.angles[0].prompt.includes('The border soldier speaks Thai exactly'));
 });
 console.log(`chineseDramaGeneral: ${passed} passed`);
