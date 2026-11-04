@@ -64,4 +64,18 @@ check('role English: the old man, a male villager, Suriyanakhon', () => {
   assert.ok(P(19).includes('the old man') && !/Chaichara/i.test(shots.map(x => P(x.shotNumber)).join()));
   assert.ok(/male villager/.test(P(17)) && !/chaobanchai/i.test(P(17)));
 });
+check('every shot has A + B; no generic hero / key object; face refs only for people in the angle', () => {
+  for (const sh of shots) {
+    assert.ok(sh.angles.length >= 2, String(sh.shotNumber));
+    for (const a of sh.angles) {
+      assert.ok(!/\bhero\b|key object/i.test(a.prompt), a.prompt);
+      assert.equal(a.attachments[0].n, 1);
+      const refs = (a.prompt.match(/photo \d+ is the face reference/g) || []).length;
+      assert.equal(refs, a.attachments.length - 1);
+      assert.ok(a.attachments.slice(1).every(x => a.onScreen.includes(x.label)));
+    }
+  }
+  assert.ok(/Wide shot/.test(byN(16).angles[0].prompt) && /Close-up reaction shot of Ton/.test(byN(16).angles[1].prompt));
+  assert.ok(/phone/.test(byN(26).angles[4].prompt) && /rope/.test(byN(28).angles[4].prompt));
+});
 console.log(`shotScript: ${passed} passed`);

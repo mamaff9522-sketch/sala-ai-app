@@ -1767,13 +1767,28 @@ export function formatChineseDramaShot(
     const sp0 = l0 ? (l0.speaker || hero) : hero;
     const l1 = f.lines[1];
     const sp1 = l1 ? (l1.speaker || hero) : '';
-    const heroEn = hero ? nm(hero) : 'the hero';
+    const heroEn = hero ? nm(hero) : (opps[0] ? nm(opps[0]) : 'the main character');
     const fg = sp0 && sp0 !== hero && hero ? `, ${heroEn} out of focus in the foreground` : '';
     push('Close-up', 2, `Close-up of ${nm(sp0 || hero) || 'the speaker'}'s face${fg}, intense emotion, static camera.`, actEn, l0 ? `${say(l0, sp0)}, lips shown briefly.` : NO_ONE_SPEAKS, [sp0, fg ? hero : '']);
     push('Over-the-shoulder', 2, `Over-the-shoulder shot from behind ${heroEn} toward ${oppEn}, ${l1 ? 'static camera' : 'slow push-in'}.`, actEn, l1 ? `${say(l1, sp1)}.` : NO_ONE_SPEAKS, [hero, ...opps]);
-    push('Low angle (hero)', 2, `Low angle shot looking up at ${heroEn}, the hero stands firm, slow push-in.`, actEn, NO_ONE_SPEAKS, [hero]);
-    push('High angle (opposing side)', 1.5, `High angle shot looking down at ${oppEn}, slow push-in.`, actEn, NO_ONE_SPEAKS, opps);
-    push('Object close-up', 1.5, `Close-up of ${heroEn}'s hands and the key object of the conflict, slow push-in.`, actEn, NO_ONE_SPEAKS, [hero]);
+    push(`Low angle ${hero || ''}`.trim(), 2, `Low angle shot looking up at ${heroEn}, ${heroEn} stands firm, slow push-in.`, actEn, NO_ONE_SPEAKS, [hero]);
+    push(`High angle ${opps.join(', ') || 'ฝ่ายตรงข้าม'}`, 1.5, `High angle shot looking down at ${oppEn}, slow push-in.`, actEn, NO_ONE_SPEAKS, opps);
+    // the real object of this shot and whose hands hold it (first character named before it in the action)
+    const OBJ: [RegExp, string][] = [[/โทรศัพท์|มือถือ/, 'phone'], [/ดาบ/, 'sword'], [/หอก/, 'spear'], [/เชือก|มัด/, 'rope'], [/กระเป๋า/, 'bag'], [/ปืน/, 'gun'], [/ธนู/, 'bow'], [/จดหมาย/, 'letter'], [/กุญแจ/, 'key'], [/มีด/, 'knife']];
+    const objText = [action, ...f.lines.map(l => l.line)].join(' ');
+    const objHit = OBJ.map(([re, en]) => ({ i: objText.search(re), en })).filter(o => o.i >= 0).sort((a, b) => a.i - b.i)[0];
+    const low = actEn.toLowerCase();
+    const objEnI = objHit ? low.search(new RegExp(`\\b${objHit.en}`)) : -1;
+    const firstIn = cast.map(n => ({ n, i: low.indexOf(nm(n).toLowerCase()) })).filter(x => x.i >= 0 && (objEnI < 0 || x.i < objEnI)).sort((a, b) => a.i - b.i)[0]?.n;
+    const actor = firstIn || hero || cast[0] || '';
+    const actorEn = actor ? nm(actor) : heroEn;
+    const owner = objHit && objEnI >= 0 ? ((actEn.slice(0, objEnI).match(/(\S+)'s\s*$/)?.[1] || '').replace(/^[^A-Z].*$/, '')) : '';
+    const objPhrase = objHit ? (owner ? `${owner}'s ${objHit.en}` : actor === hero || !hero ? `${actorEn}'s ${objHit.en}` : `the ${objHit.en}`) : '';
+    const tied = objHit?.en === 'rope' ? cast.find(n => new RegExp(`hands of ${nm(n)}|${nm(n)}'s hands`).test(actEn)) : '';
+    if (tied) push('Object close-up rope', 1.5, `Extreme close-up of ${nm(tied)}'s wrists being tied with rope by ${(actEn.match(/^(.+?) (?:tie|ties|bind|binds)\b/)?.[1] || (actor && actor !== tied ? actorEn : 'the captors')).replace(/^The /, 'the ')}, slow push-in.`, actEn, NO_ONE_SPEAKS, [tied, actor !== tied ? actor : '']);
+    else push(`Object close-up ${objHit ? objHit.en : ''}`.trim(), 1.5, objHit
+      ? `Extreme close-up of ${actorEn}'s hands with ${objPhrase}, slow push-in.`
+      : `Extreme close-up of ${actorEn}'s clenched hands, slow push-in.`, actEn, NO_ONE_SPEAKS, [actor]);
     if (l0) notes.push(`L-cut: เสียงประโยค "${l0.line}" จากมุม A พูดต่อคร่อมภาพมุม B`);
     if (f.lines.length > 2) notes.push(`ประโยคที่เหลือ (${f.lines.slice(2).map(l => `"${l.line}"`).join(', ')}) ใช้เสียงคร่อมภาพมุม C–E`);
   } else if (kind === 'dialogue') {
@@ -1808,10 +1823,15 @@ export function formatChineseDramaShot(
     if (scam.size || scam.move) {
       const size = scam.size ? `${cap(scam.size)} shot` : 'Medium shot';
       const sizeTxt = scam.size === 'wide' ? `Wide shot of the ${(tr(place.location) || 'location').split(/ (?:of|in|at|near) /)[0].replace(/^the /i, '')}${on.length ? `, revealing ${on.map(n => nm(n)).join(' and ')}` : ''}` : `${size}${on.length ? ` of ${on.map(n => nm(n)).join(' and ')}` : ''}`;
-      push(scam.size === 'wide' ? 'Wide (ตามบท)' : 'Single angle (ตามบท)', 3, `${sizeTxt}, ${scam.move || 'slow push-in'}.`, actEn, 'No one speaks.', on);
-    } else
-    if (on.length) push('Single angle', 3, `Medium close-up of ${on.map(n => nm(n)).join(' and ')}, slow push-in.`, actEn, 'No one speaks.', on);
-    else push('Establishing (ไม่มีตัวละคร)', 3, 'Wide establishing shot of the location, no people in frame, slow push-in.', actEn, 'No one speaks.', []);
+      push(scam.size === 'wide' ? 'A Wide (ตามบท)' : 'A ตามบท', 3, `${sizeTxt}, ${scam.move || 'slow push-in'}.`, actEn, NO_ONE_SPEAKS, on);
+    } else if (on.length) {
+      const placeW = (tr(place.location) || 'location').split(/ (?:of|in|at|near) /)[0].replace(/^the /i, '');
+      push('A Wide action', 3, `Wide shot of the ${placeW} showing ${on.map(n => nm(n)).join(' and ')} in full, slow push-in.`, actEn, NO_ONE_SPEAKS, on);
+    } else push('A Establishing (ไม่มีตัวละคร)', 3, 'Wide establishing shot of the location, no people in frame, slow push-in.', actEn, NO_ONE_SPEAKS, []);
+    // B: close reaction of the main person in the shot (no one: a close detail of the place)
+    const rx = on.find(n => n === hero) || on[0];
+    if (rx) push(`B Reaction ${rx}`, 2, `Close-up reaction shot of ${nm(rx)}'s face, eyes and breathing, slow push-in.`, actEn ? `${actEn}; close on ${nm(rx)}'s face as it happens` : `${cap(nm(rx))} reacts silently`, NO_ONE_SPEAKS, [rx]);
+    else push('B Detail', 2, 'Close-up detail of the location, no people in frame, slow push-in.', actEn, NO_ONE_SPEAKS, []);
   }
   // 3 or more characters in the scene: one over-the-shoulder group angle (conflict shots already have one)
   if (kind !== 'conflict' && f.names.length >= 3) {
@@ -1826,7 +1846,7 @@ export function formatChineseDramaShot(
   return { shotNumber, kind, angles, notes, untranslated: Array.from(untranslated) };
 }
 
-const KIND_TH = { dialogue: 'ช็อตพูด 2 มุม', silent: 'ช็อตไม่มีบทพูด 1 มุม', conflict: 'ช็อตไคลแม็กซ์/ปะทะ หลายมุม' } as const;
+const KIND_TH = { dialogue: 'ช็อตพูด 2 มุม', silent: 'ช็อตไม่มีบทพูด 2 มุม', conflict: 'ช็อตไคลแม็กซ์/ปะทะ หลายมุม' } as const;
 
 export function formatDramaShotText(s: DramaShot, title = ''): string {
   return [

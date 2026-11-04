@@ -25,8 +25,8 @@ export const TR: Record<string, string> = {
 const shots = chineseDramaShots(clips, opts, TR);
 const thaiOutsideQuotes = (p: string) => /[ก-๙]/.test(p.replace(/"[^"]*"/g, ''));
 
-check('angle count: silent 1, dialogue 2, conflict 5', () => {
-  assert.deepEqual(shots.map(s => s.angles.length), [1, 2, 2, 5]);
+check('angle count: silent 2 (A wide + B reaction), dialogue 2, conflict 5', () => {
+  assert.deepEqual(shots.map(s => s.angles.length), [2, 2, 2, 5]);
 });
 check('every prompt: opening, style suffix (no camera), English outside the quoted dialogue', () => {
   for (const s of shots) for (const a of s.angles) {

@@ -45,7 +45,8 @@ check('fight / argument: 5 angles (CU, OTS, low, high, object)', () => {
     dialogues: [{ speaker: 'กฤต', line: 'แกโกหก!' }, { speaker: 'ต้น', line: 'ฉันพูดจริง!' }] }];
   const [s] = chineseDramaShots(clips, { knownCharacters: ['ต้น', 'กฤต'], withPhoto: ['ต้น'] } as any, TR);
   assert.equal(s.kind, 'conflict');
-  assert.deepEqual(s.angles.map(a => a.label), ['Close-up', 'Over-the-shoulder', 'Low angle (hero)', 'High angle (opposing side)', 'Object close-up']);
+  assert.deepEqual(s.angles.map(a => a.label.split(' ')[0] + ' ' + (a.label.split(' ')[1] || '')).map(x => x.trim()), ['Close-up', 'Over-the-shoulder', 'Low angle', 'High angle', 'Object close-up']);
+  assert.ok(!s.angles.some(a => /\bhero\b|key object/i.test(a.prompt)));
   assert.deepEqual(s.angles[4].onScreen, ['ต้น']);
   general([s]);
 });
@@ -81,7 +82,7 @@ check('listener borrowed from 2 shots back in the same scene; a scene change sto
 check('shot with no characters: one establishing angle, no character lock, silent', () => {
   const clips: any[] = [{ clipNumber: 9, ...at('ทุ่งนา'), charactersPresent: [], generatedPrompt: act('พระอาทิตย์ตกหลังทุ่งนา', 'The sun sets behind the rice field'), dialogues: [] }];
   const [s] = chineseDramaShots(clips, { knownCharacters: ['ต้น'], withPhoto: ['ต้น'] } as any, TR);
-  assert.equal(s.angles.length, 1);
+  assert.equal(s.angles.length, 2);
   assert.ok(s.angles[0].prompt.includes('Wide establishing shot') && !s.angles[0].prompt.includes('Character lock') && s.angles[0].prompt.includes(AUDIO_SILENT));
   general([s]);
 });
