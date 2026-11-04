@@ -6,7 +6,7 @@ import { runWholeStory, type StoryClip } from '../services/wholeStoryRunner';
 import { metaOptionsForStory, offlineContinuation } from '../services/storyProgress';
 import { isClipByClipScript } from '../services/storyNormalize';
 import { packMultiDialogueClips, MULTI_DIALOGUE_SECONDS } from '../services/multiDialogueClips';
-import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, formatPlaceVideoBatch, VIDEO_BATCH_SIZE, attachmentLine, sensitiveWords, formatLocationMasterPrompt, thaiLighting, locationNote, locationNoteFor, metaContextFor, characterNote, charactersInClip, photoNumbers } from '../services/metaAiPrompt';
+import { formatClipForMetaAi, formatClipImagePrompt, buildSharedLocks, formatSharedLocks, groupClipsByPlace, formatPlaceImageBatch, IMAGE_BATCH_SIZE, formatPlaceVideoBatch, VIDEO_BATCH_SIZE, attachmentLine, sensitiveWords, formatLocationMasterPrompt, thaiLighting, locationNote, locationNoteFor, metaContextFor, characterNote, charactersInClip, photoNumbers, formatChineseDramaShot, formatDramaShotText, formatAllChineseDrama } from '../services/metaAiPrompt';
 import { toCharacterLockPayload } from '../services/characterAppearance';
 
 /**
@@ -103,6 +103,11 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
   }, [characters, locations, resultStory, aspect, brokenPhotos]);
   const prompts = useMemo(
     () => clips.map((c, i) => formatClipForMetaAi(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) })),
+    [clips, metaOpts]
+  );
+  // Chinese short drama: several short angle prompts per clip + Thai editing notes
+  const dramaTexts = useMemo(
+    () => clips.map((c, i) => formatDramaShotText(formatChineseDramaShot(c as any, { ...metaOpts, ...metaContextFor(clips as any, i) }, clips[i + 1] as any), String(c.title || ''))),
     [clips, metaOpts]
   );
   // Box 1 of every card: a still image that matches the clip (made first, then animated)
@@ -307,6 +312,12 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                 วิธีใช้กับ Meta AI: แนบไฟล์ตาม "แนบก่อนพิมพ์" ทุกช็อตก่อนพิมพ์ · สร้างภาพนิ่งก่อนแล้วค่อยทำเป็นวิดีโอ · คลิปต่อเนื่องให้แนบเฟรมสุดท้ายของคลิปก่อนเป็นรูปที่ 1 · ใช้โหมด Quality ไม่ใช่ Instant · เริ่มแชทใหม่เป็นระยะหรือเมื่อภาพเริ่มเพี้ยน แล้วแนบมาสเตอร์ใหม่
               </div>
             )}
+            {!running && (
+              <button type="button" onClick={() => copy(formatAllChineseDrama(clips as any, metaOpts), 'dramaAll')}
+                className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-500/60 bg-rose-600/20 px-3 py-2 text-[13px] font-semibold text-rose-200">
+                {copied === 'dramaAll' ? <><Check className="w-4 h-4" /> คัดลอกแล้ว</> : <><Copy className="w-4 h-4" /> คัดลอกแบบหนังจีนทั้งหมด (หลายมุม + วิธีตัดต่อ)</>}
+              </button>
+            )}
             {!running && placeGroups.length > 0 && (
               <details className="rounded-2xl border border-amber-500/40 bg-[#0b1224]/90 p-3">
                 <summary className="cursor-pointer text-[13px] font-semibold text-amber-300">
@@ -412,6 +423,19 @@ export const QuickPromptStudio: React.FC<QuickPromptStudioProps> = ({ characters
                       {c.dialogues.map((d, j) => <div key={j}><span className="text-slate-400">{d.speaker}:</span> “{d.line}”</div>)}
                     </div>
                   )}
+                  <div className="mt-2 rounded-xl border border-rose-500/40 bg-rose-500/5 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[12px] font-semibold text-rose-300">3. แบบหนังจีน (หลายมุม)</div>
+                      <button type="button" onClick={() => copy(dramaTexts[i], `drama${i}`)}
+                        className="shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-rose-500/50 bg-slate-900 px-2.5 py-1 text-[12px]">
+                        {copied === `drama${i}` ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> คัดลอกแล้ว</> : <><Copy className="w-3.5 h-3.5" /> คัดลอกแบบหนังจีน</>}
+                      </button>
+                    </div>
+                    <details className="mt-1">
+                      <summary className="text-[12px] text-slate-400 cursor-pointer">ดูทุกมุมและวิธีตัดต่อ</summary>
+                      <p className="mt-1.5 text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">{dramaTexts[i]}</p>
+                    </details>
+                  </div>
                   <details className="mt-2">
                     <summary className="text-[12px] text-slate-400 cursor-pointer">ดูพรอมต์เต็ม</summary>
                     <p className="mt-1.5 text-[12px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">{prompts[i]}</p>
