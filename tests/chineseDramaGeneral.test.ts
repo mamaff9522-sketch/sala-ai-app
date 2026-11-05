@@ -8,6 +8,7 @@ const thaiOutsideQuotes = (p: string) => /[ก-๙]/.test(p.replace(/"[^"]*"/g, 
 const cams = (p: string) => (p.match(/static camera|slow push-in/gi) || []).length;
 /** rules every angle of every script must keep */
 function general(shots: ReturnType<typeof chineseDramaShots>, photoOk: (shot: number, prompt: string) => void = () => {}, trm: Record<string, string> = TR) {
+  for (const s of shots) if (s.angles[1]) { const b = s.angles[1].prompt; assert.ok(b.includes('Locked-off static camera on a tripod, no camera movement, no zoom, no shake.') && !/push-in|tilt|\bpan\b|zoom in|pull-out/.test(b), b); }
   for (const s of shots) for (const a of s.angles) {
     assert.ok(a.prompt.startsWith(CHINESE_DRAMA_OPENING.slice(0, 11)));
     const speaks = a.prompt.includes('speaks Thai exactly');
@@ -34,7 +35,7 @@ check('3-person dialogue (several speakers in turn): 2 angles per line + 1 group
   const o: any = { knownCharacters: ['สมชาย', 'มาลี', 'ป้าแดง'], withPhoto: ['สมชาย', 'มาลี', 'ป้าแดง'] };
   const [s] = chineseDramaShots(clips, o, TR);
   assert.equal(s.angles.length, 7);
-  assert.ok(s.angles[1].prompt.includes('Close-up on Mali, face only, hands out of frame, slow push-in'));
+  assert.ok(s.angles[1].prompt.includes('Close-up on Mali, face only, hands out of frame. Locked-off static camera on a tripod'));
   assert.ok(s.angles[3].prompt.includes('Close-up on Padaeng, face only, hands out of frame, slow push-in'));
   assert.ok(s.angles[6].label.startsWith('Over-the-shoulder') && s.angles[6].onScreen.length === 3);
   general([s]);
@@ -113,10 +114,10 @@ const s81: any[] = [
 ];
 const shots81 = chineseDramaShots(s81, { knownCharacters: C3, withPhoto: C3 } as any, TR2);
 check('listener = character named / addressed in the line, before speaker order', () => {
-  assert.ok(shots81[0].angles[1].prompt.includes('Close-up on Ton, face only, hands out of frame, slow push-in'));          // "...ที่ต้นบอกไว้" names Ton
-  assert.ok(shots81[2].angles[1].prompt.includes('Close-up on Ton, face only, hands out of frame, slow push-in'));          // "ขอบคุณต้น"
+  assert.ok(shots81[0].angles[1].prompt.includes('Close-up on Ton, face only, hands out of frame. Locked-off static camera on a tripod'));          // "...ที่ต้นบอกไว้" names Ton
+  assert.ok(shots81[2].angles[1].prompt.includes('Close-up on Ton, face only, hands out of frame. Locked-off static camera on a tripod'));          // "ขอบคุณต้น"
   assert.ok(shots81[2].angles[3].prompt.includes('Close-up on Ton, face only, hands out of frame, slow push-in'));          // "เจ้า" -> Ton, named in the line before
-  assert.ok(shots81[3].angles[1].prompt.includes('Close-up on Buakaew, face only, hands out of frame, slow push-in'));      // name in the line
+  assert.ok(shots81[3].angles[1].prompt.includes('Close-up on Buakaew, face only, hands out of frame. Locked-off static camera on a tripod'));      // name in the line
   general(shots81, () => {}, TR2);
 });
 check('each angle: attachments and photo numbers for the visible characters only', () => {

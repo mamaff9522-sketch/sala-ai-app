@@ -46,11 +46,11 @@ check('one camera instruction per angle: static speaker, push-in listener', () =
     const n = (a.prompt.match(/static camera|slow push-in/gi) || []).length;
     assert.equal(n, 1, a.prompt);
   }
-  assert.ok(/static camera/.test(shots[2].angles[0].prompt) && /slow push-in/.test(shots[2].angles[1].prompt));
+  assert.ok(/static camera/.test(shots[2].angles[0].prompt) && /Locked-off static camera on a tripod, no camera movement, no zoom, no shake./.test(shots[2].angles[1].prompt) && !/push-in/.test(shots[2].angles[1].prompt));
 });
 check('listener from the previous shot; on-screen face lock only; no line in listener angle', () => {
   const b17 = shots[1].angles[1].prompt;
-  assert.ok(b17.includes('Close-up on Ton, face only, hands out of frame, slow push-in') && b17.includes('hides behind a huge tree'));
+  assert.ok(b17.includes('Close-up on Ton, face only, hands out of frame. Locked-off static camera on a tripod') && b17.includes('hides behind a huge tree'));
   assert.ok(b17.includes('Photo 2 is Ton') && !b17.includes('attach') && !b17.includes('a male villager'), b17);
   assert.deepEqual(shots[1].angles[1].attachments.map(a => a.label), ['ป่าชายแดน Master', 'ต้น'].map((x, i) => i ? x : `ภาพมาสเตอร์ ${x}`));
   assert.ok(!b17.includes('the people or scene'));

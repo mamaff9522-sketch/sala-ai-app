@@ -1654,6 +1654,14 @@ function povObject(th: string): string {
   return m ? m[1] : '';
 }
 
+export const LOCKED_CAMERA = 'Locked-off static camera on a tripod, no camera movement, no zoom, no shake.';
+/** Angle B camera: the framing of the given camera, its movement replaced by the locked-off sentence. */
+export function lockCameraB(camera: string): string {
+  const MOVE = /,?\s*(?:slow |gentle |quick )?(?:push-in|pull-out|tilt (?:down|up)|pan|zoom(?: in| out)?|dolly(?: in| out)?|tracking shot|handheld|static camera)\b/gi;
+  const c = camera.replace(/[.\s]+$/, '').replace(MOVE, '').replace(/,\s*$/, '').trim();
+  return `${c ? `${c}. ` : ''}${LOCKED_CAMERA}`;
+}
+
 /** One script shot as Chinese-short-drama angle prompts (each its own Meta AI video). */
 export function formatChineseDramaShot(
   clip: ClipForMeta, opts: MetaAiFormatOptions & { protagonist?: string } = {}, next?: ClipForMeta, prev?: ClipForMeta | ClipForMeta[], translations: DramaTranslations = {}
@@ -1790,7 +1798,7 @@ export function formatChineseDramaShot(
     const st = settingFor(head);
     const doing = a2 ? `${cap(head)}${st ? ` ${st}` : ''}${tailNote}.` : (setting ? `${cap(setting.full)}.` : '');
     // face-only close-ups: hands out of frame (not for hand / object close-ups)
-    const cam = camera.replace(/^Close-up on ([^,]+?)(?:'s face)?,/, 'Close-up on $1, face only, hands out of frame,');
+    const cam = (angles.length === 1 ? lockCameraB(camera) : camera).replace(/^Close-up on ([^,.]+?)(?:'s face)?([,.])/, 'Close-up on $1, face only, hands out of frame$2');
     const inFrame = `${doing} ${cam}`;
     const ownerVisible = ownerName && (vis.some(n => nm(n) === ownerName) || /phone/i.test(inFrame));
     const setMatch = master ? 'Set matches photo 1 exactly.' : '';

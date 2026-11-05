@@ -99,10 +99,13 @@ export function parseShotScript(raw: string): ShotScript | null {
   const splitList = (v: string) => v.split(/\s*(?:,|、|\/|\||;|\s+และ\s+|\n|\d+\.\s)\s*/).map(x => x.replace(/^[-•*]\s*/, '').trim()).filter(Boolean);
   const placeList = splitList(location);
   const timeList = splitList(timeOfDay).length > 1 && /,/.test(timeOfDay) ? splitList(timeOfDay) : [timeOfDay].filter(Boolean);
+  // only a strong match moves the scene: the place named right after a movement / locative word ("เข้าค่ายทหาร", "ในป่า")
+  const MOVE_TO = '(?:เข้า(?:ไป|มา)?(?:ใน|ที่|สู่)?|ไป(?:ที่|ยัง|สู่)?|มาถึง|ถึง|อยู่ใน|อยู่ที่|ใน|ที่|กลับ(?:ไป|มา)?|ออกจาก[ก-๙]+?ไป)\\s*';
+  const strong = (action: string, word: string) => new RegExp(`${MOVE_TO}${word}`).test(action);
   const placeForAction = (action: string) => {
-    const full = placeList.filter(p => action.includes(p)).sort((a, b) => b.length - a.length)[0];
+    const full = placeList.filter(p => action.includes(p) && strong(action, p)).sort((a, b) => b.length - a.length)[0];
     if (full) return full;
-    for (const noun of PLACE_NOUNS) if (action.includes(noun)) { const hit = placeList.find(p => p.includes(noun)); if (hit) return hit; }
+    for (const noun of PLACE_NOUNS) if (action.includes(noun) && strong(action, noun)) { const hit = placeList.find(p => p.includes(noun)); if (hit) return hit; }
     return '';
   };
   // inline speech ("X … พูดว่า "…"") and listener lines ("ผู้ฟัง: X")

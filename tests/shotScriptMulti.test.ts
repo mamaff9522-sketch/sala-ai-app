@@ -59,4 +59,9 @@ check('English everywhere outside the quoted dialogue; angles <= 100 words', () 
   assert.ok(P(20).includes('Buakaew') && P(41).includes('Healer In') && P(35).includes('General Sornchai'));
   assert.ok(P(45).includes('wounded soldier'));
 });
+check('1.9.69: angle B always locked-off; a passing keyword does not move the scene', () => {
+  for (const sh of shots) if (sh.angles[1]) assert.ok(sh.angles[1].prompt.includes('Locked-off static camera on a tripod, no camera movement, no zoom, no shake.') && !/push-in|tilt down|slow pan/.test(sh.angles[1].prompt));
+  assert.equal(clip(15).locationName, 'ป่าชายแดน'); // "เดินไปเจอซากกำแพง" only finds a wall in the forest
+  assert.equal(clip(19).locationName, 'ป่าชายแดน');
+});
 console.log(`shotScriptMulti: ${passed} passed`);
