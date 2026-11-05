@@ -51,6 +51,8 @@ interface ClipForMeta {
   /** shot-by-shot scripts (shotScript.ts): length from the script, cast exactly as the shot has it, English locks */
   scriptSeconds?: number;
   castExact?: boolean;
+  /** the script's "ผู้ฟัง: X" line */
+  listener?: string;
   propsLock?: string;
   worldLock?: string;
   continuityNote?: string;
@@ -1441,7 +1443,22 @@ const hasThai = (t: string) => /[ก-๙]/.test(t);
 const TH_INIT: Record<string, string> = { ก:'k',ข:'kh',ฃ:'kh',ค:'kh',ฅ:'kh',ฆ:'kh',ง:'ng',จ:'ch',ฉ:'ch',ช:'ch',ซ:'s',ฌ:'ch',ญ:'y',ฎ:'d',ฏ:'t',ฐ:'th',ฑ:'th',ฒ:'th',ณ:'n',ด:'d',ต:'t',ถ:'th',ท:'th',ธ:'th',น:'n',บ:'b',ป:'p',ผ:'ph',ฝ:'f',พ:'ph',ฟ:'f',ภ:'ph',ม:'m',ย:'y',ร:'r',ล:'l',ว:'w',ศ:'s',ษ:'s',ส:'s',ห:'h',ฬ:'l',อ:'',ฮ:'h' };
 const TH_FINAL: Record<string, string> = { ก:'k',ข:'k',ค:'k',ฆ:'k',ง:'ng',จ:'t',ช:'t',ซ:'t',ญ:'n',ฎ:'t',ฏ:'t',ฐ:'t',ฑ:'t',ฒ:'t',ณ:'n',ด:'t',ต:'t',ถ:'t',ท:'t',ธ:'t',น:'n',บ:'p',ป:'p',พ:'p',ฟ:'p',ภ:'p',ม:'m',ย:'i',ร:'n',ล:'n',ว:'o',ศ:'t',ษ:'t',ส:'t',ฬ:'n' };
 const TH_VOWEL: Record<string, string> = { 'ะ':'a','ั':'a','า':'a','ำ':'am','ิ':'i','ี':'i','ึ':'ue','ื':'ue','ุ':'u','ู':'u','เ':'e','แ':'ae','โ':'o','ใ':'ai','ไ':'ai','็':'' };
+const SYL: [string, string][] = [['บัว', 'bua'], ['แก้ว', 'kaew'], ['ศร', 'sorn'], ['ชัย', 'chai'], ['ทอง', 'thong'], ['ดาว', 'dao'], ['แสง', 'saeng'], ['ใจ', 'jai'], ['ศรี', 'si'], ['สม', 'som'], ['มะลิ', 'mali'], ['ปลา', 'pla'], ['คำ', 'kham'], ['บุญ', 'bun'], ['มี', 'mi'], ['นาง', 'nang'], ['พร', 'phon'], ['เพชร', 'phet'], ['ฟ้า', 'fa'], ['น้ำ', 'nam']];
+/** Thai name -> Latin: well-known syllables first ("บัวแก้ว" -> "Buakaew"), the rest by rule. */
 export function romanizeThaiName(name: string): string {
+  const w = String(name || '').trim();
+  if (w && !/\s/.test(w)) {
+    let i = 0; const out: string[] = []; let rest = '';
+    while (i < w.length) {
+      const hit = SYL.find(([th]) => w.startsWith(th, i));
+      if (hit) { if (rest) { out.push(romanizeThaiNameRule(rest).toLowerCase()); rest = ''; } out.push(hit[1]); i += hit[0].length; }
+      else rest += w[i++];
+    }
+    if (out.length) { if (rest) out.push(romanizeThaiNameRule(rest).toLowerCase()); const j = out.join(''); return j.charAt(0).toUpperCase() + j.slice(1); }
+  }
+  return romanizeThaiNameRule(name);
+}
+function romanizeThaiNameRule(name: string): string {
   const PRE = 'เแโใไ';
   const isC = (c?: string) => !!c && TH_INIT[c] !== undefined;
   const SUFFIX: [string, string][] = [['นคร', 'nakhon'], ['บุรี', 'buri'], ['ธานี', 'thani'], ['ราช', 'rat'], ['พงษ์', 'phong'], ['วงศ์', 'wong']];
@@ -1696,7 +1713,7 @@ export function formatChineseDramaShot(
   const aliasOf = (n: string) => { const m = nm(n).match(/^the (first|second|third|fourth|fifth|sixth) (?:[A-Z][\w-]* )?([a-z]+)$/); return m ? `${m[2]} ${ORDN[m[1]]}` : ''; };
   const lookOf = (n: string) => {
     const role = (aliasOf(n).split(' ')[0] || nm(n).replace(/^the /, '').split(' ').pop() || '').replace(/s$/, '').toLowerCase();
-    const parts = tr(noteOf(n) || '').replace(/\b(?:look|outfit|costume|appearance)\s*:\s*/gi, ', ').split(/\s*,\s*/).map(x => x.trim().replace(/\band an? /g, 'and ')).filter(x => x && !hasThai(x) && !(role.length > 3 && x.toLowerCase().includes(role)));
+    const parts = tr(noteOf(n) || '').replace(/\bage (\d+) (?=[a-z])/g, 'age $1, ').replace(/\b(?:look|outfit|costume|appearance)\s*:\s*/gi, ', ').split(/\s*,\s*/).map(x => x.trim().replace(/\band an? /g, 'and ')).filter(x => x && !hasThai(x) && !(role.length > 3 && x.toLowerCase().includes(role)));
     return Array.from(new Set(parts)).join(', ');
   };
   const angleRefs = (onScreen: string[], far = false) => {
@@ -1734,7 +1751,7 @@ export function formatChineseDramaShot(
     const TIME: Record<string, string> = { 'early morning': 'dawn', 'late night': 'night', 'in the evening': 'dusk', 'evening': 'dusk', 'daytime': 'midday', 'morning': 'morning', 'night': 'night', 'noon': 'noon', 'afternoon': 'afternoon' };
     const tEn = place.timeOfDay ? tr(place.timeOfDay, 'time').toLowerCase().replace(/[.\s]+$/, '') : '';
     const t = TIME[tEn] || tEn;
-    let det = (details ? tr(details) : '').split(/\s*,\s*/).map(x => x.trim().toLowerCase()).filter(x => x && !hasThai(x));
+    let det = (details ? tr(details) : '').split(/\s*,\s*/).map(x => x.trim().toLowerCase()).filter(x => x && !hasThai(x) && !/\bera\b|modern|fictional|^no /.test(x));
     const ADJ: [RegExp, string][] = [[/mist|fog/, 'misty'], [/rain/, 'rain-soaked'], [/snow/, 'snowy'], [/dust/, 'dusty'], [/smoke/, 'smoky']];
     const adj = ADJ.filter(([re]) => det.some(d => re.test(d))).map(x => x[1])[0] || '';
     if (adj) det = det.filter(d => !ADJ.find(x => x[1] === adj)![0].test(d));
@@ -1742,7 +1759,8 @@ export function formatChineseDramaShot(
     const pi = det.findIndex(d => /path|road|trail/.test(d)); const ti = det.findIndex(d => /tracks|footprints|ruts/.test(d));
     if (pi >= 0 && ti >= 0) { det[pi] = `${det[pi]} with ${det[ti]}`; det.splice(ti, 1); }
     const noun = `${adj ? `${adj} ` : ''}${placeShort || 'place'}`;
-    const full = `in ${/^[aeiou]/.test(noun) ? 'an' : 'a'} ${noun}${t ? ` at ${t}` : ''}${det.length ? `, ${det[0]}` : ''}`;
+    const prep = /road|street|path|trail/.test(noun) ? 'on' : /wall|pier|gate|temple|shore|bank|well/.test(noun) ? 'at' : 'in';
+    const full = `${prep} ${/^[aeiou]/.test(noun) ? 'an' : 'a'} ${noun}${t ? ` at ${t}` : ''}${det.length ? `, ${det[0]}` : ''}`;
     // the action already names the place ("through the forest"): only time + mood + detail
     const short = `${t ? `at ${t}` : ''}${adj ? `${t ? ', ' : ''}${adj} air` : ''}${det.length ? `, ${det[0]}` : ''}`.replace(/^, /, '');
     return { full, short, key: (placeShort.split(' ').pop() || '').toLowerCase() };
@@ -1764,8 +1782,11 @@ export function formatChineseDramaShot(
     let a2 = act.replace(/[.\s]+$/, '');
     // who + concrete action + where, one sentence (a "; X is not in the frame" note stays at the end)
     const semi = a2.indexOf(';');
-    const head = semi >= 0 ? a2.slice(0, semi) : a2;
+    const head0 = semi >= 0 ? a2.slice(0, semi) : a2;
     const tailNote = semi >= 0 ? a2.slice(semi) : '';
+    let head2 = head0;
+    for (const n of [...vis, ...cast]) { const en = nm(n); if (/^the /.test(en)) head2 = head2.replace(new RegExp(`(^|[\\s,;])[Aa]n? ${en.slice(4)}\\b`, 'g'), (_m, pre) => `${pre}the ${en.slice(4)}`); }
+    const head = head2;
     const st = settingFor(head);
     const doing = a2 ? `${cap(head)}${st ? ` ${st}` : ''}${tailNote}.` : (setting ? `${cap(setting.full)}.` : '');
     // face-only close-ups: hands out of frame (not for hand / object close-ups)
@@ -1788,6 +1809,8 @@ export function formatChineseDramaShot(
     const words = (t: string) => t.split(/\s+/).length;
     const cuts: [RegExp | string, string][] = [[/(in an? [^,.;]+? at [a-z]+), [^.;]+?([.;])/, '$1$2'], [/, [A-Z][a-z]+ blurred in foreground/, ''], [/ No other modern objects\.| no other modern objects/, ''], [/ at (?:dawn|dusk|night|midday|noon|morning|afternoon)(?=[.;])/, '']];
     for (const [re, to] of cuts) { if (words(prompt) <= 100) break; prompt = prompt.replace(re as any, to); }
+    // never Thai outside the quoted dialogue: report it and drop the leftover words
+    prompt = prompt.replace(/("[^"]*")|[ก-๙][ก-๙\s]*/g, (m, q) => { if (q) return q; untranslated.add(m.trim()); return ''; }).replace(/\s+([,.;:])/g, '$1').replace(/,\s*,/g, ',').replace(/\s{2,}/g, ' ');
     angles.push({ label, seconds, prompt, onScreen: vis, attachments });
   };
   const NUMW2 = ['', 'one', 'two', 'three', 'four', 'five', 'six'];
@@ -1806,7 +1829,7 @@ export function formatChineseDramaShot(
 
   const shotNumber = Number(clip.clipNumber) || 0;
   const allText = [action, ...f.lines.map(l => l.line)].join(' ');
-  const kind: DramaShot['kind'] = CONFLICT_RE.test(allText) ? 'conflict' : f.lines.length ? 'dialogue' : 'silent';
+  const kind: DramaShot['kind'] = CONFLICT_RE.test(allText) && f.names.length >= 2 ? 'conflict' : f.lines.length ? 'dialogue' : 'silent';
   const restEn = action ? tr(action) : '';
   const hearerEn = cue ? nm(cue.hearer || f.names[0] || '') || 'the character' : '';
   const actEn = cue
@@ -1820,6 +1843,7 @@ export function formatChineseDramaShot(
   /** Listener of line i: addressed / mentioned in the line, then address word -> previous / other speaker, then speaker order. */
   const listenerFor = (i: number, speaker: string, candidates: string[]): string => {
     const line = f.lines[i]?.line || '';
+    if (clip.listener && candidates.includes(clip.listener)) return clip.listener;
     const named = candidates.find(n => mentions(line, n));
     if (named) return named;
     if (ADDRESS_RE.test(line)) {
@@ -1839,7 +1863,9 @@ export function formatChineseDramaShot(
   };
 
   if (kind === 'conflict') {
-    const opps = cast.filter(n => n !== hero);
+    const opps0 = cast.filter(n => n !== hero);
+    const gen = opps0.filter(n => isGeneric(n));
+    const opps = gen.length && gen.length < opps0.length ? gen : opps0;
     const opp = opps[0] || '';
     const NUMW = ['', 'one', 'two', 'three', 'four', 'five', 'six'];
     const ens = opps.map(n => nm(n));
@@ -1934,6 +1960,8 @@ export function formatChineseDramaShot(
     const b1 = f.names.find(n => n !== a1)!;
     push('Over-the-shoulder (กลุ่ม)', 2, `Over ${nm(a1)}'s shoulder${hiddenOf(a1) ? ` from ${hiddenOf(a1)}` : ''} toward ${groupEn(f.names.filter(n => n !== a1))}, slow push-in.`, actEn || `${cap(nm(a1))} faces ${groupEn(f.names.filter(n => n !== a1))}`, NO_ONE_SPEAKS, f.names);
   }
+  const prevPlace = prevList[0] ? (prevList[0].locationName || '') : '';
+  if (master && (!prevList.length || (prevPlace && !samePlace(prevPlace, place.location || '')))) notes.unshift(`📍 ${prevList.length ? 'เปลี่ยนสถานที่' : 'สถานที่'}: แนบรูปที่ 1 = ภาพมาสเตอร์ ${master} (${place.location})`);
   angles.forEach((a, i) => notes.push(`มุม ${ANGLE_LETTERS[i]} (${a.label}): ตัดยาว ${a.seconds} วินาที`));
   const nextLine = next ? (next.dialogues || []).find(d => String(d?.line || '').trim()) : undefined;
   if (nextLine) notes.push(`J-cut: ให้เสียง "${String(nextLine.line).trim()}" ของช็อตถัดไปเข้าก่อนภาพประมาณ 0.5 วินาที ตอนท้ายมุมสุดท้ายของช็อตนี้`);
